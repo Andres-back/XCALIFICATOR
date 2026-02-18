@@ -48,7 +48,7 @@ export default function Layout({ children }) {
         <div className="flex items-center justify-between h-16 px-6 border-b border-gray-200">
           <Link to="/" className="flex items-center gap-2">
             <GraduationCap className="w-8 h-8 text-primary-600" />
-            <span className="text-xl font-bold text-gray-900">Xalificator</span>
+            <span className="text-xl font-bold text-gray-900">XCalificator</span>
           </Link>
           <button onClick={() => setSidebarOpen(false)} className="lg:hidden">
             <X className="w-5 h-5" />

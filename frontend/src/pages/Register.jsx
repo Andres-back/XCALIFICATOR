@@ -54,7 +54,7 @@ export default function Register() {
             <GraduationCap className="w-10 h-10 text-white" />
           </div>
           <h1 className="text-3xl font-bold text-gray-900">Crear Cuenta</h1>
-          <p className="text-gray-500 mt-1">Únete a Xalificator</p>
+          <p className="text-gray-500 mt-1">Únete a XCalificator</p>
         </div>
 
         <div className="card">

@@ -7,7 +7,7 @@ from app.core.rate_limiter import RateLimiter
 from app.routers import auth, admin, materias, examenes, grading, generation, chat, notifications
 
 app = FastAPI(
-    title="Xalificator API",
+    title="XCalificator API",
     description="Plataforma Educativa IA - Sistema de gestión académica con calificación automática",
     version="1.0.0",
     docs_url="/api/docs",
@@ -45,4 +45,4 @@ app.include_router(notifications.router, prefix="/api")
 
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok", "service": "Xalificator API", "version": "1.0.0"}
+    return {"status": "ok", "service": "XCalificator API", "version": "1.0.0"}

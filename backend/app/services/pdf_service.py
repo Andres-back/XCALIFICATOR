@@ -34,14 +34,14 @@ def _header_footer(canvas, doc, titulo):
     canvas.setFont("Helvetica-Bold", 14)
     canvas.drawString(doc.leftMargin, doc.pagesize[1] - 30, f"📝 {titulo}")
     canvas.setFont("Helvetica", 9)
-    canvas.drawRightString(doc.pagesize[0] - doc.rightMargin, doc.pagesize[1] - 30, "Xalificator — Plataforma Educativa IA")
+    canvas.drawRightString(doc.pagesize[0] - doc.rightMargin, doc.pagesize[1] - 30, "XCalificator — Plataforma Educativa IA")
 
     # Footer
     canvas.setFillColor(GRAY_300)
     canvas.rect(0, 0, doc.pagesize[0], 28, fill=1, stroke=0)
     canvas.setFillColor(GRAY_700)
     canvas.setFont("Helvetica", 8)
-    canvas.drawString(doc.leftMargin, 10, "Generado por Xalificator")
+    canvas.drawString(doc.leftMargin, 10, "Generado por XCalificator")
     canvas.drawRightString(doc.pagesize[0] - doc.rightMargin, 10, f"Página {canvas.getPageNumber()}")
 
     canvas.restoreState()
@@ -141,7 +141,7 @@ def generate_exam_pdf(exam_data: dict, include_answers: bool = False) -> bytes:
     # ─── Title Block ───
     elements.append(Spacer(1, 8))
     elements.append(Paragraph(titulo, title_style))
-    elements.append(Paragraph("Plataforma Educativa Xalificator — Evaluación Generada por IA", subtitle_style))
+    elements.append(Paragraph("Plataforma Educativa XCalificator — Evaluación Generada por IA", subtitle_style))
 
     # ─── Student Info Box ───
     info_data = [

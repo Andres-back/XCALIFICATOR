@@ -70,7 +70,7 @@ export default function Login() {
           <div className="text-center">
             <div className="flex items-center justify-center gap-2 mb-3">
               <Sparkles className="w-6 h-6 text-yellow-300" />
-              <h1 className="text-4xl font-extrabold text-white tracking-tight">Xalificator</h1>
+              <h1 className="text-4xl font-extrabold text-white tracking-tight">XCalificator</h1>
               <Sparkles className="w-6 h-6 text-yellow-300" />
             </div>
             <p className="text-primary-100 text-lg font-medium mb-2">Plataforma Educativa con IA</p>
@@ -101,8 +101,8 @@ export default function Login() {
               </video>
             </div>
             <div className="flex items-center justify-center gap-1.5">
-              <img src="/icono.png" alt="Xalificator" className="w-8 h-8 rounded-lg" />
-              <h1 className="text-2xl font-bold text-gray-900">Xalificator</h1>
+              <img src="/icono.png" alt="XCalificator" className="w-8 h-8 rounded-lg" />
+              <h1 className="text-2xl font-bold text-gray-900">XCalificator</h1>
             </div>
             <p className="text-gray-500 text-sm mt-1">Plataforma Educativa con IA</p>
           </div>
@@ -111,7 +111,7 @@ export default function Login() {
           <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-8">
             <div className="flex items-center gap-3 mb-6">
               <div className="hidden lg:block w-10 h-10 rounded-xl overflow-hidden ring-2 ring-primary-100">
-                <img src="/icono.png" alt="Xalificator" className="w-full h-full object-cover" />
+                <img src="/icono.png" alt="XCalificator" className="w-full h-full object-cover" />
               </div>
               <div>
                 <h2 className="text-xl font-bold text-gray-900">Iniciar Sesión</h2>
@@ -210,7 +210,7 @@ export default function Login() {
 
           {/* Footer */}
           <p className="text-center text-xs text-gray-400 mt-6">
-            © 2026 Xalificator · Plataforma Educativa con Inteligencia Artificial
+            © 2026 XCalificator · Plataforma Educativa con Inteligencia Artificial
           </p>
         </div>
       </div>

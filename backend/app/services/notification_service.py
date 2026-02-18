@@ -12,20 +12,20 @@ EMAIL_TEMPLATES = {
     "nota_publicada": Template("""
     <html>
     <body style="font-family: Arial, sans-serif; padding: 20px;">
-        <h2 style="color: #2563eb;">📝 Nueva Calificación - Xalificator</h2>
+        <h2 style="color: #2563eb;">📝 Nueva Calificación - XCalificator</h2>
         <p>Hola <strong>{{ nombre }}</strong>,</p>
         <p>Se ha publicado una nueva calificación para el examen: <strong>{{ examen }}</strong></p>
         <p>Nota obtenida: <strong>{{ nota }}/{{ nota_maxima }}</strong></p>
         <p>Ingresa a la plataforma para ver la retroalimentación detallada.</p>
         <hr>
-        <p style="color: #6b7280; font-size: 12px;">Xalificator - Plataforma Educativa IA</p>
+        <p style="color: #6b7280; font-size: 12px;">XCalificator - Plataforma Educativa IA</p>
     </body>
     </html>
     """),
     "examen_asignado": Template("""
     <html>
     <body style="font-family: Arial, sans-serif; padding: 20px;">
-        <h2 style="color: #2563eb;">📋 Nuevo Examen Asignado - Xalificator</h2>
+        <h2 style="color: #2563eb;">📋 Nuevo Examen Asignado - XCalificator</h2>
         <p>Hola <strong>{{ nombre }}</strong>,</p>
         <p>Se ha asignado un nuevo examen en la materia: <strong>{{ materia }}</strong></p>
         <p>Examen: <strong>{{ examen }}</strong></p>
@@ -33,55 +33,55 @@ EMAIL_TEMPLATES = {
         <p>Fecha límite: <strong>{{ fecha_limite }}</strong></p>
         {% endif %}
         <hr>
-        <p style="color: #6b7280; font-size: 12px;">Xalificator - Plataforma Educativa IA</p>
+        <p style="color: #6b7280; font-size: 12px;">XCalificator - Plataforma Educativa IA</p>
     </body>
     </html>
     """),
     "cuenta_creada": Template("""
     <html>
     <body style="font-family: Arial, sans-serif; padding: 20px;">
-        <h2 style="color: #2563eb;">🎉 Bienvenido a Xalificator</h2>
+        <h2 style="color: #2563eb;">🎉 Bienvenido a XCalificator</h2>
         <p>Hola <strong>{{ nombre }}</strong>,</p>
         <p>Tu cuenta ha sido creada exitosamente.</p>
         <p>Rol asignado: <strong>{{ rol }}</strong></p>
         <p>Puedes iniciar sesión con tu correo y contraseña.</p>
         <hr>
-        <p style="color: #6b7280; font-size: 12px;">Xalificator - Plataforma Educativa IA</p>
+        <p style="color: #6b7280; font-size: 12px;">XCalificator - Plataforma Educativa IA</p>
     </body>
     </html>
     """),
     "cambio_password": Template("""
     <html>
     <body style="font-family: Arial, sans-serif; padding: 20px;">
-        <h2 style="color: #dc2626;">🔒 Cambio de Contraseña - Xalificator</h2>
+        <h2 style="color: #dc2626;">🔒 Cambio de Contraseña - XCalificator</h2>
         <p>Hola <strong>{{ nombre }}</strong>,</p>
         <p>Tu contraseña ha sido actualizada exitosamente.</p>
         <p>Si no realizaste este cambio, contacta al administrador inmediatamente.</p>
         <hr>
-        <p style="color: #6b7280; font-size: 12px;">Xalificator - Plataforma Educativa IA</p>
+        <p style="color: #6b7280; font-size: 12px;">XCalificator - Plataforma Educativa IA</p>
     </body>
     </html>
     """),
     "examen_proximo": Template("""
     <html>
     <body style="font-family: Arial, sans-serif; padding: 20px;">
-        <h2 style="color: #f59e0b;">⏰ Recordatorio de Examen - Xalificator</h2>
+        <h2 style="color: #f59e0b;">⏰ Recordatorio de Examen - XCalificator</h2>
         <p>Hola <strong>{{ nombre }}</strong>,</p>
         <p>Tienes un examen próximo en las siguientes 24 horas:</p>
         <p>Materia: <strong>{{ materia }}</strong></p>
         <p>Examen: <strong>{{ examen }}</strong></p>
         <p>Fecha límite: <strong>{{ fecha_limite }}</strong></p>
         <hr>
-        <p style="color: #6b7280; font-size: 12px;">Xalificator - Plataforma Educativa IA</p>
+        <p style="color: #6b7280; font-size: 12px;">XCalificator - Plataforma Educativa IA</p>
     </body>
     </html>
     """),
 }
 
 WHATSAPP_TEMPLATES = {
-    "nota_publicada": "📝 *Xalificator* - Nueva calificación\nHola {nombre}, se publicó tu nota en *{examen}*: {nota}/{nota_maxima}. Revisa la retroalimentación en la plataforma.",
-    "examen_asignado": "📋 *Xalificator* - Nuevo examen\nHola {nombre}, se asignó el examen *{examen}* en *{materia}*.",
-    "examen_proximo": "⏰ *Xalificator* - Recordatorio\nHola {nombre}, tienes un examen en 24h: *{examen}* de *{materia}*.",
+    "nota_publicada": "📝 *XCalificator* - Nueva calificación\nHola {nombre}, se publicó tu nota en *{examen}*: {nota}/{nota_maxima}. Revisa la retroalimentación en la plataforma.",
+    "examen_asignado": "📋 *XCalificator* - Nuevo examen\nHola {nombre}, se asignó el examen *{examen}* en *{materia}*.",
+    "examen_proximo": "⏰ *XaClificator* - Recordatorio\nHola {nombre}, tienes un examen en 24h: *{examen}* de *{materia}*.",
 }
 
 

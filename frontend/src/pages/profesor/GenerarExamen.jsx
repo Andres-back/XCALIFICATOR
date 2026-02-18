@@ -33,7 +33,7 @@ const GRADOS_COLOMBIA = [
 ];
 
 // --- Autocomplete helpers ---
-const AC_KEY = 'xalificator_autocomplete';
+const AC_KEY = 'xCalificator_autocomplete';
 function loadSuggestions(field) {
   try {
     const data = JSON.parse(localStorage.getItem(AC_KEY) || '{}');

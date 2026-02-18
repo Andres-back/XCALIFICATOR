@@ -4,7 +4,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from PIL import Image
 from paddleocr import PaddleOCR
 
-app = FastAPI(title="Xalificator OCR Service", version="1.0.0")
+app = FastAPI(title="XCalificator OCR Service", version="1.0.0")
 
 # Initialize PaddleOCR with Spanish + English
 ocr = PaddleOCR(

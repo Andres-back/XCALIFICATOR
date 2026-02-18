@@ -1,5 +1,5 @@
 -- =============================================
--- Xalificator - Schema completo PostgreSQL
+-- XCalificator - Schema completo PostgreSQL
 -- =============================================
 
 -- Extensiones
