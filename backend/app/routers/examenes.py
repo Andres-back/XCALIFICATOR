@@ -597,7 +597,7 @@ async def update_examen(
     if not examen:
         raise HTTPException(status_code=404, detail="Examen no encontrado")
 
-    allowed_fields = {"titulo", "contenido_json", "clave_respuestas", "activo_online", "fecha_limite", "tipo"}
+    allowed_fields = {"titulo", "contenido_json", "clave_respuestas", "activo_online", "fecha_limite", "fecha_activacion", "tipo"}
     for field, value in data.items():
         if field in allowed_fields:
             setattr(examen, field, value)

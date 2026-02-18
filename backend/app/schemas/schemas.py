@@ -191,6 +191,7 @@ class ExamenOut(BaseModel):
     contenido_json: Optional[dict] = None
     activo_online: bool
     fecha_limite: Optional[datetime] = None
+    fecha_activacion: Optional[datetime] = None
     created_at: datetime
 
     class Config:

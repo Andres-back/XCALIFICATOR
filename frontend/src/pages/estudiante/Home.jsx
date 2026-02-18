@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
 import toast from 'react-hot-toast';
-import { BookOpen, Plus, FileText, ClipboardList, X, Clock, CheckCircle } from 'lucide-react';
+import { BookOpen, Plus, FileText, ClipboardList, X, Clock, CheckCircle, Calendar } from 'lucide-react';
 import { format } from 'date-fns';
 
 export default function EstudianteHome() {
@@ -27,7 +27,12 @@ export default function EstudianteHome() {
         matRes.data.map(async (m) => {
           try {
             const exRes = await api.get(`/examenes/materia/${m.id}`);
-            examenesMap[m.id] = exRes.data.filter(e => e.activo_online);
+            examenesMap[m.id] = exRes.data.filter(e => {
+              if (!e.activo_online) return false;
+              // Hide exams whose activation date hasn't arrived yet
+              if (e.fecha_activacion && new Date(e.fecha_activacion) > new Date()) return false;
+              return true;
+            });
           } catch {
             examenesMap[m.id] = [];
           }
@@ -60,9 +65,9 @@ export default function EstudianteHome() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Mis Materias</h1>
-        <button onClick={() => setShowInscribir(true)} className="btn-primary flex items-center gap-2">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-6">
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Mis Materias</h1>
+        <button onClick={() => setShowInscribir(true)} className="btn-primary flex items-center gap-2 text-sm">
           <Plus className="w-4 h-4" /> Inscribirme
         </button>
       </div>
@@ -87,7 +92,7 @@ export default function EstudianteHome() {
                     <p className="text-xs text-gray-400">Código: {m.codigo}</p>
                   </div>
                 </div>
-                <Link to="/estudiante/notas" className="btn-secondary text-xs flex items-center gap-1">
+                <Link to={`/estudiante/notas?materia=${encodeURIComponent(m.nombre)}`} className="btn-secondary text-xs flex items-center gap-1">
                   <FileText className="w-3 h-3" /> Mis Notas
                 </Link>
               </div>

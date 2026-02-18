@@ -86,6 +86,7 @@ class Examen(Base):
     clave_respuestas = Column(JSONB, nullable=True)
     activo_online = Column(Boolean, default=False)
     fecha_limite = Column(DateTime(timezone=True), nullable=True)
+    fecha_activacion = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     materia = relationship("Materia", back_populates="examenes")

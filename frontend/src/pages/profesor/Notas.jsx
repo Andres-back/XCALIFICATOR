@@ -323,32 +323,45 @@ export default function ProfesorNotas() {
                   </div>
                 )}
 
-                {/* Per-question detail */}
+                {/* Per-question detail — student answer vs correct answer + feedback */}
                 {expanded === n.id && hasDetail && (
                   <div className="mt-3 border-t border-gray-100 pt-3 space-y-2">
                     {n.detalle_json.preguntas.map((p, i) => (
-                      <div key={i} className={`flex items-start gap-3 p-3 rounded-lg border text-sm
-                        ${p.pendiente ? 'bg-amber-50 border-amber-200' : p.correcto ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
-                        <div className="shrink-0 mt-0.5">
-                          {p.pendiente
-                            ? <AlertTriangle className="w-4 h-4 text-amber-500" />
-                            : p.correcto
-                              ? <CheckCircle className="w-4 h-4 text-emerald-600" />
-                              : <XCircle className="w-4 h-4 text-red-500" />}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between">
-                            <span className="font-medium">P{p.numero}</span>
-                            <span className={`font-bold text-xs ${p.pendiente ? 'text-amber-700' : p.correcto ? 'text-emerald-700' : 'text-red-700'}`}>
-                              {p.nota}/{p.nota_maxima}
-                            </span>
+                      <div key={i} className={`rounded-xl border overflow-hidden text-sm
+                        ${p.pendiente ? 'border-amber-200' : p.correcto ? 'border-emerald-200' : 'border-red-200'}`}>
+                        <div className={`flex items-center justify-between px-4 py-2
+                          ${p.pendiente ? 'bg-amber-50' : p.correcto ? 'bg-emerald-50' : 'bg-red-50'}`}>
+                          <div className="flex items-center gap-2">
+                            {p.pendiente
+                              ? <AlertTriangle className="w-4 h-4 text-amber-500" />
+                              : p.correcto
+                                ? <CheckCircle className="w-4 h-4 text-emerald-600" />
+                                : <XCircle className="w-4 h-4 text-red-500" />}
+                            <span className="font-medium">Pregunta {p.numero}</span>
                           </div>
+                          <span className={`font-bold text-xs ${p.pendiente ? 'text-amber-700' : p.correcto ? 'text-emerald-700' : 'text-red-700'}`}>
+                            {p.nota}/{p.nota_maxima}
+                          </span>
+                        </div>
+                        <div className="px-4 py-3 space-y-2 bg-white">
                           {p.respuesta_estudiante && (
-                            <p className="text-xs text-gray-600 mt-1">
-                              <span className="font-medium">Resp:</span> {p.respuesta_estudiante}
-                            </p>
+                            <div>
+                              <p className="text-[10px] font-semibold text-gray-400 uppercase mb-0.5">Respuesta del estudiante</p>
+                              <p className="text-xs text-gray-800 bg-gray-50 rounded-lg px-3 py-2">{p.respuesta_estudiante}</p>
+                            </div>
                           )}
-                          <p className="text-xs text-gray-500 mt-0.5">{p.retroalimentacion}</p>
+                          {p.respuesta_correcta && (
+                            <div>
+                              <p className="text-[10px] font-semibold text-green-600 uppercase mb-0.5">Respuesta correcta</p>
+                              <p className="text-xs text-green-800 bg-green-50 rounded-lg px-3 py-2">{p.respuesta_correcta}</p>
+                            </div>
+                          )}
+                          {p.retroalimentacion && (
+                            <div>
+                              <p className="text-[10px] font-semibold text-blue-500 uppercase mb-0.5">Retroalimentación</p>
+                              <p className="text-xs text-blue-800 bg-blue-50 rounded-lg px-3 py-2 italic">{p.retroalimentacion}</p>
+                            </div>
+                          )}
                         </div>
                       </div>
                     ))}

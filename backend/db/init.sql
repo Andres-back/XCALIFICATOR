@@ -57,6 +57,7 @@ CREATE TABLE examenes (
   clave_respuestas JSONB,
   activo_online    BOOLEAN DEFAULT FALSE,
   fecha_limite     TIMESTAMPTZ,
+  fecha_activacion TIMESTAMPTZ,
   created_at       TIMESTAMPTZ DEFAULT NOW()
 );
 

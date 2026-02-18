@@ -9,6 +9,9 @@ const TIPOS_PREGUNTA = [
   { key: 'verdadero_falso', label: 'Verdadero / Falso' },
   { key: 'respuesta_corta', label: 'Respuesta Corta' },
   { key: 'desarrollo', label: 'Desarrollo / Ensayo' },
+];
+
+const TIPOS_EXTRA = [
   { key: 'crucigrama', label: 'Crucigrama' },
   { key: 'sopa_letras', label: 'Sopa de Letras' },
 ];
@@ -99,7 +102,12 @@ export default function GenerarExamen() {
     contenido_base: '',
     distribucion: {},
     fecha_limite: '',
+    fecha_activacion: '',
     activo_online: true,
+    incluir_sopa: false,
+    sopa_num_palabras: 8,
+    incluir_crucigrama: false,
+    crucigrama_num_pistas: 6,
   });
 
   const updateDistribucion = (key, value) => {
@@ -133,7 +141,15 @@ export default function GenerarExamen() {
         distribucion: form.distribucion,
         contenido_base: form.contenido_base || null,
       };
-      // If fecha_limite is set, include it and update exam after generation
+      // Add sopa/crucigrama if toggled
+      if (form.incluir_sopa) {
+        payload.distribucion = { ...payload.distribucion, sopa_letras: 1 };
+        payload.sopa_config = { num_palabras: form.sopa_num_palabras };
+      }
+      if (form.incluir_crucigrama) {
+        payload.distribucion = { ...payload.distribucion, crucigrama: 1 };
+        payload.crucigrama_config = { num_pistas: form.crucigrama_num_pistas };
+      }
       const res = await api.post('/generate/exam', payload);
 
       // If fecha_limite set, update the generated exam with it
@@ -143,10 +159,10 @@ export default function GenerarExamen() {
           const examsRes = await api.get(`/examenes/materia/${materiaId}`);
           const latest = examsRes.data?.[0];
           if (latest) {
-            await api.patch(`/examenes/${latest.id}`, {
-              activo_online: form.activo_online,
-              fecha_limite: new Date(form.fecha_limite).toISOString(),
-            });
+            const updatePayload = { activo_online: form.activo_online };
+            if (form.fecha_limite) updatePayload.fecha_limite = new Date(form.fecha_limite).toISOString();
+            if (form.fecha_activacion) updatePayload.fecha_activacion = new Date(form.fecha_activacion).toISOString();
+            await api.patch(`/examenes/${latest.id}`, updatePayload);
           }
         } catch {}
       }
@@ -162,7 +178,7 @@ export default function GenerarExamen() {
 
   return (
     <div className="max-w-2xl mx-auto">
-      <h1 className="text-2xl font-bold text-gray-900 mb-6">Generar Examen con IA</h1>
+      <h1 className="text-xl sm:text-2xl font-bold text-gray-900 mb-6">Generar Examen con IA</h1>
 
       <form onSubmit={handleSubmit} className="space-y-6">
         <div className="card">
@@ -224,13 +240,21 @@ export default function GenerarExamen() {
                 onChange={e => setForm(p => ({...p, fecha_limite: e.target.value}))} />
               <p className="text-xs text-gray-400 mt-1">Los estudiantes no podrán responder después de esta fecha.</p>
             </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Fecha de activación (opcional)
+              </label>
+              <input type="datetime-local" className="input-field" value={form.fecha_activacion}
+                onChange={e => setForm(p => ({...p, fecha_activacion: e.target.value}))} />
+              <p className="text-xs text-gray-400 mt-1">El examen se mostrará a los estudiantes a partir de esta fecha. Si no se establece, estará disponible de inmediato.</p>
+            </div>
           </div>
         </div>
 
         <div className="card">
           <h2 className="font-semibold text-gray-900 mb-4">Distribución de Preguntas</h2>
           <p className="text-sm text-gray-500 mb-4">Indica cuántas preguntas de cada tipo deseas incluir.</p>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {TIPOS_PREGUNTA.map(tipo => (
               <div key={tipo.key} className="flex items-center justify-between bg-gray-50 rounded-lg p-3">
                 <label className="text-sm font-medium text-gray-700">{tipo.label}</label>
@@ -242,6 +266,46 @@ export default function GenerarExamen() {
                 />
               </div>
             ))}
+          </div>
+        </div>
+
+        {/* Sopa de Letras & Crucigrama - separate config */}
+        <div className="card">
+          <h2 className="font-semibold text-gray-900 mb-4">Actividades Interactivas (Opcional)</h2>
+          <p className="text-sm text-gray-500 mb-4">Estas actividades se generan con configuraciones especiales y se añaden al examen.</p>
+          <div className="space-y-4">
+            <div className="bg-gray-50 rounded-lg p-4">
+              <label className="flex items-center gap-3">
+                <input type="checkbox" checked={form.incluir_sopa}
+                  onChange={e => setForm(p => ({...p, incluir_sopa: e.target.checked}))}
+                  className="rounded border-gray-300 text-primary-600" />
+                <span className="text-sm font-medium text-gray-700">Incluir Sopa de Letras</span>
+              </label>
+              {form.incluir_sopa && (
+                <div className="mt-3 ml-7">
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Cantidad de palabras</label>
+                  <input type="number" min="4" max="20" className="w-20 px-2 py-1 border border-gray-300 rounded text-center text-sm"
+                    value={form.sopa_num_palabras}
+                    onChange={e => setForm(p => ({...p, sopa_num_palabras: parseInt(e.target.value) || 8}))} />
+                </div>
+              )}
+            </div>
+            <div className="bg-gray-50 rounded-lg p-4">
+              <label className="flex items-center gap-3">
+                <input type="checkbox" checked={form.incluir_crucigrama}
+                  onChange={e => setForm(p => ({...p, incluir_crucigrama: e.target.checked}))}
+                  className="rounded border-gray-300 text-primary-600" />
+                <span className="text-sm font-medium text-gray-700">Incluir Crucigrama</span>
+              </label>
+              {form.incluir_crucigrama && (
+                <div className="mt-3 ml-7">
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Cantidad de pistas</label>
+                  <input type="number" min="3" max="15" className="w-20 px-2 py-1 border border-gray-300 rounded text-center text-sm"
+                    value={form.crucigrama_num_pistas}
+                    onChange={e => setForm(p => ({...p, crucigrama_num_pistas: parseInt(e.target.value) || 6}))} />
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
