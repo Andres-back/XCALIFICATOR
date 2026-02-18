@@ -9,6 +9,7 @@ from app.core.database import get_db
 from app.core.security import (
     hash_password, verify_password,
     create_access_token, create_refresh_token, decode_token,
+    create_email_confirm_token,
 )
 from app.core.config import get_settings
 from app.core.dependencies import get_current_user, get_client_ip, get_user_agent
@@ -17,6 +18,7 @@ from app.schemas.schemas import (
     UserRegister, UserLogin, GoogleLoginRequest,
     TokenResponse, UserOut, RefreshTokenRequest, UserUpdate, ChangePasswordRequest,
 )
+from app.services.notification_service import send_email
 
 router = APIRouter(prefix="/auth", tags=["Autenticación"])
 settings = get_settings()
@@ -65,6 +67,19 @@ async def register(
     await db.commit()
     await db.refresh(user)
 
+    # Send email confirmation asynchronously
+    try:
+        confirm_token = create_email_confirm_token(str(user.id))
+        confirm_link = f"http://localhost/api/auth/confirm-email?token={confirm_token}"
+        await send_email(
+            to=user.correo,
+            subject="Confirma tu correo - XCalificator",
+            template_name="confirmar_correo",
+            context={"nombre": user.nombre, "link": confirm_link},
+        )
+    except Exception:
+        pass  # Don't break registration if email fails
+
     access_token = create_access_token({"sub": str(user.id), "rol": user.rol})
     refresh_token = create_refresh_token({"sub": str(user.id)})
 
@@ -73,6 +88,52 @@ async def register(
         refresh_token=refresh_token,
         user=UserOut.model_validate(user),
     )
+
+
+@router.get("/confirm-email")
+async def confirm_email(
+    token: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Confirm user email address via token in the link."""
+    payload = decode_token(token)
+    if not payload or payload.get("type") != "email_confirm":
+        raise HTTPException(status_code=400, detail="Token de confirmación inválido o expirado")
+
+    user_id = payload.get("sub")
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    if user.correo_verificado:
+        return {"detail": "El correo ya fue confirmado anteriormente"}
+
+    user.correo_verificado = True
+    await db.commit()
+    return {"detail": "Correo confirmado exitosamente. Ya puedes usar la plataforma."}
+
+
+@router.post("/resend-confirmation")
+async def resend_confirmation(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Resend email confirmation."""
+    if current_user.correo_verificado:
+        return {"detail": "El correo ya fue confirmado"}
+
+    confirm_token = create_email_confirm_token(str(current_user.id))
+    confirm_link = f"http://localhost/api/auth/confirm-email?token={confirm_token}"
+    sent = await send_email(
+        to=current_user.correo,
+        subject="Confirma tu correo - XCalificator",
+        template_name="confirmar_correo",
+        context={"nombre": current_user.nombre, "link": confirm_link},
+    )
+    if not sent:
+        raise HTTPException(status_code=500, detail="No se pudo enviar el correo. Verifica la configuración SMTP.")
+    return {"detail": "Correo de confirmación reenviado"}
 
 
 @router.post("/login", response_model=TokenResponse)

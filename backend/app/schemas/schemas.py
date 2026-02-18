@@ -73,6 +73,7 @@ class UserOut(BaseModel):
     celular: Optional[str] = None
     rol: str
     activo: bool
+    correo_verificado: bool = False
     created_at: datetime
 
     class Config:

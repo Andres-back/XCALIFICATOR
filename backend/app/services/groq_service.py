@@ -65,13 +65,38 @@ Schema JSON requerido:
     }}
   ],
   "nota_maxima": 5.0,
-  "crucigrama": {{  // solo si se solicita
-    "grid": [[]], "pistas_horizontal": [], "pistas_vertical": []
+  "crucigrama": {{  // solo si se solicita crucigrama
+    "grid": [["L","","O",""],...],  // Matriz NxN, letras en celdas activas, "" en celdas vacías/bloqueadas
+    "size": int,  // tamaño de la cuadrícula (N)
+    "pistas_horizontal": [
+      {{"numero": 1, "pista": "Descripción...", "respuesta": "PALABRA", "fila": 0, "columna": 2, "longitud": 5}}
+    ],
+    "pistas_vertical": [
+      {{"numero": 1, "pista": "Descripción...", "respuesta": "PALABRA", "fila": 1, "columna": 3, "longitud": 4}}
+    ]
   }},
-  "sopa_letras": {{  // solo si se solicita
-    "grid": [[]], "palabras": []
+  "sopa_letras": {{  // solo si se solicita sopa de letras
+    "grid": [["A","B","C",...], ...],  // Matriz NxN completamente llena de letras mayúsculas (sin vacíos)
+    "size": int,  // tamaño de la cuadrícula (N), mínimo 12
+    "palabras": ["PALABRA1", "PALABRA2", ...],  // lista de palabras escondidas (todas en MAYÚSCULAS, sin tildes)
+    "ubicaciones": [
+      {{"palabra": "PALABRA1", "fila": 0, "columna": 2, "direccion": "horizontal"}},
+      {{"palabra": "PALABRA2", "fila": 3, "columna": 5, "direccion": "vertical"}}
+    ]
   }}
-}}"""
+}}
+
+REGLAS ESPECIALES PARA SOPA DE LETRAS:
+- La cuadrícula DEBE ser de al menos 12x12 y TODAS las celdas deben tener exactamente UNA letra mayúscula.
+- Las palabras se colocan horizontal, vertical o diagonal. Las celdas restantes se llenan con letras aleatorias.
+- Las palabras NO deben tener tildes ni caracteres especiales.
+- Incluye entre 6 y 12 palabras relacionadas con el tema.
+
+REGLAS ESPECIALES PARA CRUCIGRAMA:
+- La cuadrícula debe ser cuadrada (NxN), mínimo 10x10.
+- Las celdas activas contienen la letra correcta; las celdas bloqueadas contienen "".
+- Cada pista debe incluir la posición exacta (fila, columna), longitud y respuesta.
+- Las palabras deben cruzarse correctamente."""
 
     user_msg = f"Genera el examen basándote en el siguiente contenido:\n\n{contenido_base}" if contenido_base else "Genera el examen."
 

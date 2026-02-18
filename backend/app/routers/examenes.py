@@ -11,6 +11,7 @@ from app.schemas.schemas import (
     NotaCreate, NotaUpdate, NotaOut,
     RespuestaOnlineCreate, RespuestaOnlineOut,
 )
+from app.services.notification_service import notify_enrolled_students, send_email, send_whatsapp
 import logging
 
 logger = logging.getLogger(__name__)
@@ -546,13 +547,133 @@ async def toggle_online(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("profesor", "admin")),
 ):
+    result = await db.execute(
+        select(Examen).where(Examen.id == examen_id)
+    )
+    examen = result.scalar_one_or_none()
+    if not examen:
+        raise HTTPException(status_code=404, detail="Examen no encontrado")
+
+    was_active = examen.activo_online
+    examen.activo_online = not examen.activo_online
+    await db.commit()
+
+    # Notify students when exam is ACTIVATED (not when deactivated)
+    if not was_active and examen.activo_online:
+        try:
+            materia_result = await db.execute(
+                select(Materia).where(Materia.id == examen.materia_id)
+            )
+            materia = materia_result.scalar_one_or_none()
+            materia_nombre = materia.nombre if materia else "Sin materia"
+
+            await notify_enrolled_students(
+                db_session=db,
+                materia_id=str(examen.materia_id),
+                template_name="examen_asignado",
+                subject=f"Nuevo examen disponible: {examen.titulo}",
+                context={
+                    "examen": examen.titulo,
+                    "materia": materia_nombre,
+                    "fecha_limite": examen.fecha_limite.strftime("%d/%m/%Y %H:%M") if examen.fecha_limite else None,
+                },
+            )
+        except Exception as e:
+            logger.error(f"Error notifying students: {e}")
+
+    return {"activo_online": examen.activo_online}
+
+
+@router.patch("/{examen_id}")
+async def update_examen(
+    examen_id: str,
+    data: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("profesor", "admin")),
+):
+    """Update exam fields (titulo, contenido_json, clave_respuestas, activo_online, fecha_limite)."""
     result = await db.execute(select(Examen).where(Examen.id == examen_id))
     examen = result.scalar_one_or_none()
     if not examen:
         raise HTTPException(status_code=404, detail="Examen no encontrado")
-    examen.activo_online = not examen.activo_online
+
+    allowed_fields = {"titulo", "contenido_json", "clave_respuestas", "activo_online", "fecha_limite", "tipo"}
+    for field, value in data.items():
+        if field in allowed_fields:
+            setattr(examen, field, value)
+
     await db.commit()
-    return {"activo_online": examen.activo_online}
+    await db.refresh(examen)
+    return ExamenProfesorOut.model_validate(examen)
+
+
+@router.post("/notas/{nota_id}/send-feedback")
+async def send_feedback_to_student(
+    nota_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("profesor", "admin")),
+):
+    """Send retroalimentación notification to the student for a specific nota."""
+    from app.models.models import PreferenciaNotif, Notificacion
+    from datetime import timezone as tz
+
+    result = await db.execute(
+        select(Nota).where(Nota.id == nota_id)
+    )
+    nota = result.scalar_one_or_none()
+    if not nota:
+        raise HTTPException(status_code=404, detail="Nota no encontrada")
+
+    # Get student
+    student_result = await db.execute(select(User).where(User.id == nota.estudiante_id))
+    student = student_result.scalar_one_or_none()
+    if not student:
+        raise HTTPException(status_code=404, detail="Estudiante no encontrado")
+
+    # Get exam
+    exam_result = await db.execute(select(Examen).where(Examen.id == nota.examen_id))
+    examen = exam_result.scalar_one_or_none()
+    examen_titulo = examen.titulo if examen else "Examen"
+
+    # Get preferences
+    pref_result = await db.execute(
+        select(PreferenciaNotif).where(PreferenciaNotif.user_id == nota.estudiante_id)
+    )
+    pref = pref_result.scalar_one_or_none()
+
+    context = {
+        "nombre": student.nombre,
+        "examen": examen_titulo,
+        "nota": float(nota.nota) if nota.nota else 0,
+        "nota_maxima": 5.0,
+    }
+
+    sent_channels = []
+
+    if pref and pref.acepta_email and student.correo:
+        sent = await send_email(student.correo, f"Retroalimentación: {examen_titulo}", "retroalimentacion", context)
+        if sent:
+            sent_channels.append("email")
+        notif = Notificacion(
+            user_id=nota.estudiante_id, tipo="retroalimentacion", canal="email",
+            mensaje=f"Retroalimentación: {examen_titulo}", enviado=sent,
+            fecha_envio=datetime.now(tz.utc) if sent else None,
+        )
+        db.add(notif)
+
+    if pref and pref.acepta_whatsapp and student.celular:
+        sent = await send_whatsapp(student.celular, "retroalimentacion", context)
+        if sent:
+            sent_channels.append("whatsapp")
+        notif = Notificacion(
+            user_id=nota.estudiante_id, tipo="retroalimentacion", canal="whatsapp",
+            mensaje=f"WhatsApp retroalimentación: {examen_titulo}", enviado=sent,
+            fecha_envio=datetime.now(tz.utc) if sent else None,
+        )
+        db.add(notif)
+
+    await db.commit()
+    return {"detail": f"Retroalimentación enviada por: {', '.join(sent_channels) if sent_channels else 'ningún canal (verifica preferencias del estudiante)'}"}
 
 
 @router.delete("/{examen_id}", status_code=status.HTTP_204_NO_CONTENT)

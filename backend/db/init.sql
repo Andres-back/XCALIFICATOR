@@ -17,6 +17,7 @@ CREATE TABLE users (
   google_id    VARCHAR(255) UNIQUE,
   rol          VARCHAR(20) NOT NULL DEFAULT 'estudiante',
   activo       BOOLEAN DEFAULT TRUE,
+  correo_verificado BOOLEAN DEFAULT FALSE,
   created_at   TIMESTAMPTZ DEFAULT NOW()
 );
 

@@ -6,6 +6,8 @@ import {
   Send, Loader2, Clock, ChevronLeft, ChevronRight, CheckCircle2,
   Circle, AlertTriangle, FileText, Award, ArrowLeft,
 } from 'lucide-react';
+import SopaLetras from '../../components/SopaLetras';
+import Crucigrama from '../../components/Crucigrama';
 
 const TIPO_LABELS = {
   seleccion_multiple: 'Selección Múltiple',
@@ -352,6 +354,39 @@ export default function ResolverExamen() {
           )}
         </div>
       </div>
+
+      {/* Interactive Word Search */}
+      {examen.contenido_json?.sopa_letras?.grid && (
+        <div className="card mt-6">
+          <h2 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+            🔍 Sopa de Letras
+          </h2>
+          <SopaLetras
+            grid={examen.contenido_json.sopa_letras.grid}
+            palabras={examen.contenido_json.sopa_letras.palabras || []}
+            onComplete={(foundWords) => {
+              updateResp('sopa_letras', foundWords.join(', '));
+              toast.success('¡Encontraste todas las palabras! 🎉');
+            }}
+          />
+        </div>
+      )}
+
+      {/* Interactive Crossword */}
+      {examen.contenido_json?.crucigrama?.grid && (
+        <div className="card mt-6">
+          <h2 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+            🧩 Crucigrama
+          </h2>
+          <Crucigrama
+            crucigrama={examen.contenido_json.crucigrama}
+            onComplete={(userGrid) => {
+              updateResp('crucigrama', JSON.stringify(userGrid));
+              toast.success('¡Crucigrama completado! 🎉');
+            }}
+          />
+        </div>
+      )}
 
       {/* Submit Confirmation Modal */}
       {showConfirm && (

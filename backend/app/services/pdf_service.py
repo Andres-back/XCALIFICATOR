@@ -310,15 +310,69 @@ def generate_exam_pdf(exam_data: dict, include_answers: bool = False) -> bytes:
         elements.append(Spacer(1, 12))
 
         crucigrama = exam_data["crucigrama"]
+
+        # Render crossword grid
+        if "grid" in crucigrama and crucigrama["grid"]:
+            grid_raw = crucigrama["grid"]
+            # Show empty cells for student, filled for answers
+            grid_data = []
+            for row in grid_raw:
+                grid_row = []
+                for cell in row:
+                    if cell and str(cell).strip():
+                        if include_answers:
+                            grid_row.append(str(cell).upper())
+                        else:
+                            grid_row.append("")  # Empty white cell for student to fill
+                    else:
+                        grid_row.append("■")  # Blocked cell
+                grid_data.append(grid_row)
+
+            if grid_data and len(grid_data[0]) > 0:
+                cell_size = min(22, int((doc.width - 40) / max(len(grid_data[0]), 1)))
+                t = Table(grid_data, colWidths=[cell_size] * len(grid_data[0]),
+                          rowHeights=[cell_size] * len(grid_data))
+                style_cmds = [
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 10),
+                    ("FONTNAME", (0, 0), (-1, -1), "Courier-Bold"),
+                    ("TEXTCOLOR", (0, 0), (-1, -1), GRAY_700),
+                    ("GRID", (0, 0), (-1, -1), 0.5, GRAY_300),
+                ]
+                # Color blocked cells
+                for r_idx, row in enumerate(grid_data):
+                    for c_idx, cell in enumerate(row):
+                        if cell == "■":
+                            style_cmds.append(("BACKGROUND", (c_idx, r_idx), (c_idx, r_idx), GRAY_700))
+                            style_cmds.append(("TEXTCOLOR", (c_idx, r_idx), (c_idx, r_idx), GRAY_700))
+                        else:
+                            style_cmds.append(("BACKGROUND", (c_idx, r_idx), (c_idx, r_idx), WHITE))
+                            style_cmds.append(("BOX", (c_idx, r_idx), (c_idx, r_idx), 1, GRAY_500))
+
+                t.setStyle(TableStyle(style_cmds))
+                elements.append(t)
+                elements.append(Spacer(1, 12))
+
         if "pistas_horizontal" in crucigrama:
             elements.append(Paragraph("<b>➡️ Horizontales:</b>", styles["Normal"]))
             for pista in crucigrama["pistas_horizontal"]:
-                elements.append(Paragraph(f"  • {pista}", option_style))
+                if isinstance(pista, dict):
+                    num = pista.get("numero", "")
+                    texto = pista.get("pista", "")
+                    elements.append(Paragraph(f"  {num}. {texto}", option_style))
+                else:
+                    elements.append(Paragraph(f"  • {pista}", option_style))
             elements.append(Spacer(1, 8))
         if "pistas_vertical" in crucigrama:
             elements.append(Paragraph("<b>⬇️ Verticales:</b>", styles["Normal"]))
             for pista in crucigrama["pistas_vertical"]:
-                elements.append(Paragraph(f"  • {pista}", option_style))
+                if isinstance(pista, dict):
+                    num = pista.get("numero", "")
+                    texto = pista.get("pista", "")
+                    elements.append(Paragraph(f"  {num}. {texto}", option_style))
+                else:
+                    elements.append(Paragraph(f"  • {pista}", option_style))
 
     # ─── Word Search Section ───
     if "sopa_letras" in exam_data and exam_data["sopa_letras"]:

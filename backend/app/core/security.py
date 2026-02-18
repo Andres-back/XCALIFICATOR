@@ -39,3 +39,11 @@ def decode_token(token: str) -> Optional[dict]:
         return payload
     except JWTError:
         return None
+
+
+def create_email_confirm_token(user_id: str) -> str:
+    """Create a token for email confirmation (expires in 24h)."""
+    to_encode = {"sub": user_id, "type": "email_confirm"}
+    expire = datetime.now(timezone.utc) + timedelta(hours=24)
+    to_encode["exp"] = expire
+    return jwt.encode(to_encode, settings.JWT_SECRET, algorithm=ALGORITHM)

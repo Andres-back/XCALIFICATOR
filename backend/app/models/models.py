@@ -22,6 +22,7 @@ class User(Base):
     google_id = Column(String(255), unique=True, nullable=True)
     rol = Column(String(20), nullable=False, default="estudiante")
     activo = Column(Boolean, default=True)
+    correo_verificado = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     # Relationships
