@@ -116,6 +116,7 @@ def _smart_grade(examen: Examen, resp_list: list[dict]) -> dict:
         "nota_objective": round(nota_objective, 2),
         "nota_maxima_objective": round(nota_maxima_objective, 2),
         "nota_maxima_open": round(nota_maxima_open, 2),
+        "nota_maxima_total": round(nota_maxima_objective + nota_maxima_open, 2),
         "all_objective": len(open_questions_resp) == 0,
     }
 

@@ -13,6 +13,25 @@ const TIPOS_PREGUNTA = [
   { key: 'sopa_letras', label: 'Sopa de Letras' },
 ];
 
+const GRADOS_COLOMBIA = [
+  { group: 'Preescolar', options: [{ value: 'preescolar', label: 'Preescolar (Transición)' }] },
+  { group: 'Primaria', options: [
+    { value: 'primaria_1', label: '1° Primaria' },
+    { value: 'primaria_2', label: '2° Primaria' },
+    { value: 'primaria_3', label: '3° Primaria' },
+    { value: 'primaria_4', label: '4° Primaria' },
+    { value: 'primaria_5', label: '5° Primaria' },
+  ]},
+  { group: 'Secundaria', options: [
+    { value: 'secundaria_6', label: '6° (Sexto)' },
+    { value: 'secundaria_7', label: '7° (Séptimo)' },
+    { value: 'secundaria_8', label: '8° (Octavo)' },
+    { value: 'secundaria_9', label: '9° (Noveno)' },
+    { value: 'secundaria_10', label: '10° (Décimo)' },
+    { value: 'secundaria_11', label: '11° (Undécimo)' },
+  ]},
+];
+
 // --- Autocomplete helpers ---
 const AC_KEY = 'xalificator_autocomplete';
 function loadSuggestions(field) {
@@ -76,6 +95,7 @@ export default function GenerarExamen() {
     titulo: '',
     tema: '',
     nivel: 'intermedio',
+    grado: '',
     contenido_base: '',
     distribucion: {},
     fecha_limite: '',
@@ -109,6 +129,7 @@ export default function GenerarExamen() {
         titulo: form.titulo,
         tema: form.tema,
         nivel: form.nivel,
+        grado: form.grado || null,
         distribucion: form.distribucion,
         contenido_base: form.contenido_base || null,
       };
@@ -161,6 +182,21 @@ export default function GenerarExamen() {
                 <option value="intermedio">Intermedio</option>
                 <option value="avanzado">Avanzado</option>
               </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Grado escolar</label>
+              <select className="input-field" value={form.grado}
+                onChange={e => setForm(p => ({ ...p, grado: e.target.value }))}>
+                <option value="">Seleccionar grado...</option>
+                {GRADOS_COLOMBIA.map(g => (
+                  <optgroup key={g.group} label={g.group}>
+                    {g.options.map(o => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+              <p className="text-xs text-gray-400 mt-1">Las preguntas se adaptarán al nivel cognitivo del grado seleccionado.</p>
             </div>
             <AutocompleteInput label="Contenido base (opcional)" field="contenido_base" type="textarea"
               value={form.contenido_base} onChange={v => setForm(p => ({...p, contenido_base: v}))}

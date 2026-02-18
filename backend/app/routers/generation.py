@@ -35,6 +35,7 @@ async def generate_exam_endpoint(
             nivel=data.nivel,
             distribucion=data.distribucion,
             contenido_base=data.contenido_base or "",
+            grado=data.grado or "",
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generando examen: {str(e)}")

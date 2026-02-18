@@ -34,17 +34,21 @@ async def _log_usage(task: str, model: str, usage):
         pass  # Don't break functionality if logging fails
 
 
-async def generate_exam(tema: str, nivel: str, distribucion: dict, contenido_base: str = "") -> dict:
+async def generate_exam(tema: str, nivel: str, distribucion: dict, contenido_base: str = "", grado: str = "") -> dict:
     """Generate an exam using Groq LLM."""
-    system_prompt = f"""Eres un experto en pedagogía y diseño de evaluaciones.
+    grado_instruccion = f"\nGrado escolar: {grado}. Adapta el vocabulario, complejidad y contenido al nivel cognitivo de este grado del sistema educativo colombiano." if grado else ""
+    system_prompt = f"""Eres un experto en pedagogía y diseño de evaluaciones del sistema educativo colombiano.
 Genera un examen en formato JSON ESTRICTAMENTE siguiendo este schema.
 NO agregues texto fuera del JSON. NO uses markdown.
 Cada pregunta debe tener numeración clara (1., 2., 3...).
 Las opciones de selección múltiple deben usar formato A) B) C) D).
 Incluye la respuesta correcta en el campo 'respuesta_correcta' (NO visible en la version estudiante).
-Ajusta la dificultad al nivel: {nivel}.
+Ajusta la dificultad al nivel: {nivel}.{grado_instruccion}
 Tema: {tema}
 Distribución: {json.dumps(distribucion, ensure_ascii=False)}
+
+IMPORTANTE: La nota máxima del examen es 5.0 (escala colombiana 1.0-5.0). 
+Distribuye los puntos entre las preguntas de modo que la SUMA TOTAL de puntos sea exactamente 5.0.
 
 Schema JSON requerido:
 {{
@@ -60,6 +64,7 @@ Schema JSON requerido:
       "nivel_bloom": "recordar|comprender|aplicar|analizar|evaluar|crear"
     }}
   ],
+  "nota_maxima": 5.0,
   "crucigrama": {{  // solo si se solicita
     "grid": [[]], "pistas_horizontal": [], "pistas_vertical": []
   }},
@@ -91,15 +96,18 @@ async def grade_exam(
     rubrica: str = "",
 ) -> dict:
     """Grade exam responses using Groq LLM."""
-    system_prompt = """Eres un calificador académico experto y justo.
+    system_prompt = """Eres un calificador académico experto y justo del sistema educativo colombiano.
 Califica cada respuesta del estudiante comparándola con la clave de respuestas.
+USA ESCALA DE CALIFICACIÓN COLOMBIANA: de 1.0 a 5.0 donde 5.0 es la nota máxima y 3.0 es el mínimo aprobatorio.
+Asigna notas proporcionales: si una pregunta vale X puntos, la nota parcial debe estar entre 0 y X.
+La nota_total y nota_maxima deben estar en escala de 1.0 a 5.0.
 Asigna una nota parcial si la respuesta es parcialmente correcta.
 Proporciona retroalimentación constructiva y específica para cada pregunta.
 
 Responde ÚNICAMENTE con JSON válido siguiendo este schema exacto:
 {
-  "nota_total": float,
-  "nota_maxima": float,
+  "nota_total": float (1.0-5.0),
+  "nota_maxima": 5.0,
   "preguntas": [
     {
       "numero": int,

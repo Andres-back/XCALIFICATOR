@@ -237,12 +237,12 @@ def generate_exam_pdf(exam_data: dict, include_answers: bool = False) -> bytes:
 
         if tipo == "seleccion_multiple":
             opciones = p.get("opciones", [])
-            letters = "A B C D E F G H".split()
+            opt_letters = "A B C D E F G H".split()
             for j, opt in enumerate(opciones):
-                letter = letters[j] if j < len(letters) else str(j + 1)
+                opt_letter = opt_letters[j] if j < len(opt_letters) else str(j + 1)
                 q_elements.append(Paragraph(
                     f'<font color="{PRIMARY.hexval()}"><b>○</b></font>  '
-                    f'<font color="{GRAY_500.hexval()}"><b>{letter})</b></font>  {opt}',
+                    f'<font color="{GRAY_500.hexval()}"><b>{opt_letter})</b></font>  {opt}',
                     option_style
                 ))
             if include_answers:

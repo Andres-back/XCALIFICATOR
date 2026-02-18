@@ -260,8 +260,8 @@ async def get_examen_stats(
     exam_result = await db.execute(select(Examen).where(Examen.id == examen_id))
     examen = exam_result.scalar_one_or_none()
 
-    # Compute nota_maxima from clave_respuestas
-    nota_maxima = 5.0  # default
+    # Compute nota_maxima from clave_respuestas (Colombian scale: 5.0)
+    nota_maxima = 5.0
     if examen and examen.clave_respuestas:
         clave = examen.clave_respuestas
         if isinstance(clave, dict) and "preguntas" in clave:
@@ -272,15 +272,17 @@ async def get_examen_stats(
         return {"total": len(notas), "nota_maxima": nota_maxima}
 
     avg = sum(scores) / len(scores)
-    aprobados = sum(1 for s in scores if s >= (nota_maxima * 0.6))
+    # Colombian grading: aprobado >= 3.0 on a 1.0-5.0 scale
+    aprobados = sum(1 for s in scores if s >= 3.0)
 
-    # Grade distribution in ranges
+    # Grade distribution in Colombian scale ranges
     ranges = [
-        {"label": f"0-{nota_maxima*0.2:.1f}", "min": 0, "max": nota_maxima * 0.2},
-        {"label": f"{nota_maxima*0.2:.1f}-{nota_maxima*0.4:.1f}", "min": nota_maxima * 0.2, "max": nota_maxima * 0.4},
-        {"label": f"{nota_maxima*0.4:.1f}-{nota_maxima*0.6:.1f}", "min": nota_maxima * 0.4, "max": nota_maxima * 0.6},
-        {"label": f"{nota_maxima*0.6:.1f}-{nota_maxima*0.8:.1f}", "min": nota_maxima * 0.6, "max": nota_maxima * 0.8},
-        {"label": f"{nota_maxima*0.8:.1f}-{nota_maxima:.1f}", "min": nota_maxima * 0.8, "max": nota_maxima + 0.01},
+        {"label": "1.0 - 1.9", "min": 0, "max": 2.0},
+        {"label": "2.0 - 2.9", "min": 2.0, "max": 3.0},
+        {"label": "3.0 - 3.4", "min": 3.0, "max": 3.5},
+        {"label": "3.5 - 3.9", "min": 3.5, "max": 4.0},
+        {"label": "4.0 - 4.5", "min": 4.0, "max": 4.6},
+        {"label": "4.6 - 5.0", "min": 4.6, "max": 5.01},
     ]
     distribucion = []
     for r in ranges:

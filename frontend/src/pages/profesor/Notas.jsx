@@ -225,7 +225,7 @@ export default function ProfesorNotas() {
                       {i + 1}
                     </span>
                     <span className="flex-1 text-sm text-gray-700 truncate">{s.nombre}</span>
-                    <span className={`text-sm font-bold ${s.nota >= (stats.nota_maxima * 0.6) ? 'text-emerald-600' : 'text-red-600'}`}>
+                    <span className={`text-sm font-bold ${s.nota >= 3.0 ? 'text-emerald-600' : 'text-red-600'}`}>
                       {s.nota}
                     </span>
                   </div>
@@ -254,7 +254,7 @@ export default function ProfesorNotas() {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-lg font-extrabold
-                      ${parseFloat(n.nota) >= (stats?.nota_maxima ? stats.nota_maxima * 0.6 : 3.0) ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                      ${parseFloat(n.nota) >= 3.0 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
                       {n.nota}
                     </div>
                     <div>

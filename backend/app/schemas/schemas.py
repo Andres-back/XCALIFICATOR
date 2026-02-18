@@ -242,6 +242,7 @@ class ExamGenerationRequest(BaseModel):
     titulo: str
     tema: str
     nivel: str = "intermedio"  # basico, intermedio, avanzado
+    grado: Optional[str] = None  # grado escolar colombiano
     distribucion: dict  # {"seleccion_multiple": 5, "verdadero_falso": 3, ...}
     contenido_base: Optional[str] = None  # texto o contenido del PDF
 
