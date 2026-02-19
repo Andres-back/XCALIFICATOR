@@ -9,8 +9,9 @@ import {
 } from 'lucide-react';
 import { format } from 'date-fns';
 
-export default function ProfesorExamenes() {
-  const { materiaId } = useParams();
+export default function ProfesorExamenes({ materiaId: propMateriaId, embedded = false }) {
+  const params = useParams();
+  const materiaId = propMateriaId || params.materiaId;
   const [examenes, setExamenes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [preview, setPreview] = useState({ show: false, url: null, title: '', withAnswers: false, examenId: null });
@@ -186,14 +187,16 @@ export default function ProfesorExamenes() {
   if (loading) return <div className="flex justify-center py-20"><div className="animate-spin h-8 w-8 border-4 border-primary-500 border-t-transparent rounded-full"></div></div>;
 
   return (
-    <div className="max-w-5xl mx-auto">
-      {/* Header */}
+    <div className={embedded ? '' : 'max-w-5xl mx-auto'}>
+      {/* Header — hidden when embedded */}
+      {!embedded && (
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-6">
         <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Exámenes</h1>
         <Link to={`/profesor/generar/${materiaId}`} className="btn-primary flex items-center gap-2 text-sm">
           <FileText className="w-4 h-4" /> Generar Examen
         </Link>
       </div>
+      )}
 
       {examenes.length === 0 ? (
         <div className="card text-center py-12">

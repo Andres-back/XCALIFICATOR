@@ -2,18 +2,14 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../api';
 import toast from 'react-hot-toast';
-import { Wand2, Loader2, Clock } from 'lucide-react';
+import { Wand2, Loader2, Clock, AlertCircle } from 'lucide-react';
+import ConfirmDialog from '../../components/ConfirmDialog';
 
 const TIPOS_PREGUNTA = [
-  { key: 'seleccion_multiple', label: 'Selección Múltiple' },
-  { key: 'verdadero_falso', label: 'Verdadero / Falso' },
-  { key: 'respuesta_corta', label: 'Respuesta Corta' },
-  { key: 'desarrollo', label: 'Desarrollo / Ensayo' },
-];
-
-const TIPOS_EXTRA = [
-  { key: 'crucigrama', label: 'Crucigrama' },
-  { key: 'sopa_letras', label: 'Sopa de Letras' },
+  { key: 'seleccion_multiple', label: 'Selección Múltiple', desc: 'Preguntas con opciones A, B, C, D' },
+  { key: 'verdadero_falso', label: 'Verdadero / Falso', desc: 'Evalúa si un enunciado es correcto' },
+  { key: 'respuesta_corta', label: 'Respuesta Corta', desc: 'Respuesta breve de una o pocas palabras' },
+  { key: 'desarrollo', label: 'Desarrollo / Ensayo', desc: 'Respuesta abierta y elaborada' },
 ];
 
 const GRADOS_COLOMBIA = [
@@ -54,7 +50,7 @@ function saveSuggestion(field, value) {
   } catch {}
 }
 
-function AutocompleteInput({ label, field, value, onChange, placeholder, required, type = 'text', ...rest }) {
+function AutocompleteInput({ label, field, value, onChange, placeholder, required, type = 'text', hint, ...rest }) {
   const [suggestions, setSuggestions] = useState([]);
   const [showSugg, setShowSugg] = useState(false);
   const filtered = suggestions.filter(s => s.toLowerCase().includes((value || '').toLowerCase()) && s !== value);
@@ -75,6 +71,7 @@ function AutocompleteInput({ label, field, value, onChange, placeholder, require
           onFocus={() => setShowSugg(true)} onBlur={() => setTimeout(() => setShowSugg(false), 200)}
           required={required} {...rest} />
       )}
+      {hint && <p className="text-xs text-gray-400 mt-1">{hint}</p>}
       {showSugg && filtered.length > 0 && (
         <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-40 overflow-y-auto">
           {filtered.map((s, i) => (
@@ -90,10 +87,12 @@ function AutocompleteInput({ label, field, value, onChange, placeholder, require
   );
 }
 
-export default function GenerarExamen() {
-  const { materiaId } = useParams();
+export default function GenerarExamen({ materiaId: propMateriaId, embedded = false, onSuccess }) {
+  const params = useParams();
   const navigate = useNavigate();
+  const materiaId = propMateriaId || params.materiaId;
   const [loading, setLoading] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
   const [form, setForm] = useState({
     titulo: '',
     tema: '',
@@ -104,11 +103,9 @@ export default function GenerarExamen() {
     fecha_limite: '',
     fecha_activacion: '',
     activo_online: true,
-    incluir_sopa: false,
-    sopa_num_palabras: 8,
-    incluir_crucigrama: false,
-    crucigrama_num_pistas: 6,
   });
+
+  const totalPreguntas = Object.values(form.distribucion).reduce((a, b) => a + b, 0);
 
   const updateDistribucion = (key, value) => {
     setForm(prev => ({
@@ -117,15 +114,17 @@ export default function GenerarExamen() {
     }));
   };
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault();
-    const total = Object.values(form.distribucion).reduce((a, b) => a + b, 0);
-    if (total === 0) {
+    if (totalPreguntas === 0) {
       toast.error('Selecciona al menos un tipo de pregunta');
       return;
     }
+    setShowConfirm(true);
+  };
 
-    // Save values for autocomplete
+  const doGenerate = async () => {
+    setShowConfirm(false);
     saveSuggestion('titulo', form.titulo);
     saveSuggestion('tema', form.tema);
     if (form.contenido_base) saveSuggestion('contenido_base', form.contenido_base.slice(0, 200));
@@ -141,21 +140,11 @@ export default function GenerarExamen() {
         distribucion: form.distribucion,
         contenido_base: form.contenido_base || null,
       };
-      // Add sopa/crucigrama if toggled
-      if (form.incluir_sopa) {
-        payload.distribucion = { ...payload.distribucion, sopa_letras: 1 };
-        payload.sopa_config = { num_palabras: form.sopa_num_palabras };
-      }
-      if (form.incluir_crucigrama) {
-        payload.distribucion = { ...payload.distribucion, crucigrama: 1 };
-        payload.crucigrama_config = { num_pistas: form.crucigrama_num_pistas };
-      }
-      const res = await api.post('/generate/exam', payload);
+      await api.post('/generate/exam', payload);
 
-      // If fecha_limite set, update the generated exam with it
-      if (form.fecha_limite) {
+      // Set dates if configured
+      if (form.fecha_limite || form.fecha_activacion) {
         try {
-          // Get latest exam for this materia to update its fecha_limite
           const examsRes = await api.get(`/examenes/materia/${materiaId}`);
           const latest = examsRes.data?.[0];
           if (latest) {
@@ -167,8 +156,12 @@ export default function GenerarExamen() {
         } catch {}
       }
 
-      toast.success('Examen generado exitosamente');
-      navigate(`/profesor/examenes/${materiaId}`);
+      toast.success('¡Examen generado exitosamente!');
+      if (onSuccess) {
+        onSuccess();
+      } else {
+        navigate(`/profesor/examenes/${materiaId}`);
+      }
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Error generando examen');
     } finally {
@@ -177,90 +170,96 @@ export default function GenerarExamen() {
   };
 
   return (
-    <div className="max-w-2xl mx-auto">
-      <h1 className="text-xl sm:text-2xl font-bold text-gray-900 mb-6">Generar Examen con IA</h1>
+    <div className={embedded ? '' : 'max-w-2xl mx-auto'}>
+      {!embedded && (
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-900 mb-6">Generar Examen con IA</h1>
+      )}
+
+      {/* Info banner */}
+      <div className="flex items-start gap-3 p-4 bg-blue-50 border border-blue-100 rounded-xl mb-6">
+        <AlertCircle className="w-5 h-5 text-blue-500 shrink-0 mt-0.5" />
+        <div>
+          <p className="text-sm text-blue-800 font-medium">Generación con Inteligencia Artificial</p>
+          <p className="text-xs text-blue-600 mt-0.5">
+            Las preguntas serán generadas automáticamente según el tema y nivel. 
+            Para crucigramas y sopas de letras, usa las pestañas correspondientes.
+          </p>
+        </div>
+      </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        <div className="card">
-          <h2 className="font-semibold text-gray-900 mb-4">Información General</h2>
+        {/* Section 1: General Info */}
+        <div className="bg-white rounded-xl border border-gray-200 p-5 sm:p-6">
+          <h2 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
+            <span className="w-6 h-6 rounded-full bg-primary-100 text-primary-700 text-xs font-bold flex items-center justify-center">1</span>
+            Información General
+          </h2>
           <div className="space-y-4">
             <AutocompleteInput label="Título del examen" field="titulo"
               value={form.titulo} onChange={v => setForm(p => ({...p, titulo: v}))}
+              placeholder="Ej: Evaluación de Matemáticas - Fracciones"
               required />
             <AutocompleteInput label="Tema / Contenido" field="tema" type="textarea"
               value={form.tema} onChange={v => setForm(p => ({...p, tema: v}))}
-              placeholder="Describe el tema o contenido a evaluar..." required />
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Nivel de dificultad</label>
-              <select className="input-field" value={form.nivel}
-                onChange={e => setForm(p => ({ ...p, nivel: e.target.value }))}>
-                <option value="basico">Básico</option>
-                <option value="intermedio">Intermedio</option>
-                <option value="avanzado">Avanzado</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Grado escolar</label>
-              <select className="input-field" value={form.grado}
-                onChange={e => setForm(p => ({ ...p, grado: e.target.value }))}>
-                <option value="">Seleccionar grado...</option>
-                {GRADOS_COLOMBIA.map(g => (
-                  <optgroup key={g.group} label={g.group}>
-                    {g.options.map(o => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
-              <p className="text-xs text-gray-400 mt-1">Las preguntas se adaptarán al nivel cognitivo del grado seleccionado.</p>
+              placeholder="Describe el tema o contenido a evaluar..."
+              hint="Sé lo más específico posible para mejores resultados"
+              required />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nivel de dificultad</label>
+                <select className="input-field" value={form.nivel}
+                  onChange={e => setForm(p => ({ ...p, nivel: e.target.value }))}>
+                  <option value="basico">Básico</option>
+                  <option value="intermedio">Intermedio</option>
+                  <option value="avanzado">Avanzado</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Grado escolar</label>
+                <select className="input-field" value={form.grado}
+                  onChange={e => setForm(p => ({ ...p, grado: e.target.value }))}>
+                  <option value="">Seleccionar grado...</option>
+                  {GRADOS_COLOMBIA.map(g => (
+                    <optgroup key={g.group} label={g.group}>
+                      {g.options.map(o => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </div>
             </div>
             <AutocompleteInput label="Contenido base (opcional)" field="contenido_base" type="textarea"
               value={form.contenido_base} onChange={v => setForm(p => ({...p, contenido_base: v}))}
-              placeholder="Pega aquí texto adicional como base para generar las preguntas..." />
+              placeholder="Pega aquí texto adicional como base para generar las preguntas..."
+              hint="Puedes pegar apuntes, texto del libro o temas clave" />
           </div>
         </div>
 
-        {/* Fecha límite & Online */}
-        <div className="card">
-          <h2 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <Clock className="w-5 h-5 text-primary-600" /> Configuración Online
+        {/* Section 2: Question Distribution */}
+        <div className="bg-white rounded-xl border border-gray-200 p-5 sm:p-6">
+          <h2 className="font-semibold text-gray-900 mb-1 flex items-center gap-2">
+            <span className="w-6 h-6 rounded-full bg-primary-100 text-primary-700 text-xs font-bold flex items-center justify-center">2</span>
+            Distribución de Preguntas
           </h2>
-          <div className="space-y-4">
-            <label className="flex items-center gap-3">
-              <input type="checkbox" checked={form.activo_online}
-                onChange={e => setForm(p => ({...p, activo_online: e.target.checked}))}
-                className="rounded border-gray-300 text-primary-600" />
-              <span className="text-sm text-gray-700">Activar para resolución online por estudiantes</span>
-            </label>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Fecha límite de entrega (opcional)
-              </label>
-              <input type="datetime-local" className="input-field" value={form.fecha_limite}
-                onChange={e => setForm(p => ({...p, fecha_limite: e.target.value}))} />
-              <p className="text-xs text-gray-400 mt-1">Los estudiantes no podrán responder después de esta fecha.</p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Fecha de activación (opcional)
-              </label>
-              <input type="datetime-local" className="input-field" value={form.fecha_activacion}
-                onChange={e => setForm(p => ({...p, fecha_activacion: e.target.value}))} />
-              <p className="text-xs text-gray-400 mt-1">El examen se mostrará a los estudiantes a partir de esta fecha. Si no se establece, estará disponible de inmediato.</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="card">
-          <h2 className="font-semibold text-gray-900 mb-4">Distribución de Preguntas</h2>
-          <p className="text-sm text-gray-500 mb-4">Indica cuántas preguntas de cada tipo deseas incluir.</p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <p className="text-sm text-gray-500 mb-4 ml-8">
+            Selecciona cuántas preguntas de cada tipo. Total: <span className="font-bold text-primary-600">{totalPreguntas}</span>
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {TIPOS_PREGUNTA.map(tipo => (
-              <div key={tipo.key} className="flex items-center justify-between bg-gray-50 rounded-lg p-3">
-                <label className="text-sm font-medium text-gray-700">{tipo.label}</label>
+              <div key={tipo.key}
+                className={`flex items-center justify-between rounded-xl p-4 border transition-colors ${
+                  (form.distribucion[tipo.key] || 0) > 0
+                    ? 'bg-primary-50 border-primary-200'
+                    : 'bg-gray-50 border-gray-200'
+                }`}>
+                <div className="min-w-0">
+                  <label className="text-sm font-medium text-gray-800">{tipo.label}</label>
+                  <p className="text-xs text-gray-400 mt-0.5">{tipo.desc}</p>
+                </div>
                 <input
                   type="number" min="0" max="20"
-                  className="w-16 px-2 py-1 border border-gray-300 rounded text-center text-sm"
+                  className="w-16 px-2 py-1.5 border border-gray-300 rounded-lg text-center text-sm font-medium focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
                   value={form.distribucion[tipo.key] || ''}
                   onChange={e => updateDistribucion(tipo.key, e.target.value)}
                 />
@@ -269,55 +268,67 @@ export default function GenerarExamen() {
           </div>
         </div>
 
-        {/* Sopa de Letras & Crucigrama - separate config */}
-        <div className="card">
-          <h2 className="font-semibold text-gray-900 mb-4">Actividades Interactivas (Opcional)</h2>
-          <p className="text-sm text-gray-500 mb-4">Estas actividades se generan con configuraciones especiales y se añaden al examen.</p>
+        {/* Section 3: Online Config */}
+        <div className="bg-white rounded-xl border border-gray-200 p-5 sm:p-6">
+          <h2 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
+            <span className="w-6 h-6 rounded-full bg-primary-100 text-primary-700 text-xs font-bold flex items-center justify-center">3</span>
+            <Clock className="w-4 h-4 text-primary-600" /> Configuración Online
+          </h2>
           <div className="space-y-4">
-            <div className="bg-gray-50 rounded-lg p-4">
-              <label className="flex items-center gap-3">
-                <input type="checkbox" checked={form.incluir_sopa}
-                  onChange={e => setForm(p => ({...p, incluir_sopa: e.target.checked}))}
-                  className="rounded border-gray-300 text-primary-600" />
-                <span className="text-sm font-medium text-gray-700">Incluir Sopa de Letras</span>
-              </label>
-              {form.incluir_sopa && (
-                <div className="mt-3 ml-7">
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Cantidad de palabras</label>
-                  <input type="number" min="4" max="20" className="w-20 px-2 py-1 border border-gray-300 rounded text-center text-sm"
-                    value={form.sopa_num_palabras}
-                    onChange={e => setForm(p => ({...p, sopa_num_palabras: parseInt(e.target.value) || 8}))} />
-                </div>
-              )}
-            </div>
-            <div className="bg-gray-50 rounded-lg p-4">
-              <label className="flex items-center gap-3">
-                <input type="checkbox" checked={form.incluir_crucigrama}
-                  onChange={e => setForm(p => ({...p, incluir_crucigrama: e.target.checked}))}
-                  className="rounded border-gray-300 text-primary-600" />
-                <span className="text-sm font-medium text-gray-700">Incluir Crucigrama</span>
-              </label>
-              {form.incluir_crucigrama && (
-                <div className="mt-3 ml-7">
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Cantidad de pistas</label>
-                  <input type="number" min="3" max="15" className="w-20 px-2 py-1 border border-gray-300 rounded text-center text-sm"
-                    value={form.crucigrama_num_pistas}
-                    onChange={e => setForm(p => ({...p, crucigrama_num_pistas: parseInt(e.target.value) || 6}))} />
-                </div>
-              )}
+            <label className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl cursor-pointer">
+              <input type="checkbox" checked={form.activo_online}
+                onChange={e => setForm(p => ({...p, activo_online: e.target.checked}))}
+                className="rounded border-gray-300 text-primary-600 w-4 h-4" />
+              <div>
+                <span className="text-sm font-medium text-gray-700">Activar para resolución online</span>
+                <p className="text-xs text-gray-400">Los estudiantes podrán resolver este examen desde la plataforma</p>
+              </div>
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Fecha de activación</label>
+                <input type="datetime-local" className="input-field" value={form.fecha_activacion}
+                  onChange={e => setForm(p => ({...p, fecha_activacion: e.target.value}))} />
+                <p className="text-xs text-gray-400 mt-1">Se mostrará a estudiantes a partir de esta fecha.</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Fecha límite</label>
+                <input type="datetime-local" className="input-field" value={form.fecha_limite}
+                  onChange={e => setForm(p => ({...p, fecha_limite: e.target.value}))} />
+                <p className="text-xs text-gray-400 mt-1">No podrán responder después de esta fecha.</p>
+              </div>
             </div>
           </div>
         </div>
 
-        <button type="submit" disabled={loading}
-          className="btn-primary w-full flex items-center justify-center gap-2 py-3">
+        {/* Submit */}
+        <button type="submit" disabled={loading || totalPreguntas === 0}
+          className="btn-primary w-full flex items-center justify-center gap-2 py-3.5 text-base">
           {loading ? (
-            <><Loader2 className="w-5 h-5 animate-spin" /> Generando con IA...</>
+            <>
+              <Loader2 className="w-5 h-5 animate-spin" />
+              <span>Generando con IA... Esto puede tardar unos segundos</span>
+            </>
           ) : (
-            <><Wand2 className="w-5 h-5" /> Generar Examen</>
+            <>
+              <Wand2 className="w-5 h-5" />
+              <span>Generar Examen ({totalPreguntas} preguntas)</span>
+            </>
           )}
         </button>
       </form>
+
+      {/* Confirm Dialog */}
+      <ConfirmDialog
+        open={showConfirm}
+        onClose={() => setShowConfirm(false)}
+        onConfirm={doGenerate}
+        title="¿Generar examen?"
+        message={`Se generarán ${totalPreguntas} preguntas sobre "${form.tema}" con nivel ${form.nivel}. Esta operación usa inteligencia artificial y puede tardar unos segundos.`}
+        confirmText="Sí, generar"
+        variant="primary"
+        loading={loading}
+      />
     </div>
   );
 }

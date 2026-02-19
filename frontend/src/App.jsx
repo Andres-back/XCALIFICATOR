@@ -12,6 +12,7 @@ import ProfesorExamenes from './pages/profesor/Examenes';
 import ProfesorGenerar from './pages/profesor/GenerarExamen';
 import ProfesorCalificar from './pages/profesor/Calificar';
 import ProfesorNotas from './pages/profesor/Notas';
+import MateriaDetail from './pages/profesor/MateriaDetail';
 import EstudianteHome from './pages/estudiante/Home';
 import EstudianteNotas from './pages/estudiante/Notas';
 import EstudianteExamen from './pages/estudiante/ResolverExamen';
@@ -76,6 +77,11 @@ export default function App() {
         <Route path="/profesor/materias" element={
           <ProtectedRoute roles={['profesor', 'admin']}>
             <Layout><ProfesorMaterias /></Layout>
+          </ProtectedRoute>
+        } />
+        <Route path="/profesor/materia/:materiaId" element={
+          <ProtectedRoute roles={['profesor', 'admin']}>
+            <Layout><MateriaDetail /></Layout>
           </ProtectedRoute>
         } />
         <Route path="/profesor/examenes/:materiaId" element={

@@ -9,16 +9,16 @@ import { useState } from 'react';
 
 const navItems = {
   admin: [
-    { label: 'Dashboard', path: '/admin', icon: LayoutDashboard },
+    { label: 'Dashboard', path: '/admin', icon: LayoutDashboard, exact: true },
     { label: 'Usuarios', path: '/admin/users', icon: Users },
     { label: 'Materias', path: '/admin/materias', icon: BookOpen },
     { label: 'Auditoría', path: '/admin/audit', icon: Shield },
   ],
   profesor: [
-    { label: 'Materias', path: '/profesor/materias', icon: BookOpen },
+    { label: 'Materias', path: '/profesor/materias', icon: BookOpen, prefix: '/profesor' },
   ],
   estudiante: [
-    { label: 'Inicio', path: '/estudiante', icon: LayoutDashboard },
+    { label: 'Inicio', path: '/estudiante', icon: LayoutDashboard, exact: true },
     { label: 'Mis Notas', path: '/estudiante/notas', icon: Award },
   ],
 };
@@ -58,7 +58,11 @@ export default function Layout({ children }) {
         <nav className="flex flex-col p-4 gap-1">
           {items.map((item) => {
             const Icon = item.icon;
-            const isActive = location.pathname === item.path;
+            const isActive = item.exact
+              ? location.pathname === item.path
+              : item.prefix
+              ? location.pathname.startsWith(item.prefix)
+              : location.pathname === item.path || location.pathname.startsWith(item.path + '/');
             return (
               <Link
                 key={item.path}
