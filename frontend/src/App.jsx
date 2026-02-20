@@ -7,16 +7,19 @@ import AdminDashboard from './pages/admin/Dashboard';
 import AdminUsers from './pages/admin/Users';
 import AdminMaterias from './pages/admin/Materias';
 import AdminAuditLog from './pages/admin/AuditLog';
+import AdminPeriodos from './pages/admin/Periodos';
 import ProfesorMaterias from './pages/profesor/Materias';
 import ProfesorExamenes from './pages/profesor/Examenes';
 import ProfesorGenerar from './pages/profesor/GenerarExamen';
 import ProfesorCalificar from './pages/profesor/Calificar';
 import ProfesorNotas from './pages/profesor/Notas';
+import ProfesorHerramientas from './pages/profesor/Herramientas';
 import MateriaDetail from './pages/profesor/MateriaDetail';
 import EstudianteHome from './pages/estudiante/Home';
 import EstudianteNotas from './pages/estudiante/Notas';
 import EstudianteExamen from './pages/estudiante/ResolverExamen';
 import EstudianteChat from './pages/estudiante/Chat';
+import EstudianteBoletin from './pages/estudiante/Boletin';
 import Perfil from './pages/Perfil';
 import Layout from './components/Layout';
 
@@ -72,6 +75,11 @@ export default function App() {
             <Layout><AdminAuditLog /></Layout>
           </ProtectedRoute>
         } />
+        <Route path="/admin/periodos" element={
+          <ProtectedRoute roles={['admin']}>
+            <Layout><AdminPeriodos /></Layout>
+          </ProtectedRoute>
+        } />
 
         {/* Profesor */}
         <Route path="/profesor/materias" element={
@@ -104,6 +112,11 @@ export default function App() {
             <Layout><ProfesorNotas /></Layout>
           </ProtectedRoute>
         } />
+        <Route path="/profesor/herramientas" element={
+          <ProtectedRoute roles={['profesor', 'admin']}>
+            <Layout><ProfesorHerramientas /></Layout>
+          </ProtectedRoute>
+        } />
 
         {/* Estudiante */}
         <Route path="/estudiante" element={
@@ -124,6 +137,11 @@ export default function App() {
         <Route path="/estudiante/chat/:notaId" element={
           <ProtectedRoute roles={['estudiante']}>
             <Layout><EstudianteChat /></Layout>
+          </ProtectedRoute>
+        } />
+        <Route path="/estudiante/boletin" element={
+          <ProtectedRoute roles={['estudiante']}>
+            <Layout><EstudianteBoletin /></Layout>
           </ProtectedRoute>
         } />
 

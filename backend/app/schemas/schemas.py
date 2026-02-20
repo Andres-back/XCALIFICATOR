@@ -1,5 +1,5 @@
 import re
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional
 from uuid import UUID
 from pydantic import BaseModel, EmailStr, field_validator
@@ -263,6 +263,8 @@ class ChatMessage(BaseModel):
 
 class ChatResponse(BaseModel):
     response: str
+    preguntas_restantes: Optional[int] = None
+    minutos_restantes: Optional[float] = None
 
 
 class ChatHistoryOut(BaseModel):
@@ -355,3 +357,223 @@ class APIUsageStats(BaseModel):
     remaining_requests_today: int = 0
     usage_by_task: list[APIUsageByModel] = []
     daily_history: list[dict] = []               # last 7 days
+
+
+# --- Períodos Académicos ---
+class PeriodoAcademicoCreate(BaseModel):
+    nombre: str
+    numero: int
+    fecha_inicio: date
+    fecha_fin: date
+    porcentaje: float
+
+    @field_validator("numero")
+    @classmethod
+    def validate_numero(cls, v: int) -> int:
+        if v < 1 or v > 4:
+            raise ValueError("El período debe estar entre 1 y 4")
+        return v
+
+    @field_validator("porcentaje")
+    @classmethod
+    def validate_porcentaje(cls, v: float) -> float:
+        if v <= 0 or v > 100:
+            raise ValueError("El porcentaje debe estar entre 0.01 y 100")
+        return v
+
+
+class PeriodoAcademicoUpdate(BaseModel):
+    nombre: Optional[str] = None
+    fecha_inicio: Optional[date] = None
+    fecha_fin: Optional[date] = None
+    porcentaje: Optional[float] = None
+    activo: Optional[bool] = None
+
+
+class PeriodoAcademicoOut(BaseModel):
+    id: UUID
+    nombre: str
+    numero: int
+    fecha_inicio: date
+    fecha_fin: date
+    porcentaje: float
+    activo: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# --- Herramientas ---
+class HerramientaGenerate(BaseModel):
+    tipo: str  # 'examen', 'crucigrama', 'sopa_letras', 'emparejar', 'cuento'
+    titulo: str = ""
+    tema: str
+    nivel: str = "intermedio"
+    grado: Optional[str] = ""
+    distribucion: Optional[dict] = None
+    contenido_base: Optional[str] = ""
+    # Sopa de letras customization
+    num_palabras: Optional[int] = 8
+    palabras_obligatorias: Optional[list[str]] = None
+    # Crucigrama customization
+    num_horizontales: Optional[int] = 5
+    num_verticales: Optional[int] = 5
+    # Emparejar customization
+    num_pares: Optional[int] = 6
+    # Cuento customization
+    moraleja_tema: Optional[str] = ""
+
+    @field_validator("tipo")
+    @classmethod
+    def validate_tipo(cls, v: str) -> str:
+        valid = ("examen", "crucigrama", "sopa_letras", "emparejar", "cuento")
+        if v not in valid:
+            raise ValueError(f"Tipo debe ser: {', '.join(valid)}")
+        return v
+
+
+class HerramientaCreate(BaseModel):
+    tipo: str  # 'examen', 'crucigrama', 'sopa_letras', 'emparejar', 'cuento'
+    titulo: str
+    contenido_json: Optional[dict] = None
+    clave_respuestas: Optional[dict] = None
+    config_json: Optional[dict] = None
+
+    @field_validator("tipo")
+    @classmethod
+    def validate_tipo(cls, v: str) -> str:
+        valid = ("examen", "crucigrama", "sopa_letras", "emparejar", "cuento")
+        if v not in valid:
+            raise ValueError(f"Tipo debe ser: {', '.join(valid)}")
+        return v
+
+
+class HerramientaUpdate(BaseModel):
+    titulo: Optional[str] = None
+    contenido_json: Optional[dict] = None
+    clave_respuestas: Optional[dict] = None
+    config_json: Optional[dict] = None
+    estado: Optional[str] = None
+
+
+class HerramientaAssign(BaseModel):
+    materia_id: UUID
+    activo_online: bool = False
+    fecha_limite: Optional[datetime] = None
+
+
+class HerramientaOut(BaseModel):
+    id: UUID
+    profesor_id: UUID
+    tipo: str
+    titulo: str
+    contenido_json: Optional[dict] = None
+    clave_respuestas: Optional[dict] = None
+    config_json: Optional[dict] = None
+    estado: str
+    materia_id: Optional[UUID] = None
+    examen_id: Optional[UUID] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# --- Asistencia ---
+class AsistenciaCreate(BaseModel):
+    fecha: date
+    registros: list[dict]  # [{"estudiante_id": "...", "estado": "presente|ausente|tardanza|justificado", "observacion": "..."}]
+
+
+class AsistenciaUpdate(BaseModel):
+    estado: str
+    observacion: Optional[str] = None
+
+
+class AsistenciaOut(BaseModel):
+    id: UUID
+    materia_id: UUID
+    estudiante_id: UUID
+    fecha: date
+    estado: str
+    observacion: Optional[str] = None
+    created_at: datetime
+    estudiante_nombre: Optional[str] = None
+    estudiante_apellido: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+# --- Config Porcentajes ---
+class ConfigPorcentajeCreate(BaseModel):
+    periodo_id: UUID
+    actividades: list[dict]  # [{"tipo_actividad": "examen", "porcentaje": 40.0}, ...]
+
+
+class ConfigPorcentajeOut(BaseModel):
+    id: UUID
+    materia_id: UUID
+    periodo_id: UUID
+    tipo_actividad: str
+    porcentaje: float
+
+    class Config:
+        from_attributes = True
+
+
+# --- Boletín ---
+class BoletinOut(BaseModel):
+    id: UUID
+    estudiante_id: UUID
+    materia_id: UUID
+    periodo_id: UUID
+    nota_final: Optional[float] = None
+    desglose_json: Optional[dict] = None
+    publicado: bool
+    publicado_at: Optional[datetime] = None
+    created_at: datetime
+    estudiante_nombre: Optional[str] = None
+    materia_nombre: Optional[str] = None
+    periodo_nombre: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+# --- Grupos ---
+class GrupoCreate(BaseModel):
+    examen_id: UUID
+    nombre: Optional[str] = None
+
+
+class InvitarMiembro(BaseModel):
+    estudiante_id: UUID
+
+
+class GrupoOut(BaseModel):
+    id: UUID
+    examen_id: UUID
+    nombre: Optional[str] = None
+    creador_id: Optional[UUID] = None
+    miembros: list[dict] = []
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# --- Chat Session ---
+class ChatSessionOut(BaseModel):
+    id: Optional[UUID] = None
+    nota_id: Optional[UUID] = None
+    preguntas_usadas: int = 0
+    preguntas_restantes: int = 5
+    minutos_restantes: float = 10.0
+    cerrada: bool = True
+    inicio: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True

@@ -4,25 +4,23 @@ import api from '../../api';
 import toast from 'react-hot-toast';
 import Breadcrumb from '../../components/Breadcrumb';
 import {
-  FileText, Wand2, Grid3X3, Search, Users, Award,
-  BookOpen, Copy, Settings, Loader2,
+  FileText, Users, Award,
+  BookOpen, Copy, Loader2, BarChart3, CalendarCheck,
 } from 'lucide-react';
 
 // Tab components (lazy-like switching)
 import ProfesorExamenes from './Examenes';
-import GenerarExamen from './GenerarExamen';
-import GenerarCrucigrama from './GenerarCrucigrama';
-import GenerarSopaLetras from './GenerarSopaLetras';
 import MateriaEstudiantes from './MateriaEstudiantes';
 import MateriaCalificaciones from './MateriaCalificaciones';
+import MateriaReportes from './MateriaReportes';
+import MateriaAsistencia from './MateriaAsistencia';
 
 const TABS = [
-  { key: 'examenes',        label: 'Exámenes',        icon: FileText,  mobileLabel: 'Exámenes' },
-  { key: 'generar',         label: 'Generar Examen',   icon: Wand2,     mobileLabel: 'Generar' },
-  { key: 'crucigrama',      label: 'Crucigrama',       icon: Grid3X3,   mobileLabel: 'Crucigrama' },
-  { key: 'sopa',            label: 'Sopa de Letras',   icon: Search,    mobileLabel: 'Sopa' },
-  { key: 'estudiantes',     label: 'Estudiantes',      icon: Users,     mobileLabel: 'Alumnos' },
-  { key: 'calificaciones',  label: 'Calificaciones',   icon: Award,     mobileLabel: 'Notas' },
+  { key: 'examenes',        label: 'Exámenes',        icon: FileText,       mobileLabel: 'Exámenes' },
+  { key: 'estudiantes',     label: 'Estudiantes',      icon: Users,          mobileLabel: 'Alumnos' },
+  { key: 'calificaciones',  label: 'Calificaciones',   icon: Award,          mobileLabel: 'Notas' },
+  { key: 'reportes',        label: 'Reportes',         icon: BarChart3,      mobileLabel: 'Reportes' },
+  { key: 'asistencia',      label: 'Asistencia',       icon: CalendarCheck,  mobileLabel: 'Asistencia' },
 ];
 
 export default function MateriaDetail() {
@@ -130,11 +128,10 @@ export default function MateriaDetail() {
       {/* Tab Content */}
       <div>
         {activeTab === 'examenes' && <ProfesorExamenes materiaId={materiaId} embedded />}
-        {activeTab === 'generar' && <GenerarExamen materiaId={materiaId} embedded onSuccess={() => setActiveTab('examenes')} />}
-        {activeTab === 'crucigrama' && <GenerarCrucigrama materiaId={materiaId} materiaNombre={materia.nombre} />}
-        {activeTab === 'sopa' && <GenerarSopaLetras materiaId={materiaId} materiaNombre={materia.nombre} />}
         {activeTab === 'estudiantes' && <MateriaEstudiantes materiaId={materiaId} materiaNombre={materia.nombre} />}
         {activeTab === 'calificaciones' && <MateriaCalificaciones materiaId={materiaId} />}
+        {activeTab === 'reportes' && <MateriaReportes materiaId={materiaId} materiaNombre={materia.nombre} />}
+        {activeTab === 'asistencia' && <MateriaAsistencia materiaId={materiaId} materiaNombre={materia.nombre} />}
       </div>
     </div>
   );

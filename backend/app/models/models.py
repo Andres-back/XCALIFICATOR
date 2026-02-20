@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from sqlalchemy import (
     Column, String, Boolean, DateTime, Text, ForeignKey,
-    Numeric, UniqueConstraint, Index
+    Numeric, UniqueConstraint, Index, Integer, Date
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB, INET
 from sqlalchemy.orm import relationship
@@ -87,11 +87,14 @@ class Examen(Base):
     activo_online = Column(Boolean, default=False)
     fecha_limite = Column(DateTime(timezone=True), nullable=True)
     fecha_activacion = Column(DateTime(timezone=True), nullable=True)
+    modo_grupal = Column(Boolean, default=False)
+    max_integrantes = Column(Integer, default=3)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     materia = relationship("Materia", back_populates="examenes")
     notas = relationship("Nota", back_populates="examen", cascade="all, delete-orphan")
     respuestas_online = relationship("RespuestaOnline", back_populates="examen", cascade="all, delete-orphan")
+    grupos = relationship("GrupoActividad", back_populates="examen", cascade="all, delete-orphan")
 
 
 class Nota(Base):
@@ -188,3 +191,134 @@ class AuditLog(Base):
     detalle = Column(JSONB, nullable=True)
     ip = Column(INET, nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class PeriodoAcademico(Base):
+    __tablename__ = "periodos_academicos"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    nombre = Column(String(100), nullable=False)
+    numero = Column(Integer, nullable=False, unique=True)
+    fecha_inicio = Column(Date, nullable=False)
+    fecha_fin = Column(Date, nullable=False)
+    porcentaje = Column(Numeric(5, 2), nullable=False)
+    activo = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class Herramienta(Base):
+    __tablename__ = "herramientas"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    profesor_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    tipo = Column(String(50), nullable=False)  # 'examen', 'crucigrama', 'sopa_letras'
+    titulo = Column(String(300), nullable=False)
+    contenido_json = Column(JSONB, nullable=True)
+    clave_respuestas = Column(JSONB, nullable=True)
+    config_json = Column(JSONB, nullable=True)
+    estado = Column(String(20), default="borrador")  # 'borrador', 'listo', 'asignado'
+    materia_id = Column(UUID(as_uuid=True), ForeignKey("materias.id", ondelete="SET NULL"), nullable=True)
+    examen_id = Column(UUID(as_uuid=True), ForeignKey("examenes.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    profesor = relationship("User")
+    materia = relationship("Materia")
+    examen = relationship("Examen")
+
+
+class Asistencia(Base):
+    __tablename__ = "asistencia"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    materia_id = Column(UUID(as_uuid=True), ForeignKey("materias.id", ondelete="CASCADE"))
+    estudiante_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    fecha = Column(Date, nullable=False)
+    estado = Column(String(20), nullable=False, default="presente")
+    observacion = Column(Text, nullable=True)
+    registrado_por = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (UniqueConstraint("materia_id", "estudiante_id", "fecha"),)
+
+    materia = relationship("Materia")
+    estudiante = relationship("User", foreign_keys=[estudiante_id])
+
+
+class ConfigPorcentaje(Base):
+    __tablename__ = "config_porcentajes"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    materia_id = Column(UUID(as_uuid=True), ForeignKey("materias.id", ondelete="CASCADE"))
+    periodo_id = Column(UUID(as_uuid=True), ForeignKey("periodos_academicos.id", ondelete="CASCADE"))
+    tipo_actividad = Column(String(50), nullable=False)
+    porcentaje = Column(Numeric(5, 2), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (UniqueConstraint("materia_id", "periodo_id", "tipo_actividad"),)
+
+    materia = relationship("Materia")
+    periodo = relationship("PeriodoAcademico")
+
+
+class Boletin(Base):
+    __tablename__ = "boletines"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    estudiante_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    materia_id = Column(UUID(as_uuid=True), ForeignKey("materias.id", ondelete="CASCADE"))
+    periodo_id = Column(UUID(as_uuid=True), ForeignKey("periodos_academicos.id", ondelete="CASCADE"))
+    nota_final = Column(Numeric(4, 2), nullable=True)
+    desglose_json = Column(JSONB, nullable=True)
+    publicado = Column(Boolean, default=False)
+    publicado_at = Column(DateTime(timezone=True), nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (UniqueConstraint("estudiante_id", "materia_id", "periodo_id"),)
+
+    estudiante = relationship("User", foreign_keys=[estudiante_id])
+    materia = relationship("Materia")
+    periodo = relationship("PeriodoAcademico")
+
+
+class GrupoActividad(Base):
+    __tablename__ = "grupos_actividad"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examen_id = Column(UUID(as_uuid=True), ForeignKey("examenes.id", ondelete="CASCADE"))
+    nombre = Column(String(100), nullable=True)
+    creador_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    examen = relationship("Examen", back_populates="grupos")
+    miembros = relationship("MiembroGrupo", back_populates="grupo", cascade="all, delete-orphan")
+    creador = relationship("User", foreign_keys=[creador_id])
+
+
+class MiembroGrupo(Base):
+    __tablename__ = "miembros_grupo"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    grupo_id = Column(UUID(as_uuid=True), ForeignKey("grupos_actividad.id", ondelete="CASCADE"))
+    estudiante_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    es_lider = Column(Boolean, default=False)
+    aceptado = Column(Boolean, default=True)
+    joined_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (UniqueConstraint("grupo_id", "estudiante_id"),)
+
+    grupo = relationship("GrupoActividad", back_populates="miembros")
+    estudiante = relationship("User")
+
+
+class ChatSession(Base):
+    __tablename__ = "chat_sessions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    estudiante_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    nota_id = Column(UUID(as_uuid=True), ForeignKey("notas.id", ondelete="CASCADE"))
+    cerrada = Column(Boolean, default=False)
+    preguntas_usadas = Column(Integer, default=0)
+    inicio = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

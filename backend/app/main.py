@@ -5,6 +5,7 @@ import os
 
 from app.core.rate_limiter import RateLimiter
 from app.routers import auth, admin, materias, examenes, grading, generation, chat, notifications
+from app.routers import periodos, herramientas, asistencia, reportes, grupos
 
 app = FastAPI(
     title="XCalificator API",
@@ -41,6 +42,11 @@ app.include_router(grading.router, prefix="/api")
 app.include_router(generation.router, prefix="/api")
 app.include_router(chat.router, prefix="/api")
 app.include_router(notifications.router, prefix="/api")
+app.include_router(periodos.router, prefix="/api")
+app.include_router(herramientas.router, prefix="/api")
+app.include_router(asistencia.router, prefix="/api")
+app.include_router(reportes.router, prefix="/api")
+app.include_router(grupos.router, prefix="/api")
 
 
 @app.get("/api/health")

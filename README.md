@@ -1,6 +1,6 @@
 # XCALIFICATOR
 
-> Plataforma educativa con inteligencia artificial para la generación automática de exámenes, calificación inteligente y seguimiento del desempeño académico, adaptada al sistema educativo colombiano.
+> Plataforma educativa con inteligencia artificial para la generación automática de exámenes, calificación inteligente y seguimiento integral del desempeño académico, adaptada al sistema educativo colombiano.
 
 ---
 
@@ -10,41 +10,51 @@
 2. [Características Principales](#características-principales)
 3. [Arquitectura](#arquitectura)
 4. [Stack Tecnológico](#stack-tecnológico)
-5. [Prerrequisitos](#prerrequisitos)
-6. [Instalación y Configuración](#instalación-y-configuración)
-7. [Variables de Entorno](#variables-de-entorno)
-8. [Servicios y Puertos](#servicios-y-puertos)
-9. [Roles de Usuario](#roles-de-usuario)
-10. [Escala de Calificación](#escala-de-calificación)
-11. [Partes por Mejorar](#partes-por-mejorar)
+5. [Estructura del Proyecto](#estructura-del-proyecto)
+6. [Prerrequisitos](#prerrequisitos)
+7. [Instalación y Configuración](#instalación-y-configuración)
+8. [Variables de Entorno](#variables-de-entorno)
+9. [Servicios y Puertos](#servicios-y-puertos)
+10. [API Endpoints](#api-endpoints)
+11. [Roles de Usuario](#roles-de-usuario)
+12. [Escala de Calificación](#escala-de-calificación)
+13. [Base de Datos](#base-de-datos)
 
 ---
 
 ## Descripción General
 
-**Xcalificator** es una aplicación web full-stack diseñada para docentes y estudiantes de Colombia. Permite a los profesores generar exámenes personalizados usando modelos de lenguaje de gran escala (LLMs), calificar respuestas escritas o digitalizadas mediante OCR, y analizar el desempeño del curso. Los estudiantes pueden presentar exámenes en línea y consultar sus notas, mientras un asistente de IA llamado **Xali** responde preguntas sobre el contenido del examen.
+**Xcalificator** es una aplicación web full-stack diseñada para docentes y estudiantes de Colombia. Permite a los profesores generar exámenes personalizados usando modelos de lenguaje de gran escala (LLMs), calificar respuestas escritas o digitalizadas mediante OCR, gestionar períodos académicos, controlar asistencia, generar boletines y analizar el desempeño del curso. Los estudiantes pueden presentar exámenes en línea (individual o grupal), consultar sus notas y boletines, mientras un asistente de IA llamado **Xali** responde preguntas sobre el contenido del examen con sesiones controladas por tiempo y número de preguntas. Un panel administrativo permite gestionar usuarios, materias y auditar toda la actividad del sistema.
 
 ---
 
 ## Características Principales
 
 ### Para Profesores
-- **Generación de exámenes con IA**: Crea exámenes con preguntas de selección múltiple, verdadero/falso, preguntas abiertas, sopas de letras y crucigrams, especificando grado escolar colombiano (Preescolar → 11°), nivel de dificultad, tema y contenido base.
+- **Generación de exámenes con IA**: Crea exámenes con preguntas de selección múltiple, verdadero/falso, preguntas abiertas, sopas de letras y crucigramas, especificando grado escolar colombiano (Preescolar → 11°), nivel de dificultad, tema y contenido base.
+- **Herramientas didácticas reutilizables**: Genera y almacena sopas de letras y crucigramas como herramientas independientes con seguimiento de estado (pendiente / asignado / completado), asignables a exámenes existentes.
 - **Vista previa de examen en PDF**: Modal de pantalla completa con/sin clave de respuestas, generado con colores institucionales (índigo y violeta).
 - **Calificación inteligente**: Las preguntas objetivas (selección múltiple, V/F) se califican localmente de forma instantánea; las preguntas abiertas se envían al LLM para evaluación contextual.
 - **Calificación por OCR**: Sube una foto del examen impreso → PaddleOCR extrae el texto → calificación automática.
+- **Modo grupal**: Los exámenes pueden habilitarse para resolución en grupo; los estudiantes crean equipos, invitan compañeros y envían respuestas conjuntas que se asignan a todos los miembros.
+- **Períodos académicos**: Gestión de períodos con porcentajes configurables por tipo de actividad para cada materia.
+- **Control de asistencia**: Registro diario de asistencia por materia con estados (presente, ausente, tarde, excusa), exportable a PDF.
+- **Reportes y boletines**: Generación de boletines por período con cálculo automático de promedios ponderados, observaciones y exportación a PDF.
 - **Dashboard de métricas**: Distribución de notas por rangos colombianos, análisis de dificultad por pregunta, ranking de estudiantes.
-- **Exámenes en línea**: Los estudiantes responden directamente en la plataforma; el profesor ve los resultados en tiempo real.
 
 ### Para Estudiantes
-- **Presentación de exámenes en línea**: Interfaz limpia, cronometrada, con envío y calificación inmediata.
-- **Historial de notas**: Visualización de todas las calificaciones obtenidas.
-- **Xali – Asistente de IA**: Chatbot persistente que responde preguntas sobre el contenido del examen con memoria multi-turno.
+- **Presentación de exámenes en línea**: Interfaz limpia con soporte para fórmulas matemáticas (KaTeX), envío y calificación inmediata.
+- **Modo grupal**: Crear o unirse a grupos para resolver exámenes grupales colaborativamente.
+- **Historial de notas**: Visualización de todas las calificaciones obtenidas con actividad reciente.
+- **Boletín académico**: Consulta del boletín por período con promedios ponderados y estados de desempeño.
+- **Xali – Asistente de IA**: Chatbot con sesiones controladas (máx. 5 preguntas / 10 minutos por sesión) que responde preguntas sobre el contenido del examen con contexto RAG y soporte para fórmulas LaTeX.
 - **Perfil editable**: Foto, nombre e información personal.
 
 ### Para Administradores
 - **Dashboard de uso de API**: Monitoreo del consumo de tokens y llamadas a los modelos LLM.
-- **Gestión de usuarios**.
+- **Gestión de usuarios**: CRUD completo de usuarios con filtros por rol.
+- **Gestión de materias**: Administración centralizada de materias.
+- **Log de auditoría**: Registro detallado de todas las acciones del sistema con filtros y búsqueda.
 
 ---
 
@@ -94,12 +104,14 @@ Respuesta del estudiante
 | Backend | Python | 3.11 |
 | ORM | SQLAlchemy (async) | 2.0.35 |
 | Base de datos | PostgreSQL | 16-alpine |
-| Caché / Sesiones | Redis | 7-alpine |
+| Caché / Rate Limiting | Redis | 7-alpine |
 | Frontend | React | 18.3.1 |
 | Frontend build | Vite | 5.4.21 |
-| Estilos | Tailwind CSS | 3.x |
+| Estilos | Tailwind CSS | 3.4.10 |
 | Estado global | Zustand | 4.5.5 |
 | Rutas | React Router DOM | 6.26 |
+| Íconos | Lucide React | — |
+| Fórmulas matemáticas | KaTeX | 0.16.28 |
 | PDF | ReportLab | 4.x |
 | OCR | PaddleOCR | 2.x |
 | LLM | Groq API | — |
@@ -110,6 +122,111 @@ Respuesta del estudiante
 | Auth | JWT + Google OAuth 2.0 | — |
 | Infraestructura | Docker Compose | — |
 | Proxy inverso | Nginx | alpine |
+
+---
+
+## Estructura del Proyecto
+
+```
+XCALIFICATOR/
+├── docker-compose.yml
+├── .env                        # Variables de entorno (no versionado)
+├── README.md
+├── backend/
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   ├── db/
+│   │   └── init.sql            # Schema PostgreSQL inicial
+│   ├── uploads/                # Archivos subidos (imágenes OCR)
+│   └── app/
+│       ├── main.py             # Punto de entrada FastAPI
+│       ├── core/
+│       │   ├── config.py       # Settings (Pydantic)
+│       │   ├── database.py     # Motor async SQLAlchemy
+│       │   ├── dependencies.py # Auth guards (get_current_user, require_role)
+│       │   ├── rate_limiter.py # Rate limiting con Redis
+│       │   ├── redis.py        # Cliente Redis
+│       │   └── security.py     # JWT, hashing, OAuth
+│       ├── models/
+│       │   └── models.py       # 17 modelos SQLAlchemy
+│       ├── schemas/
+│       │   └── schemas.py      # Schemas Pydantic v2
+│       ├── routers/
+│       │   ├── auth.py         # Login, registro, OAuth, perfil
+│       │   ├── admin.py        # Dashboard admin, auditoría
+│       │   ├── materias.py     # CRUD materias, matrículas
+│       │   ├── examenes.py     # CRUD exámenes, publicación
+│       │   ├── generation.py   # Generación IA de exámenes
+│       │   ├── grading.py      # Calificación (local + LLM + OCR)
+│       │   ├── chat.py         # Chatbot Xali con sesiones
+│       │   ├── notifications.py# Notificaciones email/WhatsApp
+│       │   ├── periodos.py     # Períodos académicos
+│       │   ├── herramientas.py # Sopas/crucigramas independientes
+│       │   ├── asistencia.py   # Control de asistencia
+│       │   ├── reportes.py     # Boletines y reportes
+│       │   └── grupos.py       # Modo grupal
+│       └── services/
+│           ├── groq_service.py # Cliente Groq (generación, calificación, RAG)
+│           ├── notification_service.py # Email SMTP + WhatsApp Whapi
+│           ├── ocr_service.py  # Cliente HTTP hacia PaddleOCR
+│           └── pdf_service.py  # Generación PDF con ReportLab
+├── frontend/
+│   ├── Dockerfile
+│   ├── package.json
+│   ├── vite.config.js
+│   ├── tailwind.config.js
+│   └── src/
+│       ├── main.jsx            # Punto de entrada React
+│       ├── App.jsx             # Rutas y layout
+│       ├── api.js              # Cliente Axios + interceptors
+│       ├── store.js            # Zustand store (auth, state)
+│       ├── components/
+│       │   ├── Layout.jsx      # Sidebar + navbar
+│       │   ├── MathText.jsx    # Renderizador KaTeX (LaTeX)
+│       │   ├── Crucigrama.jsx  # Componente crucigrama interactivo
+│       │   ├── SopaLetras.jsx  # Componente sopa de letras interactiva
+│       │   ├── ConfirmDialog.jsx
+│       │   ├── EmptyState.jsx
+│       │   ├── StatCard.jsx
+│       │   ├── Breadcrumb.jsx
+│       │   └── SkeletonLoader.jsx
+│       └── pages/
+│           ├── Login.jsx
+│           ├── Register.jsx
+│           ├── Perfil.jsx
+│           ├── admin/
+│           │   ├── Dashboard.jsx         # Métricas API, auditoría
+│           │   ├── Users.jsx             # Gestión usuarios
+│           │   ├── Materias.jsx          # Gestión materias
+│           │   ├── AuditLog.jsx          # Log auditoría
+│           │   └── Periodos.jsx          # Períodos académicos
+│           ├── profesor/
+│           │   ├── Materias.jsx          # Lista materias
+│           │   ├── MateriaDetail.jsx     # Detalle con tabs
+│           │   ├── MateriaEstudiantes.jsx
+│           │   ├── MateriaCalificaciones.jsx
+│           │   ├── MateriaAsistencia.jsx # Control asistencia
+│           │   ├── MateriaReportes.jsx   # Boletines/reportes
+│           │   ├── Examenes.jsx          # Grid de exámenes
+│           │   ├── GenerarExamen.jsx
+│           │   ├── GenerarCrucigrama.jsx
+│           │   ├── GenerarSopaLetras.jsx
+│           │   ├── Herramientas.jsx      # Gestor herramientas
+│           │   ├── Calificar.jsx
+│           │   └── Notas.jsx
+│           └── estudiante/
+│               ├── Home.jsx              # Dashboard personalizado
+│               ├── ResolverExamen.jsx    # Resolver + modo grupal
+│               ├── Chat.jsx             # Xali con sesiones
+│               ├── Notas.jsx
+│               └── Boletin.jsx          # Boletín académico
+├── paddleocr/
+│   ├── Dockerfile
+│   ├── main.py                 # Servicio FastAPI OCR
+│   └── requirements.txt
+└── nginx/
+    └── nginx.conf              # Reverse proxy config
+```
 
 ---
 
@@ -233,9 +350,9 @@ VITE_API_URL=http://localhost/api
 
 | Rol | Capacidades |
 |-----|-------------|
-| `estudiante` | Presentar exámenes en línea, consultar notas, chatear con Xali, editar perfil |
-| `profesor` | Todo lo anterior + generar/editar/eliminar exámenes, calificar (OCR y online), ver métricas, asignar exámenes |
-| `admin` | Todo lo anterior + ver dashboard de uso de API, gestionar usuarios |
+| `estudiante` | Presentar exámenes (individual y grupal), consultar notas, ver boletines, chatear con Xali, editar perfil |
+| `profesor` | Todo lo anterior + generar exámenes con IA, calificar (OCR y online), crear herramientas, gestionar asistencia, generar boletines, ver métricas |
+| `admin` | Todo lo anterior + dashboard de API, gestionar usuarios/materias, log de auditoría, períodos académicos |
 
 ---
 
@@ -258,40 +375,51 @@ Los exámenes generados distribuyen los puntos para que la calificación máxima
 
 ---
 
-## Partes por Mejorar
+## API Endpoints
 
-A continuación se listan las áreas identificadas con oportunidades de mejora para versiones futuras del proyecto:
+El backend expone 13 routers bajo el prefijo `/api`. Documentación interactiva disponible en `/docs` (Swagger UI).
 
-### Autenticación y Seguridad
-- **Verificación de correo electrónico**: Actualmente no se valida el email al registrarse. Implementar un flujo de confirmación por correo antes de activar la cuenta.
-- **OAuth de borde**: El flujo de Google OAuth puede fallar si el usuario no tiene foto de perfil o si revoca permisos. Mejorar el manejo de casos borde.
-- **Cuotas por usuario**: El rate limiting usa Redis globalmente, pero no impone límites individuales de tokens LLM por profesor. Agregar cuotas configurables por cuenta.
+| Router | Prefijo | Descripción |
+|--------|---------|-------------|
+| `auth` | `/api/auth` | Login, registro, Google OAuth, refresh token, perfil, foto |
+| `admin` | `/api/admin` | Dashboard uso API, CRUD usuarios, log auditoría |
+| `materias` | `/api/materias` | CRUD materias, matrículas, filtros por rol |
+| `examenes` | `/api/examenes` | CRUD exámenes, publicación, tipos de pregunta |
+| `generation` | `/api/generate` | Generación IA (exámenes, sopas, crucigramas) |
+| `grading` | `/api/grading` | Calificación online, OCR, retroalimentación LLM |
+| `chat` | `/api/chat` | Xali chatbot con sesiones (5 preguntas / 10 min) |
+| `notifications` | `/api/notifications` | Preferencias, envío email SMTP + WhatsApp |
+| `periodos` | `/api/periodos` | CRUD períodos académicos |
+| `herramientas` | `/api/herramientas` | Sopas/crucigramas reutilizables, asignar a exámenes |
+| `asistencia` | `/api/asistencia` | Registro asistencia, consulta, exportación PDF |
+| `reportes` | `/api/reportes` | Config porcentajes, cálculo promedios, boletines PDF |
+| `grupos` | `/api/grupos` | Crear grupos, invitar miembros, envío grupal |
 
-### Frontend y Experiencia de Usuario
-- **Build de producción del frontend**: Actualmente se ejecuta `vite --host` (modo desarrollo) dentro del contenedor. Debe reemplazarse por un `vite build` con Nginx sirviendo los archivos estáticos para producción.
-- **Actualización en tiempo real**: Las nuevas entregas de exámenes requieren que el profesor recargue la página manualmente. Implementar WebSockets o Server-Sent Events (SSE) para notificaciones en tiempo real.
-- **Soporte móvil / PWA**: La interfaz no está optimizada para pantallas pequeñas. Convertir la aplicación en una Progressive Web App (PWA) con diseño responsive completo.
-- **Internacionalización (i18n)**: La plataforma está completamente en español. Agregar soporte multi-idioma (inglés al menos) usando `react-i18next`.
+---
 
-### Funcionalidades Académicas
-- **Exportación de notas**: No existe opción de exportar las calificaciones del curso a CSV o Excel. Agregar botón de descarga en el panel de métricas del profesor.
-- **Importación masiva de estudiantes**: Los profesores deben agregar estudiantes uno a uno. Permitir carga de listados en CSV/Excel.
-- **Control de versiones de exámenes**: Al editar un examen ya publicado, se sobreescribe directamente. Implementar historial de versiones para preservar las calificaciones anteriores y auditabilidad.
-- **Seguimiento de progreso del estudiante**: Las notas de cada estudiante se muestran por examen individual. Agregar una vista de evolución longitudinal (curva de progreso a lo largo del tiempo).
-- **Sistema de notificaciones**: No hay alertas cuando el profesor publica un examen o cuando se carga la calificación. Implementar notificaciones in-app y/o por correo.
+## Base de Datos
 
-### Inteligencia Artificial y OCR
-- **Pre-procesamiento de imágenes para OCR**: La precisión de PaddleOCR depende directamente de la calidad de la foto subida. Agregar un pipeline de pre-procesamiento (corrección de perspectiva, binarización, reducción de ruido) antes de enviar la imagen.
-- **Detección de plagio**: Las respuestas abiertas de diferentes estudiantes no se comparan entre sí. Integrar una detección básica de similitud textual (por ejemplo, TF-IDF o embeddings) para alertar sobre respuestas idénticas o muy similares.
-- **Contexto cross-examen en Xali**: El chatbot Xali solo tiene memoria del examen actual en la sesión. Extender su contexto para que pueda responder preguntas comparando resultados entre varios exámenes o temas del mismo estudiante.
-- **Validación de grids OCR**: La generación de sopas de letras y crucigrams no pasa por un validador estricto. Algunos grids pueden ser incorrectos o quedar sin resolver. Agregar validación algorítmica de los puzzles generados.
+PostgreSQL 16 con 17 tablas:
 
-### Infraestructura y DevOps
-- **Variables de entorno de ejemplo**: Agregar un archivo `.env.example` con todas las variables necesarias documentadas para facilitar el onboarding.
-- **Pruebas automatizadas**: No existe suite de tests. Implementar pruebas unitarias para servicios clave (groq_service, pdf_service, grading) y pruebas de integración para los endpoints principales.
-- **CI/CD**: Configurar un pipeline de GitHub Actions para ejecutar linting, tests y build automático en cada pull request.
-- **Backups de base de datos**: No hay política de respaldo automático del volumen PostgreSQL. Configurar backups programados (pg_dump) hacia almacenamiento externo (S3 u otro).
-- **Logs centralizados**: Los logs de los 7 contenedores no están centralizados. Integrar un stack de observabilidad como Loki + Grafana o una solución equivalente.
+| Tabla | Descripción |
+|-------|-------------|
+| `users` | Usuarios (estudiantes, profesores, admins) con foto y documento |
+| `materias` | Materias académicas vinculadas a un profesor |
+| `matriculas` | Relación estudiante ↔ materia |
+| `examenes` | Exámenes con preguntas JSON, tipo, grado, modo grupal |
+| `notas` | Calificaciones con detalle JSON, retroalimentación, imagen OCR |
+| `chat_history` | Historial de mensajes del chatbot Xali |
+| `chat_sessions` | Sesiones de chat con límites (preguntas usadas, tiempo) |
+| `notificaciones` | Notificaciones in-app con tipo y estado leído |
+| `preferencias_notif` | Preferencias de notificación por usuario (email/WhatsApp) |
+| `audit_log` | Log de auditoría de acciones del sistema |
+| `periodos_academicos` | Períodos con fechas inicio/fin y estado activo |
+| `config_porcentajes` | Porcentajes por tipo de actividad por materia y período |
+| `boletines` | Boletines generados con promedio, observaciones, PDF |
+| `herramientas` | Herramientas didácticas (sopas/crucigramas) con estado |
+| `asistencia` | Registros de asistencia diaria por estudiante y materia |
+| `grupos_actividad` | Grupos para exámenes grupales con creador |
+| `miembros_grupo` | Miembros de cada grupo con estado de aceptación |
 
 ---
 

@@ -142,7 +142,7 @@ export default function GenerarSopaLetras({ materiaId, materiaNombre }) {
           </div>
           {showPreview && (
             <div className="overflow-x-auto">
-              <SopaLetras sopa={generated} onComplete={(found) => {
+              <SopaLetras grid={generated.grid} palabras={generated.palabras} onComplete={(found) => {
                 toast.success(`¡Encontraste ${found.length} palabras!`);
               }} />
             </div>

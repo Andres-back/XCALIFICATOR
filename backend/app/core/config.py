@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     WHAPI_API_URL: str = "https://gate.whapi.cloud"
     WHAPI_TOKEN: str = ""
 
+    # Pollinations (image generation)
+    POLLINATIONS_API_KEY: str = "sk_E6l6TqFX76iKPEZ6qzXLd8lrDBk88wKo"
+
     # OCR
     OCR_SERVICE_URL: str = "http://paddleocr:8001"
 

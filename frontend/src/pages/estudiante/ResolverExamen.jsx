@@ -4,10 +4,13 @@ import api from '../../api';
 import toast from 'react-hot-toast';
 import {
   Send, Loader2, Clock, ChevronLeft, ChevronRight, CheckCircle2,
-  Circle, AlertTriangle, FileText, Award, ArrowLeft,
+  Circle, AlertTriangle, FileText, Award, ArrowLeft, Users, UserPlus, X,
 } from 'lucide-react';
 import SopaLetras from '../../components/SopaLetras';
 import Crucigrama from '../../components/Crucigrama';
+import Emparejar from '../../components/Emparejar';
+import Cuento from '../../components/Cuento';
+import MathText from '../../components/MathText';
 
 const TIPO_LABELS = {
   seleccion_multiple: 'Selección Múltiple',
@@ -37,6 +40,12 @@ export default function ResolverExamen() {
   const [elapsed, setElapsed] = useState(0);
   const startTime = useRef(Date.now());
 
+  // Group mode state
+  const [grupo, setGrupo] = useState(null); // current group
+  const [grupoLoading, setGrupoLoading] = useState(false);
+  const [showInvite, setShowInvite] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState('');
+
   useEffect(() => {
     const loadExam = async () => {
       try {
@@ -59,6 +68,14 @@ export default function ResolverExamen() {
         if (res.data.fecha_limite && new Date(res.data.fecha_limite) < new Date()) {
           toast.error('El plazo para este examen ha vencido');
           navigate('/estudiante');
+        }
+
+        // Load group if exam is grupal
+        if (res.data.modo_grupal) {
+          try {
+            const gRes = await api.get(`/grupos/mi-grupo/${examenId}`);
+            setGrupo(gRes.data);
+          } catch { /* no group yet */ }
         }
       } catch {
         toast.error('Examen no encontrado');
@@ -87,6 +104,44 @@ export default function ResolverExamen() {
       : `${m}:${String(s).padStart(2, '0')}`;
   };
 
+  // Group mode helpers
+  const createGrupo = async () => {
+    setGrupoLoading(true);
+    try {
+      const res = await api.post(`/grupos/${examenId}`);
+      setGrupo(res.data);
+      toast.success('Grupo creado');
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Error creando grupo');
+    } finally { setGrupoLoading(false); }
+  };
+
+  const inviteMember = async (e) => {
+    e.preventDefault();
+    if (!inviteEmail.trim()) return;
+    try {
+      await api.post(`/grupos/${grupo.id}/invitar`, { email: inviteEmail.trim() });
+      const gRes = await api.get(`/grupos/mi-grupo/${examenId}`);
+      setGrupo(gRes.data);
+      setInviteEmail('');
+      setShowInvite(false);
+      toast.success('Miembro agregado');
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Error invitando');
+    }
+  };
+
+  const removeMember = async (miembroId) => {
+    try {
+      await api.delete(`/grupos/${grupo.id}/miembro/${miembroId}`);
+      const gRes = await api.get(`/grupos/mi-grupo/${examenId}`);
+      setGrupo(gRes.data);
+      toast.success('Miembro removido');
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Error');
+    }
+  };
+
   const updateResp = useCallback((numero, value) => {
     setRespuestas(prev => ({ ...prev, [numero]: value }));
   }, []);
@@ -99,10 +154,18 @@ export default function ResolverExamen() {
         respuesta: resp,
       }));
 
-      const res = await api.post('/examenes/responder', {
-        examen_id: examenId,
-        respuestas_json: { preguntas: respuestas_formatted },
-      });
+      let res;
+      if (examen.modo_grupal && grupo) {
+        // Group submit — creates Nota for all members
+        res = await api.post(`/grupos/${grupo.id}/submit`, {
+          respuestas_json: { preguntas: respuestas_formatted },
+        });
+      } else {
+        res = await api.post('/examenes/responder', {
+          examen_id: examenId,
+          respuestas_json: { preguntas: respuestas_formatted },
+        });
+      }
 
       if (res.data.nota) {
         const n = res.data.nota;
@@ -179,6 +242,62 @@ export default function ResolverExamen() {
         </div>
       </div>
 
+      {/* Group mode panel */}
+      {examen.modo_grupal && (
+        <div className="card mb-6 border-2 border-blue-200 bg-blue-50/30">
+          <div className="flex items-center gap-2 mb-3">
+            <Users className="w-5 h-5 text-blue-600" />
+            <h2 className="font-semibold text-blue-900">Modo Grupal</h2>
+            <span className="text-xs text-blue-600 bg-blue-100 px-2 py-0.5 rounded-lg">
+              Máx {examen.max_integrantes || 4} integrantes
+            </span>
+          </div>
+
+          {!grupo ? (
+            <div className="text-center py-4">
+              <p className="text-sm text-gray-600 mb-3">
+                Este examen se resuelve en grupo. Crea un grupo o espera a que te inviten.
+              </p>
+              <button onClick={createGrupo} disabled={grupoLoading}
+                className="btn-primary flex items-center gap-2 mx-auto">
+                {grupoLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Users className="w-4 h-4" />}
+                Crear Grupo
+              </button>
+            </div>
+          ) : (
+            <div>
+              <div className="flex flex-wrap gap-2 mb-3">
+                {grupo.miembros?.map(m => (
+                  <div key={m.id} className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-blue-200 text-sm">
+                    <span className="font-medium text-gray-800">{m.nombre || m.email}</span>
+                    {m.es_lider && <span className="text-xs text-blue-600 font-semibold">Líder</span>}
+                    {!m.es_lider && grupo.es_lider && (
+                      <button onClick={() => removeMember(m.id)} className="text-red-400 hover:text-red-600">
+                        <X className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {grupo.es_lider && (grupo.miembros?.length || 1) < (examen.max_integrantes || 4) && (
+                showInvite ? (
+                  <form onSubmit={inviteMember} className="flex gap-2">
+                    <input type="email" placeholder="Email del compañero" className="input-field flex-1 text-sm"
+                      value={inviteEmail} onChange={e => setInviteEmail(e.target.value)} autoFocus />
+                    <button type="submit" className="btn-primary text-sm px-3">Agregar</button>
+                    <button type="button" onClick={() => setShowInvite(false)} className="btn-secondary text-sm px-3">Cancelar</button>
+                  </form>
+                ) : (
+                  <button onClick={() => setShowInvite(true)} className="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1">
+                    <UserPlus className="w-4 h-4" /> Invitar miembro
+                  </button>
+                )
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Question Navigation Panel (sidebar) */}
         <div className="lg:col-span-1 order-2 lg:order-1">
@@ -242,9 +361,9 @@ export default function ResolverExamen() {
 
               {/* Question text */}
               <div className="bg-gray-50 rounded-xl p-4 mb-6">
-                <p className="text-gray-800 text-base leading-relaxed font-medium">
-                  {currentPregunta.enunciado}
-                </p>
+                <div className="text-gray-800 text-base leading-relaxed font-medium">
+                  <MathText text={currentPregunta.enunciado} />
+                </div>
               </div>
 
               {/* Answer Section */}
@@ -268,7 +387,7 @@ export default function ResolverExamen() {
                           {letters[j] || (j + 1)}
                         </div>
                         <span className={`text-sm ${isSelected ? 'text-primary-800 font-medium' : 'text-gray-700'}`}>
-                          {opt}
+                          <MathText text={opt} />
                         </span>
                         {isSelected && <CheckCircle2 className="w-5 h-5 text-primary-600 ml-auto shrink-0" />}
                       </button>
@@ -384,6 +503,32 @@ export default function ResolverExamen() {
               updateResp('crucigrama', JSON.stringify(userGrid));
               toast.success('¡Crucigrama completado! 🎉');
             }}
+          />
+        </div>
+      )}
+
+      {/* Interactive Matching */}
+      {examen.contenido_json?.emparejar?.pares && (
+        <div className="card mt-6">
+          <h2 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+            🔗 Emparejar
+          </h2>
+          <Emparejar
+            emparejar={examen.contenido_json.emparejar}
+            onComplete={(results) => {
+              updateResp('emparejar', JSON.stringify(results));
+              toast.success(`¡Emparejar completado! ${results.correct}/${results.total} correctas 🎉`);
+            }}
+          />
+        </div>
+      )}
+
+      {/* Story */}
+      {examen.contenido_json?.cuento && (
+        <div className="card mt-6">
+          <Cuento
+            cuento={examen.contenido_json.cuento}
+            titulo={examen.contenido_json.titulo || examen.titulo}
           />
         </div>
       )}

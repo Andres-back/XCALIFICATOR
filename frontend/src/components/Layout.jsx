@@ -3,7 +3,7 @@ import useAuthStore from '../store';
 import {
   LayoutDashboard, Users, BookOpen, FileText, Award,
   MessageCircle, Settings, LogOut, Menu, X, GraduationCap,
-  Shield, ClipboardList,
+  Shield, ClipboardList, Wrench, BarChart3, Calendar, ScrollText,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -12,14 +12,17 @@ const navItems = {
     { label: 'Dashboard', path: '/admin', icon: LayoutDashboard, exact: true },
     { label: 'Usuarios', path: '/admin/users', icon: Users },
     { label: 'Materias', path: '/admin/materias', icon: BookOpen },
+    { label: 'Períodos', path: '/admin/periodos', icon: Calendar },
     { label: 'Auditoría', path: '/admin/audit', icon: Shield },
   ],
   profesor: [
-    { label: 'Materias', path: '/profesor/materias', icon: BookOpen, prefix: '/profesor' },
+    { label: 'Materias', path: '/profesor/materias', icon: BookOpen, prefix: '/profesor/materia' },
+    { label: 'Herramientas', path: '/profesor/herramientas', icon: Wrench },
   ],
   estudiante: [
     { label: 'Inicio', path: '/estudiante', icon: LayoutDashboard, exact: true },
     { label: 'Mis Notas', path: '/estudiante/notas', icon: Award },
+    { label: 'Boletín', path: '/estudiante/boletin', icon: ScrollText },
   ],
 };
 
