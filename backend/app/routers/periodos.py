@@ -7,6 +7,7 @@ from app.core.dependencies import require_role
 from app.models.models import User, PeriodoAcademico, AuditLog
 from app.schemas.schemas import (
     PeriodoAcademicoCreate, PeriodoAcademicoUpdate, PeriodoAcademicoOut,
+    PeriodosBulkRequest,
 )
 
 router = APIRouter(prefix="/periodos", tags=["Períodos Académicos"])
@@ -90,20 +91,14 @@ async def update_periodo(
 
 @router.post("/bulk", response_model=list[PeriodoAcademicoOut])
 async def save_all_periodos(
-    periodos: list[PeriodoAcademicoCreate],
+    data: PeriodosBulkRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("admin")),
 ):
-    """Create or update all 4 periods at once. Validates percentages sum to 100%."""
-    if len(periodos) > 4:
-        raise HTTPException(status_code=400, detail="Máximo 4 períodos")
-
-    total_pct = sum(p.porcentaje for p in periodos)
-    if abs(total_pct - 100.0) > 0.01:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Los porcentajes deben sumar 100%. Suma actual: {total_pct}%"
-        )
+    """Create or update periods using upsert logic (by numero). Independent periods."""
+    periodos = data.periodos
+    if len(periodos) > 10:
+        raise HTTPException(status_code=400, detail="Máximo 10 períodos")
 
     for p in periodos:
         if p.fecha_fin <= p.fecha_inicio:
@@ -112,23 +107,30 @@ async def save_all_periodos(
                 detail=f"Período {p.numero}: la fecha fin debe ser posterior a fecha inicio"
             )
 
-    # Delete existing and recreate
-    existing = await db.execute(select(PeriodoAcademico))
-    for ex in existing.scalars().all():
-        await db.delete(ex)
-    await db.flush()
-
-    created = []
+    # Upsert: update existing by numero, create new ones
+    result_periods = []
     for p in periodos:
-        periodo = PeriodoAcademico(
-            nombre=p.nombre,
-            numero=p.numero,
-            fecha_inicio=p.fecha_inicio,
-            fecha_fin=p.fecha_fin,
-            porcentaje=p.porcentaje,
+        existing = await db.execute(
+            select(PeriodoAcademico).where(PeriodoAcademico.numero == p.numero)
         )
-        db.add(periodo)
-        created.append(periodo)
+        ex = existing.scalar_one_or_none()
+        if ex:
+            ex.nombre = p.nombre
+            ex.fecha_inicio = p.fecha_inicio
+            ex.fecha_fin = p.fecha_fin
+            ex.porcentaje = p.porcentaje
+            ex.updated_at = datetime.now(timezone.utc)
+            result_periods.append(ex)
+        else:
+            periodo = PeriodoAcademico(
+                nombre=p.nombre,
+                numero=p.numero,
+                fecha_inicio=p.fecha_inicio,
+                fecha_fin=p.fecha_fin,
+                porcentaje=p.porcentaje,
+            )
+            db.add(periodo)
+            result_periods.append(periodo)
 
     audit = AuditLog(
         user_id=current_user.id,
@@ -138,10 +140,10 @@ async def save_all_periodos(
     db.add(audit)
     await db.commit()
 
-    for p in created:
+    for p in result_periods:
         await db.refresh(p)
 
-    return [PeriodoAcademicoOut.model_validate(p) for p in created]
+    return [PeriodoAcademicoOut.model_validate(p) for p in result_periods]
 
 
 @router.delete("/{periodo_id}", status_code=status.HTTP_204_NO_CONTENT)

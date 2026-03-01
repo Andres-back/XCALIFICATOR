@@ -9,8 +9,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@jaredreisinger/react-crossword": "^5.2.0",
     "@react-oauth/google": "^0.12.1",
     "axios": "^1.7.5",
+    "styled-components": "^5.3.11",
     "date-fns": "^3.6.0",
     "katex": "^0.16.28",
     "lucide-react": "^0.441.0",

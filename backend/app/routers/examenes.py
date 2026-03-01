@@ -12,6 +12,7 @@ from app.schemas.schemas import (
     RespuestaOnlineCreate, RespuestaOnlineOut,
 )
 from app.services.notification_service import notify_enrolled_students, send_email, send_whatsapp
+import json as _json
 import logging
 
 logger = logging.getLogger(__name__)
@@ -30,25 +31,28 @@ def _normalize(s: str) -> str:
 def auto_grade_objective(examen: Examen, respuestas_json: dict) -> dict | None:
     """
     Auto-grade objective questions (seleccion_multiple, verdadero_falso)
-    by comparing against clave_respuestas. Returns grading result dict
-    or None if auto-grading is not possible.
+    AND interactive activities (crucigrama, sopa_letras, emparejar).
+    Returns grading result dict or None if auto-grading is not possible.
     """
-    if not examen.clave_respuestas or not examen.contenido_json:
-        return None
-
-    clave_raw = examen.clave_respuestas
-    if isinstance(clave_raw, dict) and "preguntas" in clave_raw:
-        clave_list = clave_raw["preguntas"]
-    elif isinstance(clave_raw, list):
-        clave_list = clave_raw
-    else:
+    if not examen.contenido_json:
         return None
 
     contenido = examen.contenido_json
+
+    # ── Parse clave_respuestas for normal questions ──
+    clave_list = []
+    clave_raw = examen.clave_respuestas
+    if clave_raw:
+        if isinstance(clave_raw, dict) and "preguntas" in clave_raw:
+            clave_list = clave_raw["preguntas"]
+        elif isinstance(clave_raw, list):
+            clave_list = clave_raw
+
     preguntas_info = {}
     for p in contenido.get("preguntas", []):
         preguntas_info[p.get("numero")] = p.get("tipo", "")
 
+    # ── Parse student responses ──
     resp_raw = respuestas_json
     if isinstance(resp_raw, dict) and "preguntas" in resp_raw:
         resp_list = resp_raw["preguntas"]
@@ -57,19 +61,12 @@ def auto_grade_objective(examen: Examen, respuestas_json: dict) -> dict | None:
     else:
         return None
 
-    # Build lookup for student responses
     resp_map = {}
     for r in resp_list:
         if isinstance(r, dict):
             resp_map[r.get("numero")] = r.get("respuesta", "")
 
-    # Build lookup for answer key
-    clave_map = {}
-    for c in clave_list:
-        if isinstance(c, dict):
-            clave_map[c.get("numero")] = c
-
-    # Check if there are any non-objective questions
+    # ── Grade normal questions ──
     auto_gradable_types = {"seleccion_multiple", "verdadero_falso"}
     has_open_ended = False
     preguntas_result = []
@@ -113,6 +110,158 @@ def auto_grade_objective(examen: Examen, respuestas_json: dict) -> dict | None:
                 "tipo": tipo,
                 "pendiente": True,
             })
+
+    # ── Grade crucigrama ──
+    if "crucigrama" in resp_map and contenido.get("crucigrama"):
+        try:
+            crucigrama = contenido["crucigrama"]
+            raw = resp_map["crucigrama"]
+            student_grid = _json.loads(raw) if isinstance(raw, str) else (raw or {})
+
+            words = []
+            for p in crucigrama.get("pistas_horizontal", []):
+                if not isinstance(p, dict):
+                    continue
+                word = (p.get("respuesta") or "").upper()
+                cells = [f"{p['fila']},{p['columna'] + k}" for k in range(len(word))]
+                words.append({"word": word, "cells": cells, "pista": p.get("pista", ""),
+                              "numero": p.get("numero"), "dir": "H"})
+            for p in crucigrama.get("pistas_vertical", []):
+                if not isinstance(p, dict):
+                    continue
+                word = (p.get("respuesta") or "").upper()
+                cells = [f"{p['fila'] + k},{p['columna']}" for k in range(len(word))]
+                words.append({"word": word, "cells": cells, "pista": p.get("pista", ""),
+                              "numero": p.get("numero"), "dir": "V"})
+
+            total_words = len(words)
+            correct_words = 0
+            word_details = []
+            for w in words:
+                student_word = "".join(
+                    _normalize(student_grid.get(c, "")) for c in w["cells"]
+                )
+                correcto = student_word == _normalize(w["word"])
+                if correcto:
+                    correct_words += 1
+                word_details.append({
+                    "pista": w["pista"],
+                    "respuesta_correcta": w["word"],
+                    "respuesta_estudiante": "".join(
+                        (student_grid.get(c, "") or "").upper() for c in w["cells"]
+                    ),
+                    "correcto": correcto,
+                    "numero": w["numero"],
+                    "dir": w["dir"],
+                })
+
+            puntos_act = 5.0
+            nota_act = round((correct_words / total_words * puntos_act) if total_words else 0, 2)
+            nota_maxima += puntos_act
+            nota_total += nota_act
+
+            preguntas_result.append({
+                "numero": "crucigrama",
+                "tipo": "crucigrama",
+                "nota": nota_act,
+                "nota_maxima": puntos_act,
+                "correcto": correct_words == total_words,
+                "retroalimentacion": f"Crucigrama: {correct_words}/{total_words} palabras correctas",
+                "detalle_palabras": word_details,
+            })
+        except Exception as e:
+            logger.error(f"Error grading crucigrama: {e}")
+
+    # ── Grade sopa de letras ──
+    if "sopa_letras" in resp_map and contenido.get("sopa_letras"):
+        try:
+            sopa = contenido["sopa_letras"]
+            palabras_correctas = [_normalize(p) for p in sopa.get("palabras", [])]
+            raw_resp = resp_map["sopa_letras"] or ""
+            resp_palabras = [_normalize(w.strip()) for w in raw_resp.split(",") if w.strip()]
+
+            total_p = len(palabras_correctas)
+            encontradas = sum(1 for p in resp_palabras if p in palabras_correctas)
+
+            puntos_act = 5.0
+            nota_act = round((encontradas / total_p * puntos_act) if total_p else 0, 2)
+            nota_maxima += puntos_act
+            nota_total += nota_act
+
+            preguntas_result.append({
+                "numero": "sopa_letras",
+                "tipo": "sopa_letras",
+                "nota": nota_act,
+                "nota_maxima": puntos_act,
+                "correcto": encontradas == total_p,
+                "retroalimentacion": f"Sopa de letras: {encontradas}/{total_p} palabras encontradas",
+                "respuesta_estudiante": raw_resp,
+                "respuesta_correcta": ", ".join(sopa.get("palabras", [])),
+            })
+        except Exception as e:
+            logger.error(f"Error grading sopa_letras: {e}")
+
+    # ── Grade emparejar ──
+    if "emparejar" in resp_map and contenido.get("emparejar"):
+        try:
+            emparejar = contenido["emparejar"]
+            pares_correctos = emparejar.get("pares", [])
+            raw = resp_map["emparejar"]
+            student_matches = _json.loads(raw) if isinstance(raw, str) else (raw or {})
+
+            # onComplete sends {correct, total, matches} — unwrap if needed
+            if isinstance(student_matches, dict) and "matches" in student_matches:
+                student_matches = student_matches["matches"]
+
+            total_pares = len(pares_correctos)
+            pares_bien = 0
+            # Correct match: key == value (leftId === rightId means correct pair)
+            for par in pares_correctos:
+                pid = par.get("id")
+                if pid is not None and student_matches.get(str(pid)) == pid:
+                    pares_bien += 1
+                elif pid is not None and str(student_matches.get(str(pid))) == str(pid):
+                    pares_bien += 1
+
+            puntos_act = 5.0
+            nota_act = round((pares_bien / total_pares * puntos_act) if total_pares else 0, 2)
+            nota_maxima += puntos_act
+            nota_total += nota_act
+
+            pair_details = []
+            for par in pares_correctos:
+                pid = par.get("id")
+                matched_rid = student_matches.get(str(pid), student_matches.get(pid))
+                is_correct = str(matched_rid) == str(pid) if matched_rid is not None else False
+                # Find the derecha text of what the student matched
+                matched_text = ""
+                if matched_rid is not None:
+                    for p2 in pares_correctos:
+                        if p2.get("id") == matched_rid or str(p2.get("id")) == str(matched_rid):
+                            matched_text = p2.get("derecha", "")
+                            break
+                pair_details.append({
+                    "izquierda": par.get("izquierda", ""),
+                    "derecha_correcta": par.get("derecha", ""),
+                    "derecha_estudiante": matched_text,
+                    "correcto": is_correct,
+                })
+
+            preguntas_result.append({
+                "numero": "emparejar",
+                "tipo": "emparejar",
+                "nota": nota_act,
+                "nota_maxima": puntos_act,
+                "correcto": pares_bien == total_pares,
+                "retroalimentacion": f"Emparejar: {pares_bien}/{total_pares} pares correctos",
+                "detalle_pares": pair_details,
+            })
+        except Exception as e:
+            logger.error(f"Error grading emparejar: {e}")
+
+    # If nothing was graded at all, return None
+    if not preguntas_result:
+        return None
 
     return {
         "nota_total": round(nota_total, 2),
@@ -591,15 +740,30 @@ async def update_examen(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("profesor", "admin")),
 ):
-    """Update exam fields (titulo, contenido_json, clave_respuestas, activo_online, fecha_limite)."""
+    """Update exam fields (titulo, contenido_json, clave_respuestas, activo_online, fecha_limite, fecha_activacion)."""
     result = await db.execute(select(Examen).where(Examen.id == examen_id))
     examen = result.scalar_one_or_none()
     if not examen:
         raise HTTPException(status_code=404, detail="Examen no encontrado")
 
     allowed_fields = {"titulo", "contenido_json", "clave_respuestas", "activo_online", "fecha_limite", "fecha_activacion", "tipo"}
+    date_fields = {"fecha_limite", "fecha_activacion"}
     for field, value in data.items():
         if field in allowed_fields:
+            if field in date_fields and value:
+                # Parse date string to proper datetime
+                try:
+                    if isinstance(value, str):
+                        # Handle "2025-12-31T23:59" from datetime-local input
+                        value = value.replace("T", " ")
+                        for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M"):
+                            try:
+                                value = datetime.strptime(value, fmt).replace(tzinfo=timezone.utc)
+                                break
+                            except ValueError:
+                                continue
+                except Exception:
+                    pass
             setattr(examen, field, value)
 
     await db.commit()

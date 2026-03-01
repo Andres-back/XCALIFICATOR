@@ -8,6 +8,7 @@ import {
   ChevronUp, Plus, Minus, Save, Loader2,
 } from 'lucide-react';
 import { format } from 'date-fns';
+import MathText from '../../components/MathText';
 
 export default function ProfesorExamenes({ materiaId: propMateriaId, embedded = false }) {
   const params = useParams();
@@ -357,20 +358,18 @@ export default function ProfesorExamenes({ materiaId: propMateriaId, embedded = 
                           {p.numero}
                         </span>
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm text-gray-800 font-medium">{p.enunciado}</p>
+                          <MathText text={p.enunciado} className="text-sm text-gray-800 font-medium" />
                           <span className="text-xs text-gray-400 mt-1">{p.tipo} · {c?.puntos || p.puntos || 1} pts</span>
                         </div>
                       </div>
                       <div className="px-4 py-3 bg-green-50 border-t border-green-100">
                         <p className="text-xs font-semibold text-green-700 mb-0.5">Respuesta correcta:</p>
-                        <p className="text-sm text-green-800">{c?.respuesta_correcta || '—'}</p>
+                        <MathText text={c?.respuesta_correcta || '—'} className="text-sm text-green-800" />
                       </div>
                       {p.opciones && p.opciones.length > 0 && (
                         <div className="px-4 py-2 border-t border-gray-100 space-y-1">
                           {p.opciones.map((opt, j) => (
-                            <p key={j} className={`text-xs ${c?.respuesta_correcta && opt.includes(c.respuesta_correcta) ? 'text-green-700 font-semibold' : 'text-gray-600'}`}>
-                              {opt}
-                            </p>
+                            <MathText key={j} text={opt} className={`text-xs ${c?.respuesta_correcta && opt.includes(c.respuesta_correcta) ? 'text-green-700 font-semibold' : 'text-gray-600'}`} />
                           ))}
                         </div>
                       )}
@@ -380,7 +379,7 @@ export default function ProfesorExamenes({ materiaId: propMateriaId, embedded = 
                   <div key={i} className="flex items-start gap-3 p-3 rounded-lg bg-gray-50 border border-gray-200">
                     <span className="flex-shrink-0 w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 font-bold text-sm flex items-center justify-center">{c.numero}</span>
                     <div>
-                      <p className="text-sm text-gray-800">{c.respuesta_correcta}</p>
+                      <MathText text={c.respuesta_correcta} className="text-sm text-gray-800" />
                       <p className="text-xs text-gray-400">{c.puntos} pts</p>
                     </div>
                   </div>

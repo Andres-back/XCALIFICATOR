@@ -3,7 +3,7 @@ import api from '../../api';
 import toast from 'react-hot-toast';
 import {
   ScrollText, TrendingUp, BookOpen, Calendar,
-  ChevronDown, ChevronUp, Award, BarChart3, Target,
+  Award, Target, BarChart3, ChevronUp, ChevronDown,
 } from 'lucide-react';
 import StatCard from '../../components/StatCard';
 import EmptyState from '../../components/EmptyState';

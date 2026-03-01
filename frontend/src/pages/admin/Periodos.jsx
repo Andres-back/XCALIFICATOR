@@ -3,7 +3,7 @@ import api from '../../api';
 import toast from 'react-hot-toast';
 import {
   Calendar, Plus, Edit3, Trash2, Save, X, AlertCircle,
-  CheckCircle, Loader2,
+  CheckCircle, Loader2, Info,
 } from 'lucide-react';
 import EmptyState from '../../components/EmptyState';
 import ConfirmDialog from '../../components/ConfirmDialog';
@@ -42,15 +42,31 @@ export default function AdminPeriodos() {
         porcentaje: p.porcentaje || 25,
       })));
     } else {
-      setForm(PERIODO_NOMBRES.map((nombre, i) => ({
-        nombre,
-        numero: i + 1,
+      setForm([{
+        nombre: PERIODO_NOMBRES[0],
+        numero: 1,
         fecha_inicio: '',
         fecha_fin: '',
         porcentaje: 25,
-      })));
+      }]);
     }
     setEditMode(true);
+  };
+
+  const addPeriodo = () => {
+    const nextNum = form.length + 1;
+    if (nextNum > 10) { toast.error('Máximo 10 períodos'); return; }
+    setForm(prev => [...prev, {
+      nombre: PERIODO_NOMBRES[nextNum - 1] || `Período ${nextNum}`,
+      numero: nextNum,
+      fecha_inicio: '',
+      fecha_fin: '',
+      porcentaje: 25,
+    }]);
+  };
+
+  const removePeriodoForm = (index) => {
+    setForm(prev => prev.filter((_, i) => i !== index).map((p, i) => ({ ...p, numero: i + 1 })));
   };
 
   const updateForm = (index, field, value) => {
@@ -60,14 +76,9 @@ export default function AdminPeriodos() {
   const totalPorcentaje = form.reduce((a, p) => a + (parseFloat(p.porcentaje) || 0), 0);
 
   const handleSave = async () => {
-    if (Math.abs(totalPorcentaje - 100) > 0.01) {
-      toast.error(`Los porcentajes deben sumar 100%. Suma actual: ${totalPorcentaje}%`);
-      return;
-    }
-
     for (const p of form) {
       if (!p.fecha_inicio || !p.fecha_fin) {
-        toast.error('Todas las fechas son obligatorias');
+        toast.error(`${p.nombre}: Las fechas son obligatorias`);
         return;
       }
       if (new Date(p.fecha_inicio) >= new Date(p.fecha_fin)) {
@@ -91,7 +102,14 @@ export default function AdminPeriodos() {
       setEditMode(false);
       fetchPeriodos();
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Error guardando períodos');
+      const detail = err.response?.data?.detail;
+      if (typeof detail === 'string') {
+        toast.error(detail);
+      } else if (Array.isArray(detail)) {
+        toast.error(detail.map(e => e.msg || JSON.stringify(e)).join(', '));
+      } else {
+        toast.error('Error guardando períodos');
+      }
     } finally {
       setSaving(false);
     }
@@ -104,7 +122,8 @@ export default function AdminPeriodos() {
       setDeleteConfirm(null);
       fetchPeriodos();
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Error eliminando');
+      const detail = err.response?.data?.detail;
+      toast.error(typeof detail === 'string' ? detail : 'Error eliminando');
       setDeleteConfirm(null);
     }
   };
@@ -122,7 +141,7 @@ export default function AdminPeriodos() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Períodos Académicos</h1>
           <p className="text-sm text-gray-500 mt-1">
-            Configura los 4 períodos del año escolar y sus porcentajes de calificación.
+            Configura los períodos del año escolar y sus porcentajes de calificación.
           </p>
         </div>
         {!editMode && (
@@ -137,10 +156,10 @@ export default function AdminPeriodos() {
       <div className="flex items-start gap-3 p-4 bg-blue-50 border border-blue-100 rounded-xl">
         <AlertCircle className="w-5 h-5 text-blue-500 shrink-0 mt-0.5" />
         <div>
-          <p className="text-sm text-blue-800 font-medium">Sistema de 4 períodos</p>
+          <p className="text-sm text-blue-800 font-medium">Períodos flexibles</p>
           <p className="text-xs text-blue-600 mt-0.5">
-            El año escolar colombiano se divide en 4 períodos. Los porcentajes deben sumar exactamente 100%.
-            Estos períodos se utilizan para generar boletines y reportes por período.
+            Puedes configurar de 1 a 4 períodos de forma independiente. Cada período tiene su propio porcentaje de calificación.
+            Se recomienda que los porcentajes sumen 100%.
           </p>
         </div>
       </div>
@@ -152,7 +171,7 @@ export default function AdminPeriodos() {
             <EmptyState
               icon={Calendar}
               title="No hay períodos configurados"
-              description="Configura los 4 períodos académicos del año escolar para habilitar reportes y boletines por período."
+              description="Configura los períodos académicos del año escolar para habilitar reportes y boletines por período."
               action={
                 <button onClick={startEdit} className="btn-primary flex items-center gap-2">
                   <Plus className="w-4 h-4" /> Configurar Períodos
@@ -208,6 +227,12 @@ export default function AdminPeriodos() {
                   onChange={e => updateForm(i, 'nombre', e.target.value)}
                   placeholder="Nombre del período"
                 />
+                {form.length > 1 && (
+                  <button type="button" onClick={() => removePeriodoForm(i)}
+                    className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>
@@ -232,21 +257,30 @@ export default function AdminPeriodos() {
             </div>
           ))}
 
+          {/* Add period button */}
+          {form.length < 10 && (
+            <button type="button" onClick={addPeriodo}
+              className="w-full p-3 border-2 border-dashed border-gray-300 rounded-xl text-sm font-medium text-gray-500 hover:border-primary-400 hover:text-primary-600 hover:bg-primary-50 transition flex items-center justify-center gap-2">
+              <Plus className="w-4 h-4" /> Agregar período
+            </button>
+          )}
+
           {/* Total indicator */}
           <div className={`flex items-center justify-between p-4 rounded-xl border ${
             Math.abs(totalPorcentaje - 100) < 0.01
               ? 'bg-green-50 border-green-200'
-              : 'bg-red-50 border-red-200'
+              : 'bg-yellow-50 border-yellow-200'
           }`}>
             <span className={`text-sm font-medium ${
-              Math.abs(totalPorcentaje - 100) < 0.01 ? 'text-green-700' : 'text-red-700'
+              Math.abs(totalPorcentaje - 100) < 0.01 ? 'text-green-700' : 'text-yellow-700'
             }`}>
               Total de porcentajes: {totalPorcentaje.toFixed(1)}%
+              {Math.abs(totalPorcentaje - 100) >= 0.01 && ' (se recomienda 100%)'}
             </span>
             {Math.abs(totalPorcentaje - 100) < 0.01 ? (
               <CheckCircle className="w-5 h-5 text-green-500" />
             ) : (
-              <AlertCircle className="w-5 h-5 text-red-500" />
+              <Info className="w-5 h-5 text-yellow-500" />
             )}
           </div>
 
@@ -255,7 +289,7 @@ export default function AdminPeriodos() {
             <button onClick={() => setEditMode(false)} className="btn-secondary flex items-center gap-2">
               <X className="w-4 h-4" /> Cancelar
             </button>
-            <button onClick={handleSave} disabled={saving || Math.abs(totalPorcentaje - 100) > 0.01}
+            <button onClick={handleSave} disabled={saving}
               className="btn-primary flex items-center gap-2">
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
               Guardar Períodos

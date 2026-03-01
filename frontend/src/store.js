@@ -54,7 +54,8 @@ const useAuthStore = create((set, get) => ({
     }
   },
 
-  logout: () => {
+  logout: async () => {
+    try { await api.post('/auth/logout'); } catch {}
     localStorage.clear();
     set({ user: null, isAuthenticated: false });
   },

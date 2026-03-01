@@ -39,9 +39,10 @@ async def generate_exam(tema: str, nivel: str, distribucion: dict, contenido_bas
     grado_instruccion = f"\nGrado escolar: {grado}. Adapta el vocabulario, complejidad y contenido al nivel cognitivo de este grado del sistema educativo colombiano." if grado else ""
     system_prompt = f"""Eres un experto en pedagogía y diseño de evaluaciones del sistema educativo colombiano.
 Genera un examen en formato JSON ESTRICTAMENTE siguiendo este schema.
-NO agregues texto fuera del JSON. NO uses markdown.
+NO agregues texto fuera del JSON. NO uses markdown (excepto notación matemática).
 Cada pregunta debe tener numeración clara (1., 2., 3...).
 Las opciones de selección múltiple deben usar formato A) B) C) D).
+Si el tema involucra matemáticas, física, química u otra materia con fórmulas, SIEMPRE escribe las fórmulas usando notación LaTeX: usa $...$ para fórmulas en línea y $$...$$ para fórmulas centradas. Ejemplos: $x^2 + y^2 = r^2$, $\\frac{{a}}{{b}}$, $\\sqrt{{x}}$, $\\int_0^1 x^2 dx$.
 Incluye la respuesta correcta en el campo 'respuesta_correcta' (NO visible en la version estudiante).
 Ajusta la dificultad al nivel: {nivel}.{grado_instruccion}
 Tema: {tema}
@@ -168,34 +169,28 @@ async def generate_crucigrama(
         if clean:
             obligatorias_inst = f"\nPALABRAS OBLIGATORIAS que DEBEN aparecer en el crucigrama: {', '.join(clean)}. Distribúyelas entre horizontales y verticales."
 
-    system_prompt = f"""Eres un experto en diseño de crucigramas educativos.
-Genera SOLAMENTE un crucigrama en formato JSON. NO generes preguntas de examen.
-NO agregues texto fuera del JSON. NO uses markdown.
+    system_prompt = f"""Eres un experto en crucigramas educativos.
+Genera palabras y pistas para un crucigrama. La cuadrícula se construye automáticamente.
 Nivel: {nivel}.{grado_inst}
 Tema: {tema}
-Número de palabras horizontales: {num_horizontales}
-Número de palabras verticales: {num_verticales}{obligatorias_inst}
+Genera {num_horizontales} palabras para horizontales y {num_verticales} para verticales.{obligatorias_inst}
 
 REGLAS OBLIGATORIAS:
-1. La cuadrícula debe ser cuadrada (NxN), mínimo 12x12.
-2. Las celdas activas contienen la letra correcta en MAYÚSCULA; las bloqueadas contienen "".
-3. Cada pista DEBE incluir: numero, pista (descripción), respuesta, fila, columna, longitud.
-4. Las palabras DEBEN cruzarse correctamente compartiendo letras en sus intersecciones.
-5. Las posiciones (fila, columna) son 0-indexed desde la esquina superior izquierda.
-6. Las respuestas NO deben tener tildes ni caracteres especiales.
-7. La cuadrícula debe ser lo suficientemente grande para todas las palabras.
+1. Las respuestas deben ser UNA SOLA PALABRA en MAYÚSCULA, sin tildes, sin espacios, sin Ñ.
+2. Las palabras DEBEN compartir letras comunes (A, E, O, R, S, N, I, L, T, C) para que se crucen.
+3. NO repitas la misma palabra en horizontales y verticales.
+4. Cada pista debe ser una descripción clara y educativa.
+5. NO generes grid, size, fila, columna ni longitud. Solo palabras y pistas.
 
-Schema JSON EXACTO requerido:
+Responde SOLO con JSON válido:
 {{
   "titulo": "string",
   "crucigrama": {{
-    "grid": [["L","","O",""],...],
-    "size": int,
     "pistas_horizontal": [
-      {{"numero": 1, "pista": "Descripción...", "respuesta": "PALABRA", "fila": 0, "columna": 2, "longitud": 5}}
+      {{"pista": "Descripción...", "respuesta": "PALABRA"}}
     ],
     "pistas_vertical": [
-      {{"numero": 1, "pista": "Descripción...", "respuesta": "PALABRA", "fila": 1, "columna": 3, "longitud": 4}}
+      {{"pista": "Descripción...", "respuesta": "PALABRA"}}
     ]
   }}
 }}"""
@@ -432,15 +427,45 @@ Schema JSON EXACTO requerido:
     return json.loads(chat.choices[0].message.content)
 
 
-def get_pollinations_image_url(prompt: str) -> str:
-    """Build a Pollinations image URL (gen.pollinations.ai) for the given prompt."""
+async def generate_coloring_prompt(descripcion: str) -> str:
+    """Translate a Spanish coloring-page description into a detailed English image prompt."""
+    chat = client.chat.completions.create(
+        model=MODELS["classification"],
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are an image-prompt specialist for children's coloring pages. "
+                    "The user gives you a description in Spanish. "
+                    "Return ONLY a single English image prompt (no explanations, no markdown). "
+                    "The prompt must: describe cute cartoon characters clearly, specify 'coloring book page', "
+                    "'thick clean black outlines', 'white background', 'no color', 'no shading', 'no text', "
+                    "'no words', 'no letters', 'no title', 'printable line art', 'kid-friendly'. "
+                    "Be specific about the animals/characters requested. Keep it under 80 words."
+                ),
+            },
+            {"role": "user", "content": descripcion},
+        ],
+        temperature=0.4,
+        max_tokens=120,
+    )
+    return chat.choices[0].message.content.strip()
+
+
+def get_pollinations_image_url(prompt: str, model: str = "flux") -> str:
+    """Build a Pollinations image URL (gen.pollinations.ai) for the given prompt.
+
+    Args:
+        prompt: Text description of the image.
+        model:  Pollinations model name — 'flux' (Flux Schnell), 'zimage' (Z-Image Turbo), etc.
+    """
     import urllib.parse
     import random
     from app.core.config import get_settings
     encoded = urllib.parse.quote(prompt)
     seed = random.randint(1, 99999)
     key = get_settings().POLLINATIONS_API_KEY
-    return f"https://gen.pollinations.ai/image/{encoded}?model=flux&width=768&height=768&nologo=true&seed={seed}&key={key}"
+    return f"https://gen.pollinations.ai/image/{encoded}?model={model}&width=768&height=768&nologo=true&seed={seed}&key={key}"
 
 
 async def classify_writing(text_sample: str) -> str:

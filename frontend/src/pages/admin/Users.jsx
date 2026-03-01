@@ -13,6 +13,11 @@ const ROLES = [
   { value: 'admin', label: 'Administrador', color: 'bg-purple-100 text-purple-700' },
 ];
 
+const GRADOS = [
+  'Transición', '1°', '2°', '3°', '4°', '5°',
+  '6°', '7°', '8°', '9°', '10°', '11°',
+];
+
 const getRoleColor = (rol) => ROLES.find(r => r.value === rol)?.color || 'bg-gray-100 text-gray-700';
 
 export default function AdminUsers() {
@@ -25,8 +30,10 @@ export default function AdminUsers() {
   const [showSessions, setShowSessions] = useState(null);
   const [sessions, setSessions] = useState([]);
   const [roleDropdown, setRoleDropdown] = useState(null);
+  const [gradoDropdown, setGradoDropdown] = useState(null);
+  const [filterGrado, setFilterGrado] = useState('');
   const [newUser, setNewUser] = useState({
-    nombre: '', apellido: '', documento: '', correo: '', celular: '', password: '', rol: 'estudiante',
+    nombre: '', apellido: '', documento: '', correo: '', celular: '', password: '', rol: 'estudiante', grado: '',
   });
   const [passwordModal, setPasswordModal] = useState(null);
   const [newPassword, setNewPassword] = useState('');
@@ -51,9 +58,10 @@ export default function AdminUsers() {
       const matchRol = !filterRol || u.rol === filterRol;
       const matchEstado = !filterEstado || 
         (filterEstado === 'activo' ? u.activo : !u.activo);
-      return matchSearch && matchRol && matchEstado;
+      const matchGrado = !filterGrado || u.grado === filterGrado;
+      return matchSearch && matchRol && matchEstado && matchGrado;
     });
-  }, [users, search, filterRol, filterEstado]);
+  }, [users, search, filterRol, filterEstado, filterGrado]);
 
   const toggleUser = async (userId) => {
     try {
@@ -76,6 +84,17 @@ export default function AdminUsers() {
     }
   };
 
+  const changeGrado = async (userId, newGrado) => {
+    try {
+      await api.patch(`/admin/users/${userId}/grado`, { grado: newGrado || null });
+      fetchUsers();
+      toast.success(`Grado actualizado a ${newGrado || 'Sin grado'}`);
+      setGradoDropdown(null);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Error');
+    }
+  };
+
   const deleteUser = async (userId, nombre) => {
     if (!confirm(`¿Eliminar al usuario "${nombre}"? Esta acción no se puede deshacer.`)) return;
     try {
@@ -93,7 +112,7 @@ export default function AdminUsers() {
       await api.post('/admin/users', newUser);
       toast.success('Usuario creado');
       setShowCreate(false);
-      setNewUser({ nombre: '', apellido: '', documento: '', correo: '', celular: '', password: '', rol: 'estudiante' });
+      setNewUser({ nombre: '', apellido: '', documento: '', correo: '', celular: '', password: '', rol: 'estudiante', grado: '' });
       fetchUsers();
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Error');
@@ -162,6 +181,10 @@ export default function AdminUsers() {
             <option value="activo">Activos</option>
             <option value="inactivo">Inactivos</option>
           </select>
+          <select className="input-field w-auto" value={filterGrado} onChange={e => setFilterGrado(e.target.value)}>
+            <option value="">Todos los grados</option>
+            {GRADOS.map(g => <option key={g} value={g}>{g}</option>)}
+          </select>
         </div>
       </div>
 
@@ -174,6 +197,7 @@ export default function AdminUsers() {
               <th className="text-left py-3 px-2 font-medium text-gray-500">Correo</th>
               <th className="text-left py-3 px-2 font-medium text-gray-500">Documento</th>
               <th className="text-left py-3 px-2 font-medium text-gray-500">Rol</th>
+              <th className="text-left py-3 px-2 font-medium text-gray-500">Grado</th>
               <th className="text-left py-3 px-2 font-medium text-gray-500">Estado</th>
               <th className="text-left py-3 px-2 font-medium text-gray-500">Registro</th>
               <th className="text-left py-3 px-2 font-medium text-gray-500">Acciones</th>
@@ -181,7 +205,7 @@ export default function AdminUsers() {
           </thead>
           <tbody>
             {filteredUsers.length === 0 ? (
-              <tr><td colSpan={7} className="py-8 text-center text-gray-400">No se encontraron usuarios</td></tr>
+              <tr><td colSpan={8} className="py-8 text-center text-gray-400">No se encontraron usuarios</td></tr>
             ) : filteredUsers.map(u => (
               <tr key={u.id} className="border-b border-gray-100 hover:bg-gray-50">
                 <td className="py-3 px-2">
@@ -219,6 +243,37 @@ export default function AdminUsers() {
                         </button>
                       ))}
                     </div>
+                  )}
+                </td>
+                <td className="py-3 px-2 relative">
+                  {u.rol === 'estudiante' ? (
+                    <>
+                      <button
+                        onClick={() => setGradoDropdown(gradoDropdown === u.id ? null : u.id)}
+                        className="px-2 py-1 rounded-full text-xs font-medium flex items-center gap-1 cursor-pointer hover:opacity-80 bg-amber-100 text-amber-700"
+                      >
+                        {u.grado || 'Sin grado'}
+                        <ChevronDown className="w-3 h-3" />
+                      </button>
+                      {gradoDropdown === u.id && (
+                        <div className="absolute z-20 mt-1 left-0 bg-white rounded-lg shadow-xl border border-gray-200 py-1 min-w-[120px] max-h-60 overflow-y-auto">
+                          <button
+                            onClick={() => changeGrado(u.id, '')}
+                            className={`w-full text-left px-3 py-1.5 text-sm hover:bg-gray-50 ${!u.grado ? 'text-gray-300' : 'text-gray-700'}`}
+                          >Sin grado</button>
+                          {GRADOS.map(g => (
+                            <button key={g}
+                              onClick={() => changeGrado(u.id, g)}
+                              disabled={g === u.grado}
+                              className={`w-full text-left px-3 py-1.5 text-sm hover:bg-gray-50
+                                ${g === u.grado ? 'text-gray-300 cursor-default' : 'text-gray-700'}`}
+                            >{g}</button>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-xs text-gray-400">—</span>
                   )}
                 </td>
                 <td className="py-3 px-2">
@@ -283,6 +338,13 @@ export default function AdminUsers() {
                 onChange={e => setNewUser(p => ({ ...p, rol: e.target.value }))}>
                 {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
               </select>
+              {newUser.rol === 'estudiante' && (
+                <select className="input-field" value={newUser.grado}
+                  onChange={e => setNewUser(p => ({ ...p, grado: e.target.value }))}>
+                  <option value="">Grado (opcional)</option>
+                  {GRADOS.map(g => <option key={g} value={g}>{g}</option>)}
+                </select>
+              )}
               <button type="submit" className="btn-primary w-full">Crear Usuario</button>
             </form>
           </div>

@@ -20,9 +20,10 @@ const CABLE_COLORS = [
  * Props:
  *   emparejar : { instrucciones, pares: [{ id, izquierda, derecha }] }
  *   onComplete: (results: { correct, total, matches }) => void
+ *   onChange  : (matches: object) => void – called on every match change
  *   readOnly  : boolean – show answers without interaction
  */
-export default function Emparejar({ emparejar, onComplete, readOnly = false }) {
+export default function Emparejar({ emparejar, onComplete, onChange, readOnly = false }) {
   const pares = emparejar?.pares || [];
   const instrucciones =
     emparejar?.instrucciones ||
@@ -106,6 +107,7 @@ export default function Emparejar({ emparejar, onComplete, readOnly = false }) {
       // remove existing uses
       Object.keys(n).forEach(k => { if (parseInt(k) === leftId || n[k] === rightId) delete n[k]; });
       n[leftId] = rightId;
+      if (onChange) onChange(n);
       return n;
     });
     setSelectedLeft(null);
@@ -117,6 +119,7 @@ export default function Emparejar({ emparejar, onComplete, readOnly = false }) {
     setMatches(prev => {
       const n = { ...prev };
       delete n[leftId];
+      if (onChange) onChange(n);
       return n;
     });
   };

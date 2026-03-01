@@ -196,268 +196,264 @@ def _fix_sopa_letras(sopa: dict) -> dict:
 
 
 # ─────────────────────────────────────────────────
-#  CRUCIGRAMA — deterministic grid builder
+#  CRUCIGRAMA — pool-based connected grid builder
 # ─────────────────────────────────────────────────
 
 def _build_crucigrama_grid(pistas_h: list[dict], pistas_v: list[dict]) -> dict:
-    """Build a crossword grid algorithmically from horizontal and vertical word lists."""
-    # Extract words
-    h_words = []
-    for p in pistas_h:
-        if isinstance(p, dict):
-            word = _strip_accents(p.get("respuesta", "").upper().replace(" ", "").replace("Ñ", "N"))
-            if word:
-                h_words.append({"word": word, "pista": p.get("pista", ""), "numero": p.get("numero", 0)})
-    v_words = []
-    for p in pistas_v:
-        if isinstance(p, dict):
-            word = _strip_accents(p.get("respuesta", "").upper().replace(" ", "").replace("Ñ", "N"))
-            if word:
-                v_words.append({"word": word, "pista": p.get("pista", ""), "numero": p.get("numero", 0)})
+    """Build a fully-connected crossword grid.
 
-    if not h_words and not v_words:
+    Strategy:
+    - Pools ALL words from both H and V lists, deduplicates.
+    - Algorithm decides direction (H/V) to maximise intersections.
+    - Every word crosses at least one other word when possible.
+    - Multiple randomised attempts; picks best layout.
+    - Normalises coordinates and assigns standard numbering.
+    """
+
+    def _norm(word: str) -> str:
+        return _strip_accents(word.upper().replace(" ", "").replace("Ñ", "N"))
+
+    # ── Collect unique words with clues ────────────────────────────
+    word_clues: dict[str, str] = {}
+    for p in (pistas_h or []):
+        if not isinstance(p, dict):
+            continue
+        w = _norm(p.get("respuesta", ""))
+        if w and w not in word_clues:
+            word_clues[w] = p.get("pista", "")
+    for p in (pistas_v or []):
+        if not isinstance(p, dict):
+            continue
+        w = _norm(p.get("respuesta", ""))
+        if w and w not in word_clues:
+            word_clues[w] = p.get("pista", "")
+
+    entries = [{"word": w, "pista": c} for w, c in word_clues.items()]
+
+    if not entries:
         return {"grid": [], "size": 0, "pistas_horizontal": [], "pistas_vertical": []}
 
-    all_words = h_words + v_words
-    longest = max((len(w["word"]) for w in all_words), default=5)
-    total_words = len(all_words)
-    size = max(15, longest + 4, total_words + 3)
+    if len(entries) == 1:
+        w = entries[0]["word"]
+        return {
+            "grid": [list(w)],
+            "size": max(len(w), 1),
+            "pistas_horizontal": [{"numero": 1, "pista": entries[0]["pista"],
+                                   "respuesta": w, "fila": 0, "columna": 0,
+                                   "longitud": len(w)}],
+            "pistas_vertical": [],
+        }
 
-    # Grid starts empty (blocked = "")
-    grid = [["" for _ in range(size)] for _ in range(size)]
-
-    placed_h = []
-    placed_v = []
-
-    def can_place_h(word, r, c):
-        wlen = len(word)
-        if c + wlen > size:
-            return False
-        # Check left and right boundaries are blocked or edge
-        if c > 0 and grid[r][c - 1] != "":
-            return False
-        if c + wlen < size and grid[r][c + wlen] != "":
-            return False
-        for k in range(wlen):
-            cell = grid[r][c + k]
-            if cell == "":
-                # Check above and below are free (no parallel words)
-                above = grid[r - 1][c + k] if r > 0 else ""
-                below = grid[r + 1][c + k] if r < size - 1 else ""
-                if above != "" or below != "":
-                    return False
-            elif cell == word[k]:
-                pass  # Intersection ok
-            else:
+    # ── Placement helpers (sparse dict grid) ───────────────────────
+    def _can_place(grid: dict, word: str, d: str, row: int, col: int) -> bool:
+        n = len(word)
+        if d == "h":
+            if grid.get((row, col - 1)):
                 return False
-        return True
-
-    def can_place_v(word, r, c):
-        wlen = len(word)
-        if r + wlen > size:
-            return False
-        if r > 0 and grid[r - 1][c] != "":
-            return False
-        if r + wlen < size and grid[r + wlen][c] != "":
-            return False
-        for k in range(wlen):
-            cell = grid[r + k][c]
-            if cell == "":
-                left = grid[r + k][c - 1] if c > 0 else ""
-                right = grid[r + k][c + 1] if c < size - 1 else ""
-                if left != "" or right != "":
-                    return False
-            elif cell == word[k]:
-                pass
-            else:
+            if grid.get((row, col + n)):
                 return False
-        return True
-
-    def place_h(word, r, c):
-        for k in range(len(word)):
-            grid[r][c + k] = word[k]
-
-    def place_v(word, r, c):
-        for k in range(len(word)):
-            grid[r + k][c] = word[k]
-
-    def find_intersections_h(word):
-        """Find positions where a horizontal word intersects existing vertical words."""
-        positions = []
-        for r in range(size):
-            for c in range(size - len(word) + 1):
-                has_intersection = False
-                valid = True
-                for k in range(len(word)):
-                    cell = grid[r][c + k]
-                    if cell == word[k]:
-                        has_intersection = True
-                    elif cell != "":
-                        valid = False
-                        break
-                if valid and has_intersection and can_place_h(word, r, c):
-                    positions.append((r, c))
-        return positions
-
-    def find_intersections_v(word):
-        """Find positions where a vertical word intersects existing horizontal words."""
-        positions = []
-        for r in range(size - len(word) + 1):
-            for c in range(size):
-                has_intersection = False
-                valid = True
-                for k in range(len(word)):
-                    cell = grid[r + k][c]
-                    if cell == word[k]:
-                        has_intersection = True
-                    elif cell != "":
-                        valid = False
-                        break
-                if valid and has_intersection and can_place_v(word, r, c):
-                    positions.append((r, c))
-        return positions
-
-    # Place first horizontal word near center
-    if h_words:
-        first = h_words[0]
-        r = size // 2
-        c = (size - len(first["word"])) // 2
-        place_h(first["word"], r, c)
-        placed_h.append({**first, "fila": r, "columna": c, "longitud": len(first["word"])})
-        remaining_h = h_words[1:]
-    else:
-        remaining_h = []
-
-    # Place first vertical word trying to intersect
-    if v_words:
-        first_v = v_words[0]
-        positions = find_intersections_v(first_v["word"])
-        if positions:
-            r, c = random.choice(positions)
+            for k in range(n):
+                r, c = row, col + k
+                ex = grid.get((r, c))
+                if ex:
+                    if ex != word[k]:
+                        return False
+                else:
+                    if grid.get((r - 1, c)) or grid.get((r + 1, c)):
+                        return False
         else:
-            c = size // 2
-            r = max(0, (size - len(first_v["word"])) // 2)
-        place_v(first_v["word"], r, c)
-        placed_v.append({**first_v, "fila": r, "columna": c, "longitud": len(first_v["word"])})
-        remaining_v = v_words[1:]
-    else:
-        remaining_v = []
+            if grid.get((row - 1, col)):
+                return False
+            if grid.get((row + n, col)):
+                return False
+            for k in range(n):
+                r, c = row + k, col
+                ex = grid.get((r, c))
+                if ex:
+                    if ex != word[k]:
+                        return False
+                else:
+                    if grid.get((r, c - 1)) or grid.get((r, c + 1)):
+                        return False
+        return True
 
-    # Interleave placing horizontal and vertical words, preferring intersections
-    max_iterations = 5
-    for iteration in range(max_iterations):
-        progress = False
+    def _crossings(grid: dict, word: str, d: str, row: int, col: int) -> int:
+        s = 0
+        for k in range(len(word)):
+            rr = row + (k if d == "v" else 0)
+            cc = col + (k if d == "h" else 0)
+            if grid.get((rr, cc)) == word[k]:
+                s += 1
+        return s
 
-        unplaced_h = []
-        for hw in remaining_h:
-            positions = find_intersections_h(hw["word"])
-            if positions:
-                r, c = random.choice(positions)
-                place_h(hw["word"], r, c)
-                placed_h.append({**hw, "fila": r, "columna": c, "longitud": len(hw["word"])})
-                progress = True
+    def _do_place(grid: dict, word: str, d: str, row: int, col: int):
+        for k in range(len(word)):
+            if d == "h":
+                grid[(row, col + k)] = word[k]
             else:
-                unplaced_h.append(hw)
-        remaining_h = unplaced_h
+                grid[(row + k, col)] = word[k]
 
-        unplaced_v = []
-        for vw in remaining_v:
-            positions = find_intersections_v(vw["word"])
-            if positions:
-                r, c = random.choice(positions)
-                place_v(vw["word"], r, c)
-                placed_v.append({**vw, "fila": r, "columna": c, "longitud": len(vw["word"])})
-                progress = True
+    # ── Run multiple attempts, keep the best ───────────────────────
+    best_grid = None
+    best_placed = None
+    best_score = -1
+
+    for attempt in range(10):
+        grid: dict = {}
+        placed: list[dict] = []
+
+        # Build order: longest first with randomisation
+        order = list(range(len(entries)))
+        if attempt == 0:
+            order.sort(key=lambda i: -len(entries[i]["word"]))
+        else:
+            order.sort(key=lambda i: -len(entries[i]["word"]) + random.randint(-3, 3))
+
+        # Place first word horizontally at origin
+        first = entries[order[0]]
+        _do_place(grid, first["word"], "h", 0, 0)
+        placed.append({"word": first["word"], "pista": first["pista"],
+                        "dir": "h", "row": 0, "col": 0})
+
+        remaining = order[1:]
+
+        # ── Iterative placement passes ─────────────────────────────
+        for _pass in range(50):
+            if not remaining:
+                break
+            progress = False
+            new_remaining = []
+
+            for idx in remaining:
+                entry = entries[idx]
+                w = entry["word"]
+                best_pos = None
+                best_cross = 0
+
+                for p in placed:
+                    pw, pd = p["word"], p["dir"]
+                    pr, pc = p["row"], p["col"]
+                    for i, ch_new in enumerate(w):
+                        for j, ch_old in enumerate(pw):
+                            if ch_new != ch_old:
+                                continue
+                            # Perpendicular placement
+                            if pd == "h":
+                                nd, nr, nc = "v", pr - i, pc + j
+                            else:
+                                nd, nr, nc = "h", pr + j, pc - i
+                            if _can_place(grid, w, nd, nr, nc):
+                                sc = _crossings(grid, w, nd, nr, nc)
+                                if sc > best_cross:
+                                    best_cross = sc
+                                    best_pos = (nd, nr, nc)
+
+                if best_pos:
+                    d, r, c = best_pos
+                    _do_place(grid, w, d, r, c)
+                    placed.append({"word": w, "pista": entry["pista"],
+                                   "dir": d, "row": r, "col": c})
+                    progress = True
+                else:
+                    new_remaining.append(idx)
+
+            remaining = new_remaining
+            if not progress:
+                break
+
+        # ── Force-place words that couldn't intersect ──────────────
+        force_count = len(remaining)
+        for idx in remaining:
+            entry = entries[idx]
+            w = entry["word"]
+            if grid:
+                max_r = max(r for r, c in grid)
+                min_c = min(c for r, c in grid)
             else:
-                unplaced_v.append(vw)
-        remaining_v = unplaced_v
-
-        if not remaining_h and not remaining_v:
-            break
-        if not progress:
-            break
-
-    # Force-place any remaining words that couldn't intersect
-    for hw in remaining_h:
-        for r in range(1, size):
-            for c in range(0, size - len(hw["word"]) + 1):
-                if can_place_h(hw["word"], r, c):
-                    place_h(hw["word"], r, c)
-                    placed_h.append({**hw, "fila": r, "columna": c, "longitud": len(hw["word"])})
+                max_r = min_c = 0
+            nr = max_r + 2
+            ok = False
+            for ct in range(min_c, min_c + 40):
+                if _can_place(grid, w, "h", nr, ct):
+                    _do_place(grid, w, "h", nr, ct)
+                    placed.append({"word": w, "pista": entry["pista"],
+                                   "dir": "h", "row": nr, "col": ct})
+                    ok = True
                     break
-            else:
-                continue
-            break
+            if not ok:
+                _do_place(grid, w, "h", nr, min_c)
+                placed.append({"word": w, "pista": entry["pista"],
+                               "dir": "h", "row": nr, "col": min_c})
 
-    for vw in remaining_v:
-        for c in range(1, size):
-            for r in range(0, size - len(vw["word"]) + 1):
-                if can_place_v(vw["word"], r, c):
-                    place_v(vw["word"], r, c)
-                    placed_v.append({**vw, "fila": r, "columna": c, "longitud": len(vw["word"])})
-                    break
-            else:
-                continue
-            break
+        # Score: connected words minus penalty for forced
+        score = (len(entries) - force_count) * 100 - force_count * 50
+        if score > best_score:
+            best_score = score
+            best_grid = dict(grid)
+            best_placed = list(placed)
 
-    # Trim grid to minimal bounding box + 1 padding
-    min_r, max_r, min_c, max_c = size, 0, size, 0
-    for r in range(size):
-        for c in range(size):
-            if grid[r][c]:
-                min_r = min(min_r, r)
-                max_r = max(max_r, r)
-                min_c = min(min_c, c)
-                max_c = max(max_c, c)
+        if force_count == 0:
+            break  # Perfect layout, stop
 
-    if max_r < min_r:
+    grid = best_grid or {}
+    placed = best_placed or []
+
+    if not grid:
         return {"grid": [], "size": 0, "pistas_horizontal": [], "pistas_vertical": []}
 
-    pad = 1
-    min_r = max(0, min_r - pad)
-    min_c = max(0, min_c - pad)
-    max_r = min(size - 1, max_r + pad)
-    max_c = min(size - 1, max_c + pad)
+    # ── Normalise to 0-based bounding box ──────────────────────────
+    rs = [r for r, c in grid]
+    cs = [c for r, c in grid]
+    min_r, max_r = min(rs), max(rs)
+    min_c, max_c = min(cs), max(cs)
+    rows = max_r - min_r + 1
+    cols = max_c - min_c + 1
+    size = max(rows, cols)
 
-    trimmed_size = max(max_r - min_r + 1, max_c - min_c + 1)
-    new_grid = [["" for _ in range(trimmed_size)] for _ in range(trimmed_size)]
+    new_grid = [["" for _ in range(size)] for _ in range(size)]
+    for (r, c), letter in grid.items():
+        nr, nc = r - min_r, c - min_c
+        if 0 <= nr < size and 0 <= nc < size:
+            new_grid[nr][nc] = letter
 
-    for r in range(min_r, min(min_r + trimmed_size, size)):
-        for c in range(min_c, min(min_c + trimmed_size, size)):
-            nr, nc = r - min_r, c - min_c
-            if nr < trimmed_size and nc < trimmed_size:
-                new_grid[nr][nc] = grid[r][c]
+    # ── Standard crossword cell numbering ──────────────────────────
+    cell_number: dict = {}
+    num_counter = 1
+    for nr in range(size):
+        for nc in range(size):
+            if not new_grid[nr][nc]:
+                continue
+            starts_across = (nc == 0 or not new_grid[nr][nc - 1]) and (nc + 1 < size and new_grid[nr][nc + 1])
+            starts_down = (nr == 0 or not new_grid[nr - 1][nc]) and (nr + 1 < size and new_grid[nr + 1][nc])
+            if starts_across or starts_down:
+                cell_number[(nr, nc)] = num_counter
+                num_counter += 1
 
-    # Adjust coordinates
+    # ── Build output clue lists ────────────────────────────────────
     final_h = []
-    h_num = 1
-    for p in placed_h:
-        final_h.append({
-            "numero": h_num,
-            "pista": p["pista"],
-            "respuesta": p["word"],
-            "fila": p["fila"] - min_r,
-            "columna": p["columna"] - min_c,
-            "longitud": p["longitud"],
-        })
-        h_num += 1
-
     final_v = []
-    v_num = 1
-    for p in placed_v:
-        final_v.append({
-            "numero": v_num,
+    for p in placed:
+        nr, nc = p["row"] - min_r, p["col"] - min_c
+        num = cell_number.get((nr, nc), 0)
+        entry = {
+            "numero": num,
             "pista": p["pista"],
             "respuesta": p["word"],
-            "fila": p["fila"] - min_r,
-            "columna": p["columna"] - min_c,
-            "longitud": p["longitud"],
-        })
-        v_num += 1
+            "fila": nr,
+            "columna": nc,
+            "longitud": len(p["word"]),
+        }
+        if p["dir"] == "h":
+            final_h.append(entry)
+        else:
+            final_v.append(entry)
+
+    final_h.sort(key=lambda x: x["numero"])
+    final_v.sort(key=lambda x: x["numero"])
 
     return {
         "grid": new_grid,
-        "size": trimmed_size,
+        "size": size,
         "pistas_horizontal": final_h,
         "pistas_vertical": final_v,
     }
@@ -470,6 +466,13 @@ def _fix_crucigrama(crucigrama: dict) -> dict:
 
     pistas_h = crucigrama.get("pistas_horizontal", [])
     pistas_v = crucigrama.get("pistas_vertical", [])
+
+    # Handle flat "pistas" list (simplified LLM output)
+    if not pistas_h and not pistas_v:
+        pistas = crucigrama.get("pistas", [])
+        half = len(pistas) // 2
+        pistas_h = pistas[:half]
+        pistas_v = pistas[half:]
 
     if not pistas_h and not pistas_v:
         return crucigrama

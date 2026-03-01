@@ -150,7 +150,7 @@ export default function ResolverExamen() {
     setSubmitting(true);
     try {
       const respuestas_formatted = Object.entries(respuestas).map(([num, resp]) => ({
-        numero: parseInt(num),
+        numero: isNaN(parseInt(num)) ? num : parseInt(num),
         respuesta: resp,
       }));
 
@@ -483,6 +483,9 @@ export default function ResolverExamen() {
           <SopaLetras
             grid={examen.contenido_json.sopa_letras.grid}
             palabras={examen.contenido_json.sopa_letras.palabras || []}
+            onChange={(foundWords) => {
+              updateResp('sopa_letras', foundWords.join(', '));
+            }}
             onComplete={(foundWords) => {
               updateResp('sopa_letras', foundWords.join(', '));
               toast.success('¡Encontraste todas las palabras! 🎉');
@@ -499,9 +502,8 @@ export default function ResolverExamen() {
           </h2>
           <Crucigrama
             crucigrama={examen.contenido_json.crucigrama}
-            onComplete={(userGrid) => {
+            onChange={(userGrid) => {
               updateResp('crucigrama', JSON.stringify(userGrid));
-              toast.success('¡Crucigrama completado! 🎉');
             }}
           />
         </div>
@@ -515,6 +517,9 @@ export default function ResolverExamen() {
           </h2>
           <Emparejar
             emparejar={examen.contenido_json.emparejar}
+            onChange={(matchesObj) => {
+              updateResp('emparejar', JSON.stringify(matchesObj));
+            }}
             onComplete={(results) => {
               updateResp('emparejar', JSON.stringify(results));
               toast.success(`¡Emparejar completado! ${results.correct}/${results.total} correctas 🎉`);
@@ -533,6 +538,19 @@ export default function ResolverExamen() {
         </div>
       )}
 
+      {/* Activity-only submit button — shown when there are no standard preguntas */}
+      {totalQ === 0 && Object.keys(respuestas).length > 0 && (
+        <div className="flex justify-center mt-8">
+          <button
+            onClick={() => setShowConfirm(true)}
+            className="flex items-center gap-2 px-8 py-3 rounded-xl text-base font-bold
+              bg-green-600 text-white hover:bg-green-700 transition-colors shadow-lg"
+          >
+            <Send className="w-5 h-5" /> Terminar y Enviar
+          </button>
+        </div>
+      )}
+
       {/* Submit Confirmation Modal */}
       {showConfirm && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
@@ -541,13 +559,19 @@ export default function ResolverExamen() {
               <div className="w-16 h-16 mx-auto rounded-full bg-amber-100 flex items-center justify-center mb-4">
                 <AlertTriangle className="w-8 h-8 text-amber-600" />
               </div>
-              <h3 className="text-xl font-bold text-gray-900">¿Enviar examen?</h3>
+              <h3 className="text-xl font-bold text-gray-900">{totalQ === 0 ? '¿Enviar actividad?' : '¿Enviar examen?'}</h3>
               <p className="text-gray-500 text-sm mt-2">
-                Has respondido <span className="font-bold text-primary-600">{answered}</span> de <span className="font-bold">{totalQ}</span> preguntas.
-                {answered < totalQ && (
-                  <span className="text-amber-600 block mt-1">
-                    ⚠️ Hay {totalQ - answered} pregunta(s) sin responder.
-                  </span>
+                {totalQ > 0 ? (
+                  <>
+                    Has respondido <span className="font-bold text-primary-600">{answered}</span> de <span className="font-bold">{totalQ}</span> preguntas.
+                    {answered < totalQ && (
+                      <span className="text-amber-600 block mt-1">
+                        ⚠️ Hay {totalQ - answered} pregunta(s) sin responder.
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <>Has completado <span className="font-bold text-primary-600">{Object.keys(respuestas).length}</span> actividad(es). Esta acción no se puede deshacer.</>
                 )}
               </p>
               <p className="text-gray-400 text-xs mt-2">

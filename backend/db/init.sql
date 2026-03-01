@@ -16,6 +16,7 @@ CREATE TABLE users (
   password_hash TEXT,
   google_id    VARCHAR(255) UNIQUE,
   rol          VARCHAR(20) NOT NULL DEFAULT 'estudiante',
+  grado        VARCHAR(30),
   activo       BOOLEAN DEFAULT TRUE,
   correo_verificado BOOLEAN DEFAULT FALSE,
   created_at   TIMESTAMPTZ DEFAULT NOW()
@@ -185,10 +186,25 @@ CREATE TABLE config_porcentajes (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   materia_id    UUID REFERENCES materias(id) ON DELETE CASCADE,
   periodo_id    UUID REFERENCES periodos_academicos(id) ON DELETE CASCADE,
-  tipo_actividad VARCHAR(50) NOT NULL, -- 'examen', 'tarea', 'crucigrama', 'sopa_letras', 'asistencia', etc.
+  examen_id     UUID REFERENCES examenes(id) ON DELETE CASCADE,
+  tipo_actividad VARCHAR(50),
   porcentaje    DECIMAL(5,2) NOT NULL CHECK (porcentaje >= 0 AND porcentaje <= 100),
+  created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE UNIQUE INDEX uq_config_examen ON config_porcentajes (materia_id, periodo_id, examen_id) WHERE examen_id IS NOT NULL;
+CREATE UNIQUE INDEX uq_config_tipo ON config_porcentajes (materia_id, periodo_id, tipo_actividad) WHERE tipo_actividad IS NOT NULL;
+
+-- PARTICIPACIÓN
+CREATE TABLE notas_participacion (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  materia_id    UUID REFERENCES materias(id) ON DELETE CASCADE,
+  periodo_id    UUID REFERENCES periodos_academicos(id) ON DELETE CASCADE,
+  estudiante_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  nota          DECIMAL(4,2) NOT NULL DEFAULT 0,
+  observacion   TEXT,
   created_at    TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(materia_id, periodo_id, tipo_actividad)
+  updated_at    TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(materia_id, periodo_id, estudiante_id)
 );
 
 -- BOLETINES

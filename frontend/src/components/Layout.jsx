@@ -2,7 +2,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import useAuthStore from '../store';
 import {
   LayoutDashboard, Users, BookOpen, FileText, Award,
-  MessageCircle, Settings, LogOut, Menu, X, GraduationCap,
+  MessageCircle, Settings, LogOut, Menu, X,
   Shield, ClipboardList, Wrench, BarChart3, Calendar, ScrollText,
 } from 'lucide-react';
 import { useState } from 'react';
@@ -13,11 +13,13 @@ const navItems = {
     { label: 'Usuarios', path: '/admin/users', icon: Users },
     { label: 'Materias', path: '/admin/materias', icon: BookOpen },
     { label: 'Períodos', path: '/admin/periodos', icon: Calendar },
+    { label: 'Boletines', path: '/admin/boletines', icon: ScrollText },
     { label: 'Auditoría', path: '/admin/audit', icon: Shield },
   ],
   profesor: [
     { label: 'Materias', path: '/profesor/materias', icon: BookOpen, prefix: '/profesor/materia' },
     { label: 'Herramientas', path: '/profesor/herramientas', icon: Wrench },
+    { label: 'Reportes', path: '/profesor/reportes', icon: BarChart3 },
   ],
   estudiante: [
     { label: 'Inicio', path: '/estudiante', icon: LayoutDashboard, exact: true },
@@ -50,8 +52,10 @@ export default function Layout({ children }) {
       `}>
         <div className="flex items-center justify-between h-16 px-6 border-b border-gray-200">
           <Link to="/" className="flex items-center gap-2">
-            <GraduationCap className="w-8 h-8 text-primary-600" />
-            <span className="text-xl font-bold text-gray-900">XCalificator</span>
+            <img src="/icono.png" alt="XCalificator" className="w-8 h-8 object-contain" />
+            <span className="text-xl font-extrabold tracking-tight" style={{ fontFamily: "'Poppins', sans-serif" }}>
+              <span className="text-primary-600">X</span><span className="text-gray-900">Calificator</span>
+            </span>
           </Link>
           <button onClick={() => setSidebarOpen(false)} className="lg:hidden">
             <X className="w-5 h-5" />

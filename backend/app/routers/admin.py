@@ -6,9 +6,9 @@ from sqlalchemy.orm import selectinload
 from app.core.database import get_db
 from app.core.dependencies import require_role
 from app.core.security import hash_password
-from app.models.models import User, Sesion, Nota, AuditLog, Materia, Matricula, Examen, RespuestaOnline, APIUsageLog
+from app.models.models import User, Sesion, Nota, AuditLog, Materia, Matricula, Examen, RespuestaOnline, APIUsageLog, Boletin, PeriodoAcademico
 from app.schemas.schemas import (
-    UserOut, AdminUserCreate, ChangePasswordRequest, ChangeRoleRequest,
+    UserOut, AdminUserCreate, AdminUserUpdate, ChangePasswordRequest, ChangeRoleRequest,
     SesionOut, AdminStats, AuditLogOut, AdminMateriaOut, APIUsageStats, APIUsageByModel,
 )
 
@@ -122,6 +122,7 @@ async def create_user(
         celular=data.celular,
         password_hash=hash_password(data.password),
         rol=data.rol,
+        grado=data.grado,
     )
     db.add(user)
     await db.commit()
@@ -190,6 +191,31 @@ async def change_user_role(
     return UserOut.model_validate(user)
 
 
+@router.patch("/users/{user_id}/grado", response_model=UserOut)
+async def change_user_grado(
+    user_id: str,
+    data: AdminUserUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin")),
+):
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    old_grado = user.grado
+    user.grado = data.grado
+    audit = AuditLog(
+        user_id=current_user.id,
+        accion="change_grado",
+        detalle={"target_user": str(user.id), "old_grado": old_grado, "new_grado": data.grado},
+    )
+    db.add(audit)
+    await db.commit()
+    await db.refresh(user)
+    return UserOut.model_validate(user)
+
+
 @router.put("/users/{user_id}/password")
 async def admin_change_password(
     user_id: str,
@@ -251,6 +277,37 @@ async def get_user_sessions(
     )
     sesiones = result.scalars().all()
     return [SesionOut.model_validate(s) for s in sesiones]
+
+
+@router.get("/sessions")
+async def get_all_sessions(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin")),
+    activas: bool = False,
+    limit: int = 100,
+):
+    """Return sessions with user info. ?activas=true returns only active (no fecha_fin)."""
+    q = select(Sesion).options(selectinload(Sesion.user)).order_by(Sesion.fecha_inicio.desc())
+    if activas:
+        q = q.where(Sesion.fecha_fin.is_(None))
+    q = q.limit(limit)
+    result = await db.execute(q)
+    sesiones = result.scalars().all()
+    out = []
+    for s in sesiones:
+        d = {
+            "id": str(s.id),
+            "user_id": str(s.user_id),
+            "ip": str(s.ip) if s.ip else None,
+            "dispositivo": s.dispositivo,
+            "fecha_inicio": s.fecha_inicio.isoformat() if s.fecha_inicio else None,
+            "fecha_fin": s.fecha_fin.isoformat() if s.fecha_fin else None,
+            "usuario_nombre": f"{s.user.nombre} {s.user.apellido}" if s.user else None,
+            "usuario_correo": s.user.correo if s.user else None,
+            "usuario_rol": s.user.rol if s.user else None,
+        }
+        out.append(d)
+    return out
 
 
 # ──────────────── MATERIAS MANAGEMENT ────────────────
@@ -398,3 +455,133 @@ async def get_api_usage(
         usage_by_task=usage_by_task,
         daily_history=daily_history,
     )
+
+
+# ──────────────── BOLETINES GLOBALES ────────────────
+
+@router.get("/boletines-global/{periodo_id}")
+async def get_boletines_global(
+    periodo_id: str,
+    grado: str = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin")),
+):
+    """
+    Global report cards: aggregate all published boletines across ALL materias
+    for each student in a given periodo, grouped by grado.
+    """
+    # Validate periodo
+    periodo_result = await db.execute(
+        select(PeriodoAcademico).where(PeriodoAcademico.id == periodo_id)
+    )
+    periodo = periodo_result.scalar_one_or_none()
+    if not periodo:
+        raise HTTPException(status_code=404, detail="Período no encontrado")
+
+    # Get all published boletines for this period
+    q = (
+        select(Boletin)
+        .where(Boletin.periodo_id == periodo_id, Boletin.publicado == True)
+    )
+    boletines_result = await db.execute(q)
+    boletines = boletines_result.scalars().all()
+
+    # Fetch all referenced students, materias
+    student_ids = list({b.estudiante_id for b in boletines})
+    if not student_ids:
+        return {"periodo": {"id": str(periodo.id), "nombre": periodo.nombre, "numero": periodo.numero},
+                "grados": []}
+
+    students_result = await db.execute(
+        select(User).where(User.id.in_(student_ids))
+    )
+    students_map = {u.id: u for u in students_result.scalars().all()}
+
+    materia_ids = list({b.materia_id for b in boletines})
+    materias_result = await db.execute(
+        select(Materia).where(Materia.id.in_(materia_ids))
+    )
+    materias_map = {m.id: m for m in materias_result.scalars().all()}
+
+    # Group boletines by student
+    student_boletines = {}
+    for b in boletines:
+        if b.estudiante_id not in student_boletines:
+            student_boletines[b.estudiante_id] = []
+        materia = materias_map.get(b.materia_id)
+        student_boletines[b.estudiante_id].append({
+            "materia_id": str(b.materia_id),
+            "materia_nombre": materia.nombre if materia else "Desconocida",
+            "nota_final": float(b.nota_final) if b.nota_final else 0.0,
+            "desglose_json": b.desglose_json,
+            "publicado_at": b.publicado_at.isoformat() if b.publicado_at else None,
+        })
+
+    # Build per-student records grouped by grado
+    grado_groups = {}
+    for sid, bols in student_boletines.items():
+        est = students_map.get(sid)
+        if not est:
+            continue
+        est_grado = est.grado or "Sin grado"
+
+        # Filter by grado if specified
+        if grado and est_grado != grado:
+            continue
+
+        if est_grado not in grado_groups:
+            grado_groups[est_grado] = []
+
+        notas = [b["nota_final"] for b in bols]
+        promedio = round(sum(notas) / len(notas), 2) if notas else 0.0
+
+        grado_groups[est_grado].append({
+            "estudiante_id": str(sid),
+            "nombre": f"{est.nombre} {est.apellido}",
+            "documento": est.documento,
+            "grado": est_grado,
+            "materias": sorted(bols, key=lambda x: x["materia_nombre"]),
+            "promedio_general": promedio,
+            "total_materias": len(bols),
+        })
+
+    # Sort students within each grado by apellido
+    for g in grado_groups:
+        grado_groups[g].sort(key=lambda x: x["nombre"])
+
+    # Build sorted grado list (Transición, 1°..11°, Sin grado)
+    grado_order = ['Transición', '1°', '2°', '3°', '4°', '5°', '6°', '7°', '8°', '9°', '10°', '11°', 'Sin grado']
+    sorted_grados = sorted(
+        grado_groups.keys(),
+        key=lambda g: grado_order.index(g) if g in grado_order else 999
+    )
+
+    result_grados = []
+    for g in sorted_grados:
+        estudiantes = grado_groups[g]
+        promedios = [e["promedio_general"] for e in estudiantes]
+        result_grados.append({
+            "grado": g,
+            "total_estudiantes": len(estudiantes),
+            "promedio_grado": round(sum(promedios) / len(promedios), 2) if promedios else 0.0,
+            "estudiantes": estudiantes,
+        })
+
+    # Collect all available grados for filter
+    all_grados_result = await db.execute(
+        select(User.grado).where(User.rol == "estudiante", User.grado.isnot(None)).distinct()
+    )
+    available_grados = sorted(
+        [r[0] for r in all_grados_result.all()],
+        key=lambda g: grado_order.index(g) if g in grado_order else 999
+    )
+
+    return {
+        "periodo": {
+            "id": str(periodo.id),
+            "nombre": periodo.nombre,
+            "numero": periodo.numero,
+        },
+        "grados": result_grados,
+        "available_grados": available_grados,
+    }

@@ -7,8 +7,9 @@ import { CheckCircle2, RotateCcw } from 'lucide-react';
  *   grid: string[][] - Letter grid
  *   palabras: string[] - Words to find
  *   onComplete: (foundWords: string[]) => void
+ *   onChange: (foundWords: string[]) => void - called on every word found
  */
-export default function SopaLetras({ grid, palabras = [], onComplete }) {
+export default function SopaLetras({ grid, palabras = [], onComplete, onChange }) {
   const [found, setFound] = useState([]);
   const [selecting, setSelecting] = useState(false);
   const [selStart, setSelStart] = useState(null);
@@ -80,6 +81,7 @@ export default function SopaLetras({ grid, palabras = [], onComplete }) {
         const newFound = [...found, match.toUpperCase()];
         setFound(newFound);
         setHighlighted(prev => [...prev, ...cells]);
+        if (onChange) onChange(newFound);
         if (onComplete && newFound.length === palabras.length) {
           onComplete(newFound);
         }

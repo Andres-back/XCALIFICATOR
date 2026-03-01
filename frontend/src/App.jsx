@@ -8,12 +8,14 @@ import AdminUsers from './pages/admin/Users';
 import AdminMaterias from './pages/admin/Materias';
 import AdminAuditLog from './pages/admin/AuditLog';
 import AdminPeriodos from './pages/admin/Periodos';
+import AdminBoletines from './pages/admin/Boletines';
 import ProfesorMaterias from './pages/profesor/Materias';
 import ProfesorExamenes from './pages/profesor/Examenes';
 import ProfesorGenerar from './pages/profesor/GenerarExamen';
 import ProfesorCalificar from './pages/profesor/Calificar';
 import ProfesorNotas from './pages/profesor/Notas';
 import ProfesorHerramientas from './pages/profesor/Herramientas';
+import ProfesorReportes from './pages/profesor/Reportes';
 import MateriaDetail from './pages/profesor/MateriaDetail';
 import EstudianteHome from './pages/estudiante/Home';
 import EstudianteNotas from './pages/estudiante/Notas';
@@ -80,6 +82,11 @@ export default function App() {
             <Layout><AdminPeriodos /></Layout>
           </ProtectedRoute>
         } />
+        <Route path="/admin/boletines" element={
+          <ProtectedRoute roles={['admin']}>
+            <Layout><AdminBoletines /></Layout>
+          </ProtectedRoute>
+        } />
 
         {/* Profesor */}
         <Route path="/profesor/materias" element={
@@ -115,6 +122,11 @@ export default function App() {
         <Route path="/profesor/herramientas" element={
           <ProtectedRoute roles={['profesor', 'admin']}>
             <Layout><ProfesorHerramientas /></Layout>
+          </ProtectedRoute>
+        } />
+        <Route path="/profesor/reportes" element={
+          <ProtectedRoute roles={['profesor', 'admin']}>
+            <Layout><ProfesorReportes /></Layout>
           </ProtectedRoute>
         } />
 

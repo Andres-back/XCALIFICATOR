@@ -23,43 +23,50 @@ export default function MathText({ text, className = '' }) {
   );
 }
 
-function renderMathAndMarkdown(input) {
-  // First handle display math ($$...$$) then inline math ($...$), then bold
-  // Use a placeholder approach to avoid double-processing
+function renderKatex(formula, displayMode) {
+  try {
+    return katex.renderToString(formula.trim(), {
+      displayMode,
+      throwOnError: false,
+      trust: true,
+    });
+  } catch {
+    const delim = displayMode ? '$$' : '$';
+    return `<span class="text-red-500 font-mono text-sm">${delim}${formula}${delim}</span>`;
+  }
+}
 
+function renderMathAndMarkdown(input) {
+  // Use placeholder approach: extract math blocks first, then process text
+  const placeholders = [];
   let result = input;
 
-  // 1. Display math $$...$$
-  result = result.replace(/\$\$([^$]+?)\$\$/g, (_, formula) => {
-    try {
-      return katex.renderToString(formula.trim(), {
-        displayMode: true,
-        throwOnError: false,
-        trust: true,
-      });
-    } catch {
-      return `<span class="text-red-500 font-mono text-sm">$$${formula}$$</span>`;
-    }
-  });
+  const hold = (html) => {
+    const idx = placeholders.length;
+    placeholders.push(html);
+    return `\x00MATH${idx}\x00`;
+  };
 
-  // 2. Inline math $...$  (but avoid matching already-processed KaTeX output)
-  result = result.replace(/(?<!\$)\$(?!\$)([^$\n]+?)\$(?!\$)/g, (_, formula) => {
-    try {
-      return katex.renderToString(formula.trim(), {
-        displayMode: false,
-        throwOnError: false,
-        trust: true,
-      });
-    } catch {
-      return `<span class="text-red-500 font-mono text-sm">$${formula}$</span>`;
-    }
-  });
+  // 1. Display math $$...$$ (greedy-safe)
+  result = result.replace(/\$\$([\s\S]+?)\$\$/g, (_, f) => hold(renderKatex(f, true)));
 
-  // 3. Bold markdown **...**
+  // 2. Display math \[...\]
+  result = result.replace(/\\\[([\s\S]+?)\\\]/g, (_, f) => hold(renderKatex(f, true)));
+
+  // 3. Inline math $...$ (single line)
+  result = result.replace(/(?<!\$)\$(?!\$)([^$\n]+?)\$(?!\$)/g, (_, f) => hold(renderKatex(f, false)));
+
+  // 4. Inline math \(...\)
+  result = result.replace(/\\\((.+?)\\\)/g, (_, f) => hold(renderKatex(f, false)));
+
+  // 5. Bold markdown **...**
   result = result.replace(/\*\*([^*]+)\*\*/g, '<strong class="font-semibold">$1</strong>');
 
-  // 4. Newlines to <br>
+  // 6. Newlines to <br>
   result = result.replace(/\n/g, '<br/>');
+
+  // Restore placeholders
+  result = result.replace(/\x00MATH(\d+)\x00/g, (_, idx) => placeholders[parseInt(idx)]);
 
   return result;
 }

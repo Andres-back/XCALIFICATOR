@@ -72,6 +72,7 @@ class UserOut(BaseModel):
     correo: str
     celular: Optional[str] = None
     rol: str
+    grado: Optional[str] = None
     activo: bool
     correo_verificado: bool = False
     created_at: datetime
@@ -94,6 +95,11 @@ class AdminUserCreate(BaseModel):
     celular: Optional[str] = None
     password: str
     rol: str = "estudiante"
+    grado: Optional[str] = None
+
+
+class AdminUserUpdate(BaseModel):
+    grado: Optional[str] = None
 
 
 class ChangePasswordRequest(BaseModel):
@@ -370,8 +376,8 @@ class PeriodoAcademicoCreate(BaseModel):
     @field_validator("numero")
     @classmethod
     def validate_numero(cls, v: int) -> int:
-        if v < 1 or v > 4:
-            raise ValueError("El período debe estar entre 1 y 4")
+        if v < 1 or v > 10:
+            raise ValueError("El período debe estar entre 1 y 10")
         return v
 
     @field_validator("porcentaje")
@@ -388,6 +394,10 @@ class PeriodoAcademicoUpdate(BaseModel):
     fecha_fin: Optional[date] = None
     porcentaje: Optional[float] = None
     activo: Optional[bool] = None
+
+
+class PeriodosBulkRequest(BaseModel):
+    periodos: list[PeriodoAcademicoCreate] = []
 
 
 class PeriodoAcademicoOut(BaseModel):
@@ -423,18 +433,20 @@ class HerramientaGenerate(BaseModel):
     num_pares: Optional[int] = 6
     # Cuento customization
     moraleja_tema: Optional[str] = ""
+    # Para colorear customization
+    description_imagen: Optional[str] = ""
 
     @field_validator("tipo")
     @classmethod
     def validate_tipo(cls, v: str) -> str:
-        valid = ("examen", "crucigrama", "sopa_letras", "emparejar", "cuento")
+        valid = ("examen", "crucigrama", "sopa_letras", "emparejar", "cuento", "para_colorear")
         if v not in valid:
             raise ValueError(f"Tipo debe ser: {', '.join(valid)}")
         return v
 
 
 class HerramientaCreate(BaseModel):
-    tipo: str  # 'examen', 'crucigrama', 'sopa_letras', 'emparejar', 'cuento'
+    tipo: str  # 'examen', 'crucigrama', 'sopa_letras', 'emparejar', 'cuento', 'para_colorear'
     titulo: str
     contenido_json: Optional[dict] = None
     clave_respuestas: Optional[dict] = None
@@ -443,7 +455,7 @@ class HerramientaCreate(BaseModel):
     @field_validator("tipo")
     @classmethod
     def validate_tipo(cls, v: str) -> str:
-        valid = ("examen", "crucigrama", "sopa_letras", "emparejar", "cuento")
+        valid = ("examen", "crucigrama", "sopa_letras", "emparejar", "cuento", "para_colorear")
         if v not in valid:
             raise ValueError(f"Tipo debe ser: {', '.join(valid)}")
         return v
@@ -510,14 +522,15 @@ class AsistenciaOut(BaseModel):
 # --- Config Porcentajes ---
 class ConfigPorcentajeCreate(BaseModel):
     periodo_id: UUID
-    actividades: list[dict]  # [{"tipo_actividad": "examen", "porcentaje": 40.0}, ...]
+    actividades: list[dict]  # [{"examen_id": "uuid", "porcentaje": 40.0}, ...]
 
 
 class ConfigPorcentajeOut(BaseModel):
     id: UUID
     materia_id: UUID
     periodo_id: UUID
-    tipo_actividad: str
+    examen_id: Optional[UUID] = None
+    tipo_actividad: Optional[str] = None
     porcentaje: float
 
     class Config:

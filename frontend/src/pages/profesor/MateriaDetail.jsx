@@ -5,7 +5,7 @@ import toast from 'react-hot-toast';
 import Breadcrumb from '../../components/Breadcrumb';
 import {
   FileText, Users, Award,
-  BookOpen, Copy, Loader2, BarChart3, CalendarCheck,
+  BookOpen, Copy, Loader2, BarChart3, CalendarCheck, ScrollText,
 } from 'lucide-react';
 
 // Tab components (lazy-like switching)
@@ -13,6 +13,7 @@ import ProfesorExamenes from './Examenes';
 import MateriaEstudiantes from './MateriaEstudiantes';
 import MateriaCalificaciones from './MateriaCalificaciones';
 import MateriaReportes from './MateriaReportes';
+import MateriaBoletines from './MateriaBoletines';
 import MateriaAsistencia from './MateriaAsistencia';
 
 const TABS = [
@@ -20,6 +21,7 @@ const TABS = [
   { key: 'estudiantes',     label: 'Estudiantes',      icon: Users,          mobileLabel: 'Alumnos' },
   { key: 'calificaciones',  label: 'Calificaciones',   icon: Award,          mobileLabel: 'Notas' },
   { key: 'reportes',        label: 'Reportes',         icon: BarChart3,      mobileLabel: 'Reportes' },
+  { key: 'boletines',       label: 'Boletines',        icon: ScrollText,     mobileLabel: 'Boletines' },
   { key: 'asistencia',      label: 'Asistencia',       icon: CalendarCheck,  mobileLabel: 'Asistencia' },
 ];
 
@@ -131,6 +133,7 @@ export default function MateriaDetail() {
         {activeTab === 'estudiantes' && <MateriaEstudiantes materiaId={materiaId} materiaNombre={materia.nombre} />}
         {activeTab === 'calificaciones' && <MateriaCalificaciones materiaId={materiaId} />}
         {activeTab === 'reportes' && <MateriaReportes materiaId={materiaId} materiaNombre={materia.nombre} />}
+        {activeTab === 'boletines' && <MateriaBoletines materiaId={materiaId} materiaNombre={materia.nombre} />}
         {activeTab === 'asistencia' && <MateriaAsistencia materiaId={materiaId} materiaNombre={materia.nombre} />}
       </div>
     </div>

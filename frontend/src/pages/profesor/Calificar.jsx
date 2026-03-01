@@ -7,6 +7,7 @@ import {
   User, Clock, Award, ChevronRight, RefreshCw,
 } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
+import MathText from '../../components/MathText';
 
 /* ─── Tab Button ─── */
 function Tab({ active, icon: Icon, label, onClick }) {
@@ -43,7 +44,7 @@ function ResultCard({ result }) {
                   {p.nota}/{p.nota_maxima}
                 </span>
               </div>
-              <p className="text-xs text-gray-600 mt-1">{p.retroalimentacion}</p>
+              <MathText text={p.retroalimentacion} className="text-xs text-gray-600 mt-1" />
             </div>
           ))}
         </div>
@@ -52,7 +53,7 @@ function ResultCard({ result }) {
       {result.retroalimentacion && (
         <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
           <h3 className="text-sm font-medium text-blue-800 mb-1">Retroalimentación General</h3>
-          <p className="text-xs text-blue-700 whitespace-pre-line">{result.retroalimentacion}</p>
+          <MathText text={result.retroalimentacion} className="text-xs text-blue-700 whitespace-pre-line" />
         </div>
       )}
     </div>

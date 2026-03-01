@@ -12,6 +12,7 @@ from app.schemas.schemas import (
 from app.services.groq_service import (
     generate_exam, generate_sopa_letras, generate_crucigrama,
     generate_emparejar, generate_cuento, get_pollinations_image_url,
+    generate_coloring_prompt,
 )
 from app.routers.generation import _fix_crucigrama, _fix_sopa_letras
 
@@ -160,20 +161,44 @@ async def generate_herramienta(
                 moraleja_tema=data.moraleja_tema or "",
             )
             cuento_data = raw.get("cuento", {})
-            # Generate illustration using Pollinations
+            # Generate illustration using Pollinations — color + coloring page
             image_prompt = cuento_data.get("image_prompt", "")
-            imagen_url = ""
+            imagen_url_color = ""
+            imagen_url_colorear = ""
             if image_prompt:
-                imagen_url = get_pollinations_image_url(
-                    image_prompt + ", children's book illustration, coloring page, black and white line art, detailed, kid-friendly"
+                imagen_url_color = get_pollinations_image_url(
+                    image_prompt + ", children's book illustration, vibrant colors, watercolor style, detailed, kid-friendly",
+                    model="flux",
                 )
-            cuento_data["imagen_url"] = imagen_url
+                imagen_url_colorear = get_pollinations_image_url(
+                    image_prompt + ", coloring book page, black and white only, thick clean outlines, no color, no shading, no gradients, white background, line drawing, printable",
+                    model="zimage",
+                )
+            cuento_data["imagen_url"] = imagen_url_color
+            cuento_data["imagen_url_color"] = imagen_url_color
+            cuento_data["imagen_url_colorear"] = imagen_url_colorear
             contenido = {
                 "titulo": raw.get("titulo", titulo or tema),
                 "preguntas": [],
                 "cuento": cuento_data,
             }
             clave = {"preguntas": [], "cuento_moraleja": cuento_data.get("moraleja", "")}
+
+        elif tipo == "para_colorear":
+            # Translate Spanish description → detailed English prompt, then generate image
+            desc = data.description_imagen or tema
+            en_prompt = await generate_coloring_prompt(desc)
+            image_prompt = f"{en_prompt}, coloring book page, thick clean black outlines, no color, no shading, no gradients, white background, line art, printable, kid-friendly, no text, no words, no letters, no title"
+            imagen_url = get_pollinations_image_url(image_prompt, model="flux")
+            contenido = {
+                "titulo": titulo or f"Para Colorear: {tema}",
+                "preguntas": [],
+                "para_colorear": {
+                    "descripcion": desc,
+                    "imagen_url": imagen_url,
+                },
+            }
+            clave = {"preguntas": []}
 
         else:
             # Examen type
@@ -271,8 +296,6 @@ async def assign_herramienta(
         raise HTTPException(status_code=404, detail="Herramienta no encontrada")
     if h.profesor_id != current_user.id and current_user.rol != "admin":
         raise HTTPException(status_code=403, detail="Sin permiso")
-    if h.estado == "asignado":
-        raise HTTPException(status_code=400, detail="Ya está asignada")
     if not h.contenido_json:
         raise HTTPException(status_code=400, detail="La herramienta no tiene contenido")
 

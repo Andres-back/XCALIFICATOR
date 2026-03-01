@@ -5,6 +5,7 @@ import {
   Users, Activity, FileCheck, UserCheck, UserX, BookOpen,
   ClipboardList, Award, TrendingUp, Globe, UserPlus, ShieldCheck,
   GraduationCap, Briefcase, Cpu, Zap, Clock, BarChart3,
+  Monitor, Wifi, WifiOff, Smartphone, RefreshCw,
 } from 'lucide-react';
 
 export default function AdminDashboard() {
@@ -12,6 +13,19 @@ export default function AdminDashboard() {
   const [apiUsage, setApiUsage] = useState(null);
   const [loading, setLoading] = useState(true);
   const [recentUsers, setRecentUsers] = useState([]);
+  const [activeSessions, setActiveSessions] = useState([]);
+  const [sessionHistory, setSessionHistory] = useState([]);
+  const [sessionTab, setSessionTab] = useState('activas');
+
+  const fetchSessions = () => {
+    Promise.all([
+      api.get('/admin/sessions?activas=true&limit=50').catch(() => ({ data: [] })),
+      api.get('/admin/sessions?limit=50').catch(() => ({ data: [] })),
+    ]).then(([activeRes, historyRes]) => {
+      setActiveSessions(activeRes.data);
+      setSessionHistory(historyRes.data);
+    });
+  };
 
   useEffect(() => {
     Promise.all([
@@ -26,6 +40,7 @@ export default function AdminDashboard() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
+    fetchSessions();
   }, []);
 
   if (loading) return (
@@ -194,6 +209,120 @@ export default function AdminDashboard() {
               ))}
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* Sessions Tracking */}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+            <Monitor className="w-6 h-6 text-primary-600" /> Conexiones
+          </h2>
+          <button onClick={fetchSessions} className="btn-secondary text-xs flex items-center gap-1">
+            <RefreshCw className="w-3.5 h-3.5" /> Actualizar
+          </button>
+        </div>
+
+        <div className="flex gap-2">
+          <button onClick={() => setSessionTab('activas')}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
+              sessionTab === 'activas' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}>
+            <Wifi className="w-3.5 h-3.5" /> Conectados ({activeSessions.length})
+          </button>
+          <button onClick={() => setSessionTab('historial')}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
+              sessionTab === 'historial' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}>
+            <Clock className="w-3.5 h-3.5" /> Historial
+          </button>
+        </div>
+
+        <div className="card">
+          {(sessionTab === 'activas' ? activeSessions : sessionHistory).length === 0 ? (
+            <div className="text-center py-8">
+              <WifiOff className="w-10 h-10 text-gray-300 mx-auto mb-2" />
+              <p className="text-sm text-gray-500">
+                {sessionTab === 'activas' ? 'No hay sesiones activas' : 'Sin historial de conexiones'}
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100">
+                    <th className="text-left py-2 px-3 text-xs font-semibold text-gray-500">Usuario</th>
+                    <th className="text-left py-2 px-3 text-xs font-semibold text-gray-500">Rol</th>
+                    <th className="text-left py-2 px-3 text-xs font-semibold text-gray-500">IP</th>
+                    <th className="text-left py-2 px-3 text-xs font-semibold text-gray-500">Dispositivo</th>
+                    <th className="text-left py-2 px-3 text-xs font-semibold text-gray-500">
+                      {sessionTab === 'activas' ? 'Conectado desde' : 'Fecha'}
+                    </th>
+                    {sessionTab === 'historial' && (
+                      <th className="text-left py-2 px-3 text-xs font-semibold text-gray-500">Estado</th>
+                    )}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {(sessionTab === 'activas' ? activeSessions : sessionHistory).map((s) => {
+                    const ua = s.dispositivo || '';
+                    const isMobile = /mobile|android|iphone/i.test(ua);
+                    const browser = ua.match(/(Chrome|Firefox|Safari|Edge|Opera)\/[\d.]+/i)?.[0]?.split('/')[0] || 'Navegador';
+                    const os = ua.match(/(Windows|Mac OS|Linux|Android|iOS)/i)?.[0] || '';
+                    const deviceLabel = `${browser}${os ? ' · ' + os : ''}`;
+                    return (
+                      <tr key={s.id} className="hover:bg-gray-50">
+                        <td className="py-2.5 px-3">
+                          <div className="flex items-center gap-2">
+                            <div className="w-7 h-7 rounded-full bg-primary-100 flex items-center justify-center text-xs font-bold text-primary-700">
+                              {s.usuario_nombre?.split(' ').map(n => n[0]).join('').slice(0, 2)}
+                            </div>
+                            <div>
+                              <p className="font-medium text-gray-900 text-xs">{s.usuario_nombre}</p>
+                              <p className="text-[10px] text-gray-400">{s.usuario_correo}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                            s.usuario_rol === 'admin' ? 'bg-purple-100 text-purple-700' :
+                            s.usuario_rol === 'profesor' ? 'bg-blue-100 text-blue-700' :
+                            'bg-green-100 text-green-700'
+                          }`}>{s.usuario_rol}</span>
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <span className="flex items-center gap-1 text-xs text-gray-600">
+                            <Globe className="w-3 h-3 text-gray-400" />
+                            {s.ip || '—'}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <span className="flex items-center gap-1 text-xs text-gray-600">
+                            {isMobile ? <Smartphone className="w-3 h-3 text-gray-400" /> : <Monitor className="w-3 h-3 text-gray-400" />}
+                            {deviceLabel}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 text-xs text-gray-500">
+                          {s.fecha_inicio ? new Date(s.fecha_inicio).toLocaleString('es-CO') : '—'}
+                        </td>
+                        {sessionTab === 'historial' && (
+                          <td className="py-2.5 px-3">
+                            {s.fecha_fin ? (
+                              <span className="px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded text-[10px] font-medium">Cerrada</span>
+                            ) : (
+                              <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-[10px] font-medium flex items-center gap-1 w-fit">
+                                <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span> Activa
+                              </span>
+                            )}
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </div>
 
