@@ -11,7 +11,7 @@ client = Groq(api_key=settings.GROQ_API_KEY)
 # Model assignments per task
 MODELS = {
     "grading": "llama-3.3-70b-versatile",
-    "exam_generation": "meta-llama/llama-4-maverick-17b-128e-instruct",
+    "exam_generation": "llama-3.3-70b-versatile",
     "rag_chat": "meta-llama/llama-4-scout-17b-16e-instruct",
     "classification": "llama-3.1-8b-instant",
 }
@@ -39,9 +39,15 @@ async def generate_exam(tema: str, nivel: str, distribucion: dict, contenido_bas
     grado_instruccion = f"\nGrado escolar: {grado}. Adapta el vocabulario, complejidad y contenido al nivel cognitivo de este grado del sistema educativo colombiano." if grado else ""
     system_prompt = f"""Eres un experto en pedagogía y diseño de evaluaciones del sistema educativo colombiano.
 Genera un examen en formato JSON ESTRICTAMENTE siguiendo este schema.
-NO agregues texto fuera del JSON. NO uses markdown.
+NO agregues texto fuera del JSON. NO uses markdown (excepto notación matemática).
 Cada pregunta debe tener numeración clara (1., 2., 3...).
 Las opciones de selección múltiple deben usar formato A) B) C) D).
+Si el tema involucra matemáticas, física, química u otra materia con fórmulas, SIEMPRE escribe las fórmulas usando notación LaTeX: usa $...$ para fórmulas en línea y $$...$$ para fórmulas centradas. Ejemplos: $x^2 + y^2 = r^2$, $\\frac{{a}}{{b}}$, $\\sqrt{{x}}$, $\\int_0^1 x^2 dx$.
+Reglas estrictas de formato matemático: NO uses notación ASCII como a/b, sqrt(x), sen(x) sin LaTeX o x**2; convierte todo a LaTeX válido (por ejemplo $\\frac{{a}}{{b}}$, $\\sqrt{{x}}$, $\\sin(x)$, $x^2$) y encierra SIEMPRE cada fórmula entre delimitadores $...$ o $$...$$.
+Como la salida es JSON, recuerda escapar cada barra invertida en strings (ejemplo: para representar $\\frac{{1}}{{2}}$ en JSON debes escribir \\\\frac{{1}}{{2}}).
+Si aparecen MATRICES, usa SIEMPRE notación LaTeX de matriz (por ejemplo $\\begin{{pmatrix}}1 & 2 \\\\ 3 & 4\\end{{pmatrix}}$) y NO uses formatos planos como (1 2 3 4).
+Si aparecen LOGARITMOS, usa SIEMPRE $\\log_{{b}}(x)$ indicando base correctamente (ej: $\\log_{{2}}(8)$, $\\log_{{10}}(100)$).
+Antes de responder, verifica coherencia matemática de cada pregunta: la respuesta_correcta debe ser consistente con el enunciado y opciones.
 Incluye la respuesta correcta en el campo 'respuesta_correcta' (NO visible en la version estudiante).
 Ajusta la dificultad al nivel: {nivel}.{grado_instruccion}
 Tema: {tema}
@@ -56,7 +62,7 @@ Schema JSON requerido:
   "preguntas": [
     {{
       "numero": int,
-      "tipo": "seleccion_multiple|verdadero_falso|respuesta_corta|desarrollo|crucigrama|sopa_letras",
+      "tipo": "seleccion_multiple|verdadero_falso|respuesta_corta|desarrollo",
       "enunciado": "string",
       "opciones": ["A) ...", "B) ...", "C) ...", "D) ..."],  // solo para seleccion_multiple
       "respuesta_correcta": "string",
@@ -64,39 +70,11 @@ Schema JSON requerido:
       "nivel_bloom": "recordar|comprender|aplicar|analizar|evaluar|crear"
     }}
   ],
-  "nota_maxima": 5.0,
-  "crucigrama": {{  // solo si se solicita crucigrama
-    "grid": [["L","","O",""],...],  // Matriz NxN, letras en celdas activas, "" en celdas vacías/bloqueadas
-    "size": int,  // tamaño de la cuadrícula (N)
-    "pistas_horizontal": [
-      {{"numero": 1, "pista": "Descripción...", "respuesta": "PALABRA", "fila": 0, "columna": 2, "longitud": 5}}
-    ],
-    "pistas_vertical": [
-      {{"numero": 1, "pista": "Descripción...", "respuesta": "PALABRA", "fila": 1, "columna": 3, "longitud": 4}}
-    ]
-  }},
-  "sopa_letras": {{  // solo si se solicita sopa de letras
-    "grid": [["A","B","C",...], ...],  // Matriz NxN completamente llena de letras mayúsculas (sin vacíos)
-    "size": int,  // tamaño de la cuadrícula (N), mínimo 12
-    "palabras": ["PALABRA1", "PALABRA2", ...],  // lista de palabras escondidas (todas en MAYÚSCULAS, sin tildes)
-    "ubicaciones": [
-      {{"palabra": "PALABRA1", "fila": 0, "columna": 2, "direccion": "horizontal"}},
-      {{"palabra": "PALABRA2", "fila": 3, "columna": 5, "direccion": "vertical"}}
-    ]
-  }}
+  "nota_maxima": 5.0
 }}
 
-REGLAS ESPECIALES PARA SOPA DE LETRAS:
-- La cuadrícula DEBE ser de al menos 12x12 y TODAS las celdas deben tener exactamente UNA letra mayúscula.
-- Las palabras se colocan horizontal, vertical o diagonal. Las celdas restantes se llenan con letras aleatorias.
-- Las palabras NO deben tener tildes ni caracteres especiales.
-- Incluye entre 6 y 12 palabras relacionadas con el tema.
-
-REGLAS ESPECIALES PARA CRUCIGRAMA:
-- La cuadrícula debe ser cuadrada (NxN), mínimo 10x10.
-- Las celdas activas contienen la letra correcta; las celdas bloqueadas contienen "".
-- Cada pista debe incluir la posición exacta (fila, columna), longitud y respuesta.
-- Las palabras deben cruzarse correctamente."""
+NOTA: Solo genera preguntas de tipo seleccion_multiple, verdadero_falso, respuesta_corta o desarrollo.
+NO generes crucigrama ni sopa_letras aquí."""
 
     user_msg = f"Genera el examen basándote en el siguiente contenido:\n\n{contenido_base}" if contenido_base else "Genera el examen."
 
@@ -113,6 +91,134 @@ REGLAS ESPECIALES PARA CRUCIGRAMA:
     await _log_usage("exam_generation", MODELS["exam_generation"], chat.usage)
     response_text = chat.choices[0].message.content
     return json.loads(response_text)
+
+
+async def generate_sopa_letras(
+    tema: str,
+    nivel: str,
+    num_palabras: int = 8,
+    palabras_obligatorias: list[str] | None = None,
+    contenido_base: str = "",
+    grado: str = "",
+) -> dict:
+    """Generate a word search puzzle using Groq LLM."""
+    grado_inst = f"\nGrado escolar: {grado}. Adapta las palabras al nivel cognitivo de este grado del sistema educativo colombiano." if grado else ""
+    obligatorias_inst = ""
+    if palabras_obligatorias:
+        clean = [p.upper().replace(" ", "") for p in palabras_obligatorias if p.strip()]
+        if clean:
+            obligatorias_inst = f"\nPALABRAS OBLIGATORIAS que DEBEN aparecer en la sopa: {', '.join(clean)}. Completa el total con más palabras del tema."
+
+    system_prompt = f"""Eres un experto en diseño de sopas de letras educativas.
+Genera SOLAMENTE una sopa de letras en formato JSON. NO generes preguntas de examen.
+NO agregues texto fuera del JSON. NO uses markdown.
+Nivel: {nivel}.{grado_inst}
+Tema: {tema}
+Número de palabras a incluir: {num_palabras}{obligatorias_inst}
+
+REGLAS OBLIGATORIAS:
+1. La cuadrícula DEBE ser cuadrada de al menos 15x15 celdas.
+2. TODAS las celdas deben tener exactamente UNA letra mayúscula sin excepción.
+3. Las palabras se colocan en horizontal (izq→der), vertical (arriba→abajo), o diagonal.
+4. Las palabras NO deben tener tildes, eñes ni caracteres especiales (ej: TELEFONO en vez de TELÉFONO, NINO en vez de NIÑO).
+5. NINGUNA palabra debe quedar cortada ni salir de los límites de la cuadrícula.
+6. La cuadrícula debe ser lo suficientemente grande para contener TODAS las palabras.
+7. Las celdas no ocupadas por palabras se llenan con letras mayúsculas aleatorias.
+
+Schema JSON EXACTO requerido:
+{{
+  "titulo": "string",
+  "sopa_letras": {{
+    "grid": [["A","B","C",...], ...],
+    "size": int,
+    "palabras": ["PALABRA1", "PALABRA2", ...],
+    "ubicaciones": [
+      {{"palabra": "PALABRA1", "fila": 0, "columna": 2, "direccion": "horizontal"}},
+      {{"palabra": "PALABRA2", "fila": 3, "columna": 5, "direccion": "vertical"}}
+    ]
+  }}
+}}"""
+
+    user_msg = f"Genera la sopa de letras sobre: {tema}"
+    if contenido_base:
+        user_msg += f"\n\nContenido base:\n{contenido_base}"
+
+    chat = client.chat.completions.create(
+        model=MODELS["exam_generation"],
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_msg},
+        ],
+        temperature=0.7,
+        max_tokens=4096,
+        response_format={"type": "json_object"},
+    )
+    await _log_usage("exam_generation", MODELS["exam_generation"], chat.usage)
+    return json.loads(chat.choices[0].message.content)
+
+
+async def generate_crucigrama(
+    tema: str,
+    nivel: str,
+    num_horizontales: int = 5,
+    num_verticales: int = 5,
+    palabras_obligatorias: list[str] | None = None,
+    contenido_base: str = "",
+    grado: str = "",
+) -> dict:
+    """Generate a crossword puzzle using Groq LLM."""
+    grado_inst = f"\nGrado escolar: {grado}. Adapta las pistas y palabras al nivel cognitivo de este grado del sistema educativo colombiano." if grado else ""
+    obligatorias_inst = ""
+    if palabras_obligatorias:
+        clean = [p.upper().replace(" ", "") for p in palabras_obligatorias if p.strip()]
+        if clean:
+            obligatorias_inst = f"\nPALABRAS OBLIGATORIAS que DEBEN aparecer en el crucigrama: {', '.join(clean)}. Distribúyelas entre horizontales y verticales."
+
+    system_prompt = f"""Eres un experto en crucigramas educativos.
+Genera palabras y pistas para un crucigrama. La cuadrícula se construye automáticamente.
+Nivel: {nivel}.{grado_inst}
+Tema: {tema}
+Genera {num_horizontales} palabras para horizontales y {num_verticales} para verticales.{obligatorias_inst}
+
+REGLAS OBLIGATORIAS:
+1. Las respuestas deben ser UNA SOLA PALABRA en MAYÚSCULA, sin tildes, sin espacios, sin Ñ.
+2. Las palabras DEBEN compartir letras comunes (A, E, O, R, S, N, I, L, T, C) para que se crucen.
+3. NO repitas la misma palabra en horizontales y verticales.
+4. Cada pista debe ser una descripción clara y educativa.
+5. NO generes grid, size, fila, columna ni longitud. Solo palabras y pistas.
+6. Longitud recomendada por palabra: entre 4 y 8 letras (máximo 10).
+7. Evita tecnicismos muy largos o palabras compuestas difíciles de cruzar.
+8. Mantén equilibrio semántico: horizontales y verticales deben tener dificultad similar.
+
+Responde SOLO con JSON válido:
+{{
+  "titulo": "string",
+  "crucigrama": {{
+    "pistas_horizontal": [
+      {{"pista": "Descripción...", "respuesta": "PALABRA"}}
+    ],
+    "pistas_vertical": [
+      {{"pista": "Descripción...", "respuesta": "PALABRA"}}
+    ]
+  }}
+}}"""
+
+    user_msg = f"Genera el crucigrama sobre: {tema}"
+    if contenido_base:
+        user_msg += f"\n\nContenido base:\n{contenido_base}"
+
+    chat = client.chat.completions.create(
+        model=MODELS["exam_generation"],
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_msg},
+        ],
+        temperature=0.7,
+        max_tokens=4096,
+        response_format={"type": "json_object"},
+    )
+    await _log_usage("exam_generation", MODELS["exam_generation"], chat.usage)
+    return json.loads(chat.choices[0].message.content)
 
 
 async def grade_exam(
@@ -218,6 +324,170 @@ TU ROL Y COMPORTAMIENTO:
     )
     await _log_usage("rag_chat", MODELS["rag_chat"], chat.usage)
     return chat.choices[0].message.content
+
+
+async def generate_emparejar(
+    tema: str,
+    nivel: str,
+    num_pares: int = 6,
+    contenido_base: str = "",
+    grado: str = "",
+) -> dict:
+    """Generate a matching activity using Groq LLM."""
+    grado_inst = f"\nGrado escolar: {grado}. Adapta el vocabulario y contenido al nivel cognitivo de este grado del sistema educativo colombiano." if grado else ""
+
+    system_prompt = f"""Eres un experto en diseño de actividades educativas.
+Genera SOLAMENTE una actividad de emparejar (matching) en formato JSON. NO generes preguntas de examen.
+NO agregues texto fuera del JSON. NO uses markdown.
+Nivel: {nivel}.{grado_inst}
+Tema: {tema}
+Número de pares a generar: {num_pares}
+
+REGLAS OBLIGATORIAS:
+1. Genera exactamente {num_pares} pares de conceptos relacionados del tema.
+2. Cada par tiene un elemento en la columna izquierda y su correspondiente en la columna derecha.
+3. Los elementos deben ser claros, concisos y educativos.
+4. La columna izquierda puede ser: conceptos, definiciones, palabras, fechas, etc.
+5. La columna derecha contiene su correspondencia: significados, nombres, traducciones, eventos, etc.
+6. Los pares deben tener una relación clara e inequívoca.
+
+Schema JSON EXACTO requerido:
+{{
+  "titulo": "string",
+  "emparejar": {{
+    "instrucciones": "string con instrucciones para el estudiante",
+    "pares": [
+      {{"id": 1, "izquierda": "Concepto A", "derecha": "Definición A"}},
+      {{"id": 2, "izquierda": "Concepto B", "derecha": "Definición B"}}
+    ]
+  }}
+}}"""
+
+    user_msg = f"Genera la actividad de emparejar sobre: {tema}"
+    if contenido_base:
+        user_msg += f"\n\nContenido base:\n{contenido_base}"
+
+    chat = client.chat.completions.create(
+        model=MODELS["exam_generation"],
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_msg},
+        ],
+        temperature=0.7,
+        max_tokens=2048,
+        response_format={"type": "json_object"},
+    )
+    await _log_usage("exam_generation", MODELS["exam_generation"], chat.usage)
+    return json.loads(chat.choices[0].message.content)
+
+
+async def generate_cuento(
+    tema: str,
+    nivel: str,
+    contenido_base: str = "",
+    grado: str = "",
+    moraleja_tema: str = "",
+) -> dict:
+    """Generate an educational story with moral lesson using Groq LLM."""
+    grado_inst = f"\nGrado escolar: {grado}. Adapta el vocabulario, complejidad narrativa y extensión al nivel cognitivo de este grado del sistema educativo colombiano." if grado else ""
+    moraleja_inst = f"\nEnfoca la moraleja/enseñanza en: {moraleja_tema}" if moraleja_tema else ""
+
+    system_prompt = f"""Eres un experto escritor de cuentos educativos para niños y jóvenes colombianos.
+Genera SOLAMENTE un cuento educativo con moraleja en formato JSON. NO uses markdown.
+Nivel: {nivel}.{grado_inst}
+Tema: {tema}{moraleja_inst}
+
+REGLAS OBLIGATORIAS:
+1. El cuento debe ser original, creativo y apropiado para el nivel escolar.
+2. Debe incluir personajes memorables y una narrativa envolvente.
+3. La moraleja o enseñanza debe estar claramente conectada al tema.
+4. Incluye un título atractivo para el cuento.
+5. Divide el cuento en párrafos claros para facilitar la lectura.
+6. Incluye una descripción visual detallada para generar una ilustración (en inglés).
+7. El cuento debe tener entre 300 y 800 palabras dependiendo del nivel.
+
+Schema JSON EXACTO requerido:
+{{
+  "titulo": "string - título atractivo del cuento",
+  "cuento": {{
+    "texto": "string - el cuento completo con párrafos separados por \\n\\n",
+    "moraleja": "string - la moraleja o enseñanza del cuento",
+    "personajes": ["nombre1", "nombre2"],
+    "image_prompt": "string in ENGLISH - A detailed description for generating a beautiful children's book illustration: describe the main scene, characters, setting, colors, and art style. Should be kid-friendly, colorful, and suitable as a coloring page. Example: A friendly fox and a wise owl sitting under a big oak tree in a magical forest, watercolor style, children's book illustration, detailed line art"
+  }}
+}}"""
+
+    user_msg = f"Genera el cuento educativo sobre: {tema}"
+    if contenido_base:
+        user_msg += f"\n\nContenido base:\n{contenido_base}"
+
+    chat = client.chat.completions.create(
+        model=MODELS["exam_generation"],
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_msg},
+        ],
+        temperature=0.8,
+        max_tokens=4096,
+        response_format={"type": "json_object"},
+    )
+    await _log_usage("exam_generation", MODELS["exam_generation"], chat.usage)
+    return json.loads(chat.choices[0].message.content)
+
+
+async def generate_coloring_prompt(descripcion: str, allow_letters: bool = False) -> str:
+    """Translate a Spanish coloring-page description into a detailed English image prompt."""
+    if allow_letters:
+        constraints = (
+            "The prompt must: describe cute educational elements clearly, specify 'coloring book page', "
+            "'thick clean black outlines', 'white background', 'no color', 'no shading', "
+            "'printable line art', 'kid-friendly'. "
+            "If the request is about vowels/alphabet/syllables, include large uppercase tracing letters "
+            "requested by the user (for example A E I O U) with dotted guides. "
+            "Avoid decorative full sentences."
+        )
+    else:
+        constraints = (
+            "The prompt must: describe cute cartoon characters clearly, specify 'coloring book page', "
+            "'thick clean black outlines', 'white background', 'no color', 'no shading', 'no text', "
+            "'no words', 'no letters', 'no title', 'printable line art', 'kid-friendly'."
+        )
+
+    chat = client.chat.completions.create(
+        model=MODELS["classification"],
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are an image-prompt specialist for children's coloring pages. "
+                    "The user gives you a description in Spanish. "
+                    "Return ONLY a single English image prompt (no explanations, no markdown). "
+                    f"{constraints} "
+                    "Be specific about the animals/characters requested. Keep it under 80 words."
+                ),
+            },
+            {"role": "user", "content": descripcion},
+        ],
+        temperature=0.4,
+        max_tokens=120,
+    )
+    return chat.choices[0].message.content.strip()
+
+
+def get_pollinations_image_url(prompt: str, model: str = "flux") -> str:
+    """Build a Pollinations image URL (gen.pollinations.ai) for the given prompt.
+
+    Args:
+        prompt: Text description of the image.
+        model:  Pollinations model name — 'flux' (Flux Schnell), 'zimage' (Z-Image Turbo), etc.
+    """
+    import urllib.parse
+    import random
+    from app.core.config import get_settings
+    encoded = urllib.parse.quote(prompt)
+    seed = random.randint(1, 99999)
+    key = get_settings().POLLINATIONS_API_KEY
+    return f"https://gen.pollinations.ai/image/{encoded}?model={model}&width=768&height=768&nologo=true&seed={seed}&key={key}"
 
 
 async def classify_writing(text_sample: str) -> str:

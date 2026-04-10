@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from app.core.database import get_db
 from app.core.dependencies import require_role, get_current_user
+from app.core.latex_utils import normalize_latex_payload
 from app.models.models import User, Examen, Materia, Nota, Matricula, RespuestaOnline
 from app.schemas.schemas import (
     ExamenCreate, ExamenOut, ExamenProfesorOut,
@@ -12,10 +13,56 @@ from app.schemas.schemas import (
     RespuestaOnlineCreate, RespuestaOnlineOut,
 )
 from app.services.notification_service import notify_enrolled_students, send_email, send_whatsapp
+import json as _json
 import logging
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/examenes", tags=["Exámenes"])
+
+
+async def _assert_materia_access(
+    db: AsyncSession,
+    materia_id: str,
+    current_user: User,
+    allow_student: bool = False,
+) -> Materia:
+    materia_result = await db.execute(select(Materia).where(Materia.id == materia_id))
+    materia = materia_result.scalar_one_or_none()
+    if not materia:
+        raise HTTPException(status_code=404, detail="Materia no encontrada")
+
+    if current_user.rol == "profesor" and str(materia.profesor_id) != str(current_user.id):
+        raise HTTPException(status_code=403, detail="Sin permiso")
+
+    if current_user.rol == "estudiante":
+        if not allow_student:
+            raise HTTPException(status_code=403, detail="Sin permiso")
+
+        enrollment_result = await db.execute(
+            select(Matricula.id).where(
+                Matricula.materia_id == materia_id,
+                Matricula.estudiante_id == current_user.id,
+            )
+        )
+        if not enrollment_result.scalar_one_or_none():
+            raise HTTPException(status_code=403, detail="No estás inscrito en esta materia")
+
+    return materia
+
+
+async def _assert_examen_access(
+    db: AsyncSession,
+    examen_id: str,
+    current_user: User,
+    allow_student: bool = False,
+) -> Examen:
+    examen_result = await db.execute(select(Examen).where(Examen.id == examen_id))
+    examen = examen_result.scalar_one_or_none()
+    if not examen:
+        raise HTTPException(status_code=404, detail="Examen no encontrado")
+
+    await _assert_materia_access(db, str(examen.materia_id), current_user, allow_student=allow_student)
+    return examen
 
 
 # ──────── AUTO-GRADING HELPER ────────
@@ -27,28 +74,61 @@ def _normalize(s: str) -> str:
     return s.strip().lower().replace("á","a").replace("é","e").replace("í","i").replace("ó","o").replace("ú","u")
 
 
+def _normalize_question_statements(content: dict | None) -> dict | None:
+    """Ensure exam questions expose enunciado and pregunta for frontend compatibility."""
+    if not isinstance(content, dict):
+        return content
+
+    preguntas = content.get("preguntas")
+    if not isinstance(preguntas, list):
+        return content
+
+    normalized = []
+    for item in preguntas:
+        if not isinstance(item, dict):
+            normalized.append(item)
+            continue
+
+        q = dict(item)
+        enunciado = q.get("enunciado") or q.get("pregunta") or q.get("texto") or q.get("statement")
+        if isinstance(enunciado, str) and enunciado.strip():
+            normalized_enunciado = normalize_latex_payload(enunciado)
+            q["enunciado"] = normalized_enunciado
+            q["pregunta"] = normalized_enunciado
+
+        if isinstance(q.get("opciones"), list):
+            q["opciones"] = normalize_latex_payload(q["opciones"])
+        normalized.append(q)
+
+    content["preguntas"] = normalized
+    return content
+
+
 def auto_grade_objective(examen: Examen, respuestas_json: dict) -> dict | None:
     """
     Auto-grade objective questions (seleccion_multiple, verdadero_falso)
-    by comparing against clave_respuestas. Returns grading result dict
-    or None if auto-grading is not possible.
+    AND interactive activities (crucigrama, sopa_letras, emparejar).
+    Returns grading result dict or None if auto-grading is not possible.
     """
-    if not examen.clave_respuestas or not examen.contenido_json:
-        return None
-
-    clave_raw = examen.clave_respuestas
-    if isinstance(clave_raw, dict) and "preguntas" in clave_raw:
-        clave_list = clave_raw["preguntas"]
-    elif isinstance(clave_raw, list):
-        clave_list = clave_raw
-    else:
+    if not examen.contenido_json:
         return None
 
     contenido = examen.contenido_json
+
+    # ── Parse clave_respuestas for normal questions ──
+    clave_list = []
+    clave_raw = examen.clave_respuestas
+    if clave_raw:
+        if isinstance(clave_raw, dict) and "preguntas" in clave_raw:
+            clave_list = clave_raw["preguntas"]
+        elif isinstance(clave_raw, list):
+            clave_list = clave_raw
+
     preguntas_info = {}
     for p in contenido.get("preguntas", []):
         preguntas_info[p.get("numero")] = p.get("tipo", "")
 
+    # ── Parse student responses ──
     resp_raw = respuestas_json
     if isinstance(resp_raw, dict) and "preguntas" in resp_raw:
         resp_list = resp_raw["preguntas"]
@@ -57,19 +137,12 @@ def auto_grade_objective(examen: Examen, respuestas_json: dict) -> dict | None:
     else:
         return None
 
-    # Build lookup for student responses
     resp_map = {}
     for r in resp_list:
         if isinstance(r, dict):
             resp_map[r.get("numero")] = r.get("respuesta", "")
 
-    # Build lookup for answer key
-    clave_map = {}
-    for c in clave_list:
-        if isinstance(c, dict):
-            clave_map[c.get("numero")] = c
-
-    # Check if there are any non-objective questions
+    # ── Grade normal questions ──
     auto_gradable_types = {"seleccion_multiple", "verdadero_falso"}
     has_open_ended = False
     preguntas_result = []
@@ -114,6 +187,158 @@ def auto_grade_objective(examen: Examen, respuestas_json: dict) -> dict | None:
                 "pendiente": True,
             })
 
+    # ── Grade crucigrama ──
+    if "crucigrama" in resp_map and contenido.get("crucigrama"):
+        try:
+            crucigrama = contenido["crucigrama"]
+            raw = resp_map["crucigrama"]
+            student_grid = _json.loads(raw) if isinstance(raw, str) else (raw or {})
+
+            words = []
+            for p in crucigrama.get("pistas_horizontal", []):
+                if not isinstance(p, dict):
+                    continue
+                word = (p.get("respuesta") or "").upper()
+                cells = [f"{p['fila']},{p['columna'] + k}" for k in range(len(word))]
+                words.append({"word": word, "cells": cells, "pista": p.get("pista", ""),
+                              "numero": p.get("numero"), "dir": "H"})
+            for p in crucigrama.get("pistas_vertical", []):
+                if not isinstance(p, dict):
+                    continue
+                word = (p.get("respuesta") or "").upper()
+                cells = [f"{p['fila'] + k},{p['columna']}" for k in range(len(word))]
+                words.append({"word": word, "cells": cells, "pista": p.get("pista", ""),
+                              "numero": p.get("numero"), "dir": "V"})
+
+            total_words = len(words)
+            correct_words = 0
+            word_details = []
+            for w in words:
+                student_word = "".join(
+                    _normalize(student_grid.get(c, "")) for c in w["cells"]
+                )
+                correcto = student_word == _normalize(w["word"])
+                if correcto:
+                    correct_words += 1
+                word_details.append({
+                    "pista": w["pista"],
+                    "respuesta_correcta": w["word"],
+                    "respuesta_estudiante": "".join(
+                        (student_grid.get(c, "") or "").upper() for c in w["cells"]
+                    ),
+                    "correcto": correcto,
+                    "numero": w["numero"],
+                    "dir": w["dir"],
+                })
+
+            puntos_act = 5.0
+            nota_act = round((correct_words / total_words * puntos_act) if total_words else 0, 2)
+            nota_maxima += puntos_act
+            nota_total += nota_act
+
+            preguntas_result.append({
+                "numero": "crucigrama",
+                "tipo": "crucigrama",
+                "nota": nota_act,
+                "nota_maxima": puntos_act,
+                "correcto": correct_words == total_words,
+                "retroalimentacion": f"Crucigrama: {correct_words}/{total_words} palabras correctas",
+                "detalle_palabras": word_details,
+            })
+        except Exception as e:
+            logger.error(f"Error grading crucigrama: {e}")
+
+    # ── Grade sopa de letras ──
+    if "sopa_letras" in resp_map and contenido.get("sopa_letras"):
+        try:
+            sopa = contenido["sopa_letras"]
+            palabras_correctas = [_normalize(p) for p in sopa.get("palabras", [])]
+            raw_resp = resp_map["sopa_letras"] or ""
+            resp_palabras = [_normalize(w.strip()) for w in raw_resp.split(",") if w.strip()]
+
+            total_p = len(palabras_correctas)
+            encontradas = sum(1 for p in resp_palabras if p in palabras_correctas)
+
+            puntos_act = 5.0
+            nota_act = round((encontradas / total_p * puntos_act) if total_p else 0, 2)
+            nota_maxima += puntos_act
+            nota_total += nota_act
+
+            preguntas_result.append({
+                "numero": "sopa_letras",
+                "tipo": "sopa_letras",
+                "nota": nota_act,
+                "nota_maxima": puntos_act,
+                "correcto": encontradas == total_p,
+                "retroalimentacion": f"Sopa de letras: {encontradas}/{total_p} palabras encontradas",
+                "respuesta_estudiante": raw_resp,
+                "respuesta_correcta": ", ".join(sopa.get("palabras", [])),
+            })
+        except Exception as e:
+            logger.error(f"Error grading sopa_letras: {e}")
+
+    # ── Grade emparejar ──
+    if "emparejar" in resp_map and contenido.get("emparejar"):
+        try:
+            emparejar = contenido["emparejar"]
+            pares_correctos = emparejar.get("pares", [])
+            raw = resp_map["emparejar"]
+            student_matches = _json.loads(raw) if isinstance(raw, str) else (raw or {})
+
+            # onComplete sends {correct, total, matches} — unwrap if needed
+            if isinstance(student_matches, dict) and "matches" in student_matches:
+                student_matches = student_matches["matches"]
+
+            total_pares = len(pares_correctos)
+            pares_bien = 0
+            # Correct match: key == value (leftId === rightId means correct pair)
+            for par in pares_correctos:
+                pid = par.get("id")
+                if pid is not None and student_matches.get(str(pid)) == pid:
+                    pares_bien += 1
+                elif pid is not None and str(student_matches.get(str(pid))) == str(pid):
+                    pares_bien += 1
+
+            puntos_act = 5.0
+            nota_act = round((pares_bien / total_pares * puntos_act) if total_pares else 0, 2)
+            nota_maxima += puntos_act
+            nota_total += nota_act
+
+            pair_details = []
+            for par in pares_correctos:
+                pid = par.get("id")
+                matched_rid = student_matches.get(str(pid), student_matches.get(pid))
+                is_correct = str(matched_rid) == str(pid) if matched_rid is not None else False
+                # Find the derecha text of what the student matched
+                matched_text = ""
+                if matched_rid is not None:
+                    for p2 in pares_correctos:
+                        if p2.get("id") == matched_rid or str(p2.get("id")) == str(matched_rid):
+                            matched_text = p2.get("derecha", "")
+                            break
+                pair_details.append({
+                    "izquierda": par.get("izquierda", ""),
+                    "derecha_correcta": par.get("derecha", ""),
+                    "derecha_estudiante": matched_text,
+                    "correcto": is_correct,
+                })
+
+            preguntas_result.append({
+                "numero": "emparejar",
+                "tipo": "emparejar",
+                "nota": nota_act,
+                "nota_maxima": puntos_act,
+                "correcto": pares_bien == total_pares,
+                "retroalimentacion": f"Emparejar: {pares_bien}/{total_pares} pares correctos",
+                "detalle_pares": pair_details,
+            })
+        except Exception as e:
+            logger.error(f"Error grading emparejar: {e}")
+
+    # If nothing was graded at all, return None
+    if not preguntas_result:
+        return None
+
     return {
         "nota_total": round(nota_total, 2),
         "nota_maxima": round(nota_maxima, 2),
@@ -153,6 +378,8 @@ async def create_nota(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("profesor", "admin")),
 ):
+    await _assert_examen_access(db, str(data.examen_id), current_user)
+
     nota = Nota(
         estudiante_id=data.estudiante_id,
         examen_id=data.examen_id,
@@ -178,6 +405,8 @@ async def update_nota(
     if not nota:
         raise HTTPException(status_code=404, detail="Nota no encontrada")
 
+    await _assert_examen_access(db, str(nota.examen_id), current_user)
+
     if data.nota is not None:
         nota.nota = data.nota
     if data.detalle_json is not None:
@@ -199,6 +428,9 @@ async def delete_nota(
     nota = result.scalar_one_or_none()
     if not nota:
         raise HTTPException(status_code=404, detail="Nota no encontrada")
+
+    await _assert_examen_access(db, str(nota.examen_id), current_user)
+
     await db.delete(nota)
     await db.commit()
 
@@ -212,9 +444,21 @@ async def get_notas_estudiante(
     if current_user.rol == "estudiante" and str(current_user.id) != estudiante_id:
         raise HTTPException(status_code=403, detail="Sin permiso")
 
-    result = await db.execute(
-        select(Nota).where(Nota.estudiante_id == estudiante_id).order_by(Nota.created_at.desc())
-    )
+    query = select(Nota).where(Nota.estudiante_id == estudiante_id).order_by(Nota.created_at.desc())
+
+    if current_user.rol == "profesor":
+        query = (
+            select(Nota)
+            .join(Examen, Nota.examen_id == Examen.id)
+            .join(Materia, Examen.materia_id == Materia.id)
+            .where(
+                Nota.estudiante_id == estudiante_id,
+                Materia.profesor_id == current_user.id,
+            )
+            .order_by(Nota.created_at.desc())
+        )
+
+    result = await db.execute(query)
     return [NotaOut.model_validate(n) for n in result.scalars().all()]
 
 
@@ -224,18 +468,35 @@ async def get_notas_examen(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("profesor", "admin")),
 ):
+    examen = await _assert_examen_access(db, examen_id, current_user)
+
     result = await db.execute(
         select(Nota)
         .options(selectinload(Nota.estudiante))
         .where(Nota.examen_id == examen_id)
         .order_by(Nota.created_at.desc())
     )
+
+    respuestas_result = await db.execute(
+        select(RespuestaOnline)
+        .where(RespuestaOnline.examen_id == examen_id)
+    )
+    respuestas_map = {str(r.estudiante_id): r for r in respuestas_result.scalars().all()}
+
     out = []
     for n in result.scalars().all():
         d = NotaOut.model_validate(n)
         if n.estudiante:
             d.estudiante_nombre = n.estudiante.nombre
             d.estudiante_apellido = n.estudiante.apellido
+        if examen:
+            d.examen_titulo = examen.titulo
+            d.examen_tipo = examen.tipo
+            d.examen_contenido_json = examen.contenido_json
+        r = respuestas_map.get(str(n.estudiante_id))
+        if r:
+            d.respuestas_json = r.respuestas_json
+            d.enviado_at = r.enviado_at
         out.append(d)
     return out
 
@@ -247,6 +508,8 @@ async def get_examen_stats(
     current_user: User = Depends(require_role("profesor", "admin")),
 ):
     """Detailed exam statistics for professor dashboard."""
+    await _assert_examen_access(db, examen_id, current_user)
+
     result = await db.execute(
         select(Nota)
         .options(selectinload(Nota.estudiante))
@@ -356,10 +619,7 @@ async def submit_response(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("estudiante")),
 ):
-    result = await db.execute(select(Examen).where(Examen.id == data.examen_id))
-    examen = result.scalar_one_or_none()
-    if not examen:
-        raise HTTPException(status_code=404, detail="Examen no encontrado")
+    examen = await _assert_examen_access(db, str(data.examen_id), current_user, allow_student=True)
     if not examen.activo_online:
         raise HTTPException(status_code=400, detail="Este examen no está activo online")
 
@@ -431,19 +691,14 @@ async def create_examen(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("profesor", "admin")),
 ):
-    result = await db.execute(select(Materia).where(Materia.id == materia_id))
-    materia = result.scalar_one_or_none()
-    if not materia:
-        raise HTTPException(status_code=404, detail="Materia no encontrada")
-    if materia.profesor_id != current_user.id and current_user.rol != "admin":
-        raise HTTPException(status_code=403, detail="Sin permiso")
+    await _assert_materia_access(db, materia_id, current_user)
 
     examen = Examen(
         materia_id=materia_id,
         titulo=data.titulo,
         tipo=data.tipo,
-        contenido_json=data.contenido_json,
-        clave_respuestas=data.clave_respuestas,
+        contenido_json=normalize_latex_payload(data.contenido_json),
+        clave_respuestas=normalize_latex_payload(data.clave_respuestas),
         activo_online=data.activo_online,
         fecha_limite=data.fecha_limite,
     )
@@ -460,10 +715,7 @@ async def get_respuestas_online(
     current_user: User = Depends(require_role("profesor", "admin")),
 ):
     """List all online submissions for a given exam, with student info and grading status."""
-    result = await db.execute(select(Examen).where(Examen.id == examen_id))
-    examen = result.scalar_one_or_none()
-    if not examen:
-        raise HTTPException(status_code=404, detail="Examen no encontrado")
+    await _assert_examen_access(db, examen_id, current_user)
 
     result = await db.execute(
         select(RespuestaOnline)
@@ -509,6 +761,8 @@ async def get_examenes_by_materia(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    await _assert_materia_access(db, materia_id, current_user, allow_student=True)
+
     result = await db.execute(
         select(Examen).where(Examen.materia_id == materia_id).order_by(Examen.created_at.desc())
     )
@@ -525,20 +779,20 @@ async def get_examen(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(Examen).where(Examen.id == examen_id))
-    examen = result.scalar_one_or_none()
-    if not examen:
-        raise HTTPException(status_code=404, detail="Examen no encontrado")
+    examen = await _assert_examen_access(db, examen_id, current_user, allow_student=True)
 
     if current_user.rol == "estudiante":
         out = ExamenOut.model_validate(examen)
+        out.contenido_json = _normalize_question_statements(dict(out.contenido_json or {})) if out.contenido_json else out.contenido_json
         if out.contenido_json and "preguntas" in out.contenido_json:
             out.contenido_json["preguntas"] = [
                 {k: v for k, v in p.items() if k != "respuesta_correcta"}
                 for p in out.contenido_json["preguntas"]
             ]
         return out
-    return ExamenProfesorOut.model_validate(examen)
+    out = ExamenProfesorOut.model_validate(examen)
+    out.contenido_json = _normalize_question_statements(dict(out.contenido_json or {})) if out.contenido_json else out.contenido_json
+    return out
 
 
 @router.patch("/{examen_id}/toggle-online")
@@ -547,12 +801,7 @@ async def toggle_online(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("profesor", "admin")),
 ):
-    result = await db.execute(
-        select(Examen).where(Examen.id == examen_id)
-    )
-    examen = result.scalar_one_or_none()
-    if not examen:
-        raise HTTPException(status_code=404, detail="Examen no encontrado")
+    examen = await _assert_examen_access(db, examen_id, current_user)
 
     was_active = examen.activo_online
     examen.activo_online = not examen.activo_online
@@ -591,15 +840,29 @@ async def update_examen(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("profesor", "admin")),
 ):
-    """Update exam fields (titulo, contenido_json, clave_respuestas, activo_online, fecha_limite)."""
-    result = await db.execute(select(Examen).where(Examen.id == examen_id))
-    examen = result.scalar_one_or_none()
-    if not examen:
-        raise HTTPException(status_code=404, detail="Examen no encontrado")
+    """Update exam fields (titulo, contenido_json, clave_respuestas, activo_online, fecha_limite, fecha_activacion)."""
+    examen = await _assert_examen_access(db, examen_id, current_user)
 
     allowed_fields = {"titulo", "contenido_json", "clave_respuestas", "activo_online", "fecha_limite", "fecha_activacion", "tipo"}
+    date_fields = {"fecha_limite", "fecha_activacion"}
     for field, value in data.items():
         if field in allowed_fields:
+            if field in {"contenido_json", "clave_respuestas"}:
+                value = normalize_latex_payload(value)
+            if field in date_fields and value:
+                # Parse date string to proper datetime
+                try:
+                    if isinstance(value, str):
+                        # Handle "2025-12-31T23:59" from datetime-local input
+                        value = value.replace("T", " ")
+                        for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M"):
+                            try:
+                                value = datetime.strptime(value, fmt).replace(tzinfo=timezone.utc)
+                                break
+                            except ValueError:
+                                continue
+                except Exception:
+                    pass
             setattr(examen, field, value)
 
     await db.commit()
@@ -623,6 +886,8 @@ async def send_feedback_to_student(
     nota = result.scalar_one_or_none()
     if not nota:
         raise HTTPException(status_code=404, detail="Nota no encontrada")
+
+    await _assert_examen_access(db, str(nota.examen_id), current_user)
 
     # Get student
     student_result = await db.execute(select(User).where(User.id == nota.estudiante_id))
@@ -682,9 +947,6 @@ async def delete_examen(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("profesor", "admin")),
 ):
-    result = await db.execute(select(Examen).where(Examen.id == examen_id))
-    examen = result.scalar_one_or_none()
-    if not examen:
-        raise HTTPException(status_code=404, detail="Examen no encontrado")
+    examen = await _assert_examen_access(db, examen_id, current_user)
     await db.delete(examen)
     await db.commit()

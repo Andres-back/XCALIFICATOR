@@ -4,10 +4,13 @@ import api from '../../api';
 import toast from 'react-hot-toast';
 import {
   Send, Loader2, Clock, ChevronLeft, ChevronRight, CheckCircle2,
-  Circle, AlertTriangle, FileText, Award, ArrowLeft,
+  AlertTriangle, Award, ArrowLeft, Users, UserPlus, X,
 } from 'lucide-react';
 import SopaLetras from '../../components/SopaLetras';
 import Crucigrama from '../../components/Crucigrama';
+import Emparejar from '../../components/Emparejar';
+import Cuento from '../../components/Cuento';
+import MathText from '../../components/MathText';
 
 const TIPO_LABELS = {
   seleccion_multiple: 'Selección Múltiple',
@@ -25,6 +28,20 @@ const TIPO_COLORS = {
   completar: 'bg-pink-100 text-pink-700 border-pink-200',
 };
 
+const AUTOSAVE_VERSION = 1;
+const AUTOSAVE_DEBOUNCE_MS = 700;
+
+function getDraftStorageKey(examenId) {
+  try {
+    const rawUser = localStorage.getItem('user');
+    const user = rawUser ? JSON.parse(rawUser) : null;
+    const userId = user?.id || user?.correo || 'anon';
+    return `xcalificator_exam_draft_v${AUTOSAVE_VERSION}:${userId}:${examenId}`;
+  } catch {
+    return `xcalificator_exam_draft_v${AUTOSAVE_VERSION}:anon:${examenId}`;
+  }
+}
+
 export default function ResolverExamen() {
   const { examenId } = useParams();
   const navigate = useNavigate();
@@ -35,7 +52,18 @@ export default function ResolverExamen() {
   const [currentQ, setCurrentQ] = useState(0);
   const [showConfirm, setShowConfirm] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [autosaveState, setAutosaveState] = useState('idle');
+  const [lastSavedAt, setLastSavedAt] = useState(null);
   const startTime = useRef(Date.now());
+  const autosaveTimerRef = useRef(null);
+
+  // Group mode state
+  const [grupo, setGrupo] = useState(null); // current group
+  const [grupoLoading, setGrupoLoading] = useState(false);
+  const [showInvite, setShowInvite] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState('');
+
+  const draftStorageKey = getDraftStorageKey(examenId);
 
   useEffect(() => {
     const loadExam = async () => {
@@ -43,6 +71,7 @@ export default function ResolverExamen() {
         // Check if already submitted
         const respRes = await api.get('/examenes/mis-respuestas');
         if (respRes.data.includes(examenId)) {
+          localStorage.removeItem(draftStorageKey);
           toast.error('Ya enviaste respuestas para este examen');
           navigate('/estudiante');
           return;
@@ -50,6 +79,37 @@ export default function ResolverExamen() {
 
         const res = await api.get(`/examenes/${examenId}`);
         setExamen(res.data);
+
+        try {
+          const savedDraftRaw = localStorage.getItem(draftStorageKey);
+          if (savedDraftRaw) {
+            const savedDraft = JSON.parse(savedDraftRaw);
+            const savedRespuestas = savedDraft?.respuestas;
+            const isValidRespuestas = savedRespuestas && typeof savedRespuestas === 'object' && !Array.isArray(savedRespuestas);
+            if (
+              savedDraft?.version === AUTOSAVE_VERSION
+              && savedDraft?.examen_id === examenId
+              && isValidRespuestas
+              && Object.keys(savedRespuestas).length > 0
+            ) {
+              setRespuestas(savedRespuestas);
+              setAutosaveState('saved');
+              if (savedDraft.saved_at) setLastSavedAt(savedDraft.saved_at);
+
+              const totalPreguntas = res.data.contenido_json?.preguntas?.length || 0;
+              if (Number.isInteger(savedDraft.current_q) && savedDraft.current_q >= 0 && savedDraft.current_q < totalPreguntas) {
+                setCurrentQ(savedDraft.current_q);
+              }
+
+              toast.success('Se restauró tu borrador guardado', { duration: 3500 });
+            } else {
+              localStorage.removeItem(draftStorageKey);
+            }
+          }
+        } catch {
+          localStorage.removeItem(draftStorageKey);
+        }
+
         if (!res.data.activo_online) {
           toast.error('Este examen no está disponible online');
           navigate('/estudiante');
@@ -60,6 +120,14 @@ export default function ResolverExamen() {
           toast.error('El plazo para este examen ha vencido');
           navigate('/estudiante');
         }
+
+        // Load group if exam is grupal
+        if (res.data.modo_grupal) {
+          try {
+            const gRes = await api.get(`/grupos/mi-grupo/${examenId}`);
+            setGrupo(gRes.data);
+          } catch { /* no group yet */ }
+        }
       } catch {
         toast.error('Examen no encontrado');
         navigate('/estudiante');
@@ -68,7 +136,7 @@ export default function ResolverExamen() {
       }
     };
     loadExam();
-  }, [examenId]);
+  }, [examenId, draftStorageKey]);
 
   // Timer
   useEffect(() => {
@@ -87,22 +155,121 @@ export default function ResolverExamen() {
       : `${m}:${String(s).padStart(2, '0')}`;
   };
 
+  // Group mode helpers
+  const createGrupo = async () => {
+    setGrupoLoading(true);
+    try {
+      const res = await api.post(`/grupos/${examenId}`);
+      setGrupo(res.data);
+      toast.success('Grupo creado');
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Error creando grupo');
+    } finally { setGrupoLoading(false); }
+  };
+
+  const inviteMember = async (e) => {
+    e.preventDefault();
+    if (!inviteEmail.trim()) return;
+    try {
+      await api.post(`/grupos/${grupo.id}/invitar`, { email: inviteEmail.trim() });
+      const gRes = await api.get(`/grupos/mi-grupo/${examenId}`);
+      setGrupo(gRes.data);
+      setInviteEmail('');
+      setShowInvite(false);
+      toast.success('Miembro agregado');
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Error invitando');
+    }
+  };
+
+  const removeMember = async (miembroId) => {
+    try {
+      await api.delete(`/grupos/${grupo.id}/miembro/${miembroId}`);
+      const gRes = await api.get(`/grupos/mi-grupo/${examenId}`);
+      setGrupo(gRes.data);
+      toast.success('Miembro removido');
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Error');
+    }
+  };
+
   const updateResp = useCallback((numero, value) => {
     setRespuestas(prev => ({ ...prev, [numero]: value }));
   }, []);
+
+  useEffect(() => {
+    if (loading || !examen || submitting) return undefined;
+
+    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+
+    if (Object.keys(respuestas).length === 0) {
+      localStorage.removeItem(draftStorageKey);
+      setAutosaveState('idle');
+      setLastSavedAt(null);
+      return undefined;
+    }
+
+    setAutosaveState('saving');
+    autosaveTimerRef.current = setTimeout(() => {
+      try {
+        const payload = {
+          version: AUTOSAVE_VERSION,
+          examen_id: examenId,
+          saved_at: Date.now(),
+          current_q: currentQ,
+          respuestas,
+        };
+        localStorage.setItem(draftStorageKey, JSON.stringify(payload));
+        setLastSavedAt(payload.saved_at);
+        setAutosaveState('saved');
+      } catch {
+        setAutosaveState('error');
+      }
+    }, AUTOSAVE_DEBOUNCE_MS);
+
+    return () => {
+      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    };
+  }, [respuestas, currentQ, loading, examen, submitting, draftStorageKey, examenId]);
+
+  useEffect(() => {
+    const flushDraft = () => {
+      if (loading || !examen || submitting || Object.keys(respuestas).length === 0) return;
+      try {
+        localStorage.setItem(draftStorageKey, JSON.stringify({
+          version: AUTOSAVE_VERSION,
+          examen_id: examenId,
+          saved_at: Date.now(),
+          current_q: currentQ,
+          respuestas,
+        }));
+      } catch { /* no-op */ }
+    };
+
+    window.addEventListener('beforeunload', flushDraft);
+    return () => window.removeEventListener('beforeunload', flushDraft);
+  }, [respuestas, currentQ, loading, examen, submitting, draftStorageKey, examenId]);
 
   const handleSubmit = async () => {
     setSubmitting(true);
     try {
       const respuestas_formatted = Object.entries(respuestas).map(([num, resp]) => ({
-        numero: parseInt(num),
+        numero: isNaN(parseInt(num)) ? num : parseInt(num),
         respuesta: resp,
       }));
 
-      const res = await api.post('/examenes/responder', {
-        examen_id: examenId,
-        respuestas_json: { preguntas: respuestas_formatted },
-      });
+      let res;
+      if (examen.modo_grupal && grupo) {
+        // Group submit — creates Nota for all members
+        res = await api.post(`/grupos/${grupo.id}/submit`, {
+          respuestas_json: { preguntas: respuestas_formatted },
+        });
+      } else {
+        res = await api.post('/examenes/responder', {
+          examen_id: examenId,
+          respuestas_json: { preguntas: respuestas_formatted },
+        });
+      }
 
       if (res.data.nota) {
         const n = res.data.nota;
@@ -113,6 +280,9 @@ export default function ResolverExamen() {
       } else {
         toast.success('¡Respuestas enviadas exitosamente!');
       }
+      localStorage.removeItem(draftStorageKey);
+      setAutosaveState('idle');
+      setLastSavedAt(null);
       navigate('/estudiante/notas');
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Error enviando respuestas');
@@ -138,6 +308,14 @@ export default function ResolverExamen() {
   const answered = preguntas.filter(p => respuestas[p.numero] !== undefined && respuestas[p.numero] !== '').length;
   const progress = totalQ > 0 ? (answered / totalQ) * 100 : 0;
   const currentPregunta = preguntas[currentQ];
+  const autosaveLabel = autosaveState === 'saving'
+    ? 'Guardando borrador...'
+    : autosaveState === 'saved'
+      ? `Borrador guardado${lastSavedAt ? ` a las ${new Date(lastSavedAt).toLocaleTimeString()}` : ''}`
+      : autosaveState === 'error'
+        ? 'No se pudo guardar el borrador'
+        : 'Borrador automatico activo';
+  const autosaveColor = autosaveState === 'error' ? 'text-red-200' : 'text-primary-100';
 
   return (
     <div className="max-w-4xl mx-auto">
@@ -161,6 +339,16 @@ export default function ResolverExamen() {
               <Clock className="w-5 h-5" />
               <span className="text-xl font-mono font-bold">{formatTime(elapsed)}</span>
             </div>
+            <div className={`mt-2 text-xs flex items-center justify-end gap-1 ${autosaveColor}`}>
+              {autosaveState === 'saving' ? (
+                <Loader2 className="w-3 h-3 animate-spin" />
+              ) : autosaveState === 'error' ? (
+                <AlertTriangle className="w-3 h-3" />
+              ) : (
+                <CheckCircle2 className="w-3 h-3" />
+              )}
+              <span>{autosaveLabel}</span>
+            </div>
           </div>
         </div>
 
@@ -178,6 +366,62 @@ export default function ResolverExamen() {
           </div>
         </div>
       </div>
+
+      {/* Group mode panel */}
+      {examen.modo_grupal && (
+        <div className="card mb-6 border-2 border-blue-200 bg-blue-50/30">
+          <div className="flex items-center gap-2 mb-3">
+            <Users className="w-5 h-5 text-blue-600" />
+            <h2 className="font-semibold text-blue-900">Modo Grupal</h2>
+            <span className="text-xs text-blue-600 bg-blue-100 px-2 py-0.5 rounded-lg">
+              Máx {examen.max_integrantes || 4} integrantes
+            </span>
+          </div>
+
+          {!grupo ? (
+            <div className="text-center py-4">
+              <p className="text-sm text-gray-600 mb-3">
+                Este examen se resuelve en grupo. Crea un grupo o espera a que te inviten.
+              </p>
+              <button onClick={createGrupo} disabled={grupoLoading}
+                className="btn-primary flex items-center gap-2 mx-auto">
+                {grupoLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Users className="w-4 h-4" />}
+                Crear Grupo
+              </button>
+            </div>
+          ) : (
+            <div>
+              <div className="flex flex-wrap gap-2 mb-3">
+                {grupo.miembros?.map(m => (
+                  <div key={m.id} className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-blue-200 text-sm">
+                    <span className="font-medium text-gray-800">{m.nombre || m.email}</span>
+                    {m.es_lider && <span className="text-xs text-blue-600 font-semibold">Líder</span>}
+                    {!m.es_lider && grupo.es_lider && (
+                      <button onClick={() => removeMember(m.id)} className="text-red-400 hover:text-red-600">
+                        <X className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {grupo.es_lider && (grupo.miembros?.length || 1) < (examen.max_integrantes || 4) && (
+                showInvite ? (
+                  <form onSubmit={inviteMember} className="flex gap-2">
+                    <input type="email" placeholder="Email del compañero" className="input-field flex-1 text-sm"
+                      value={inviteEmail} onChange={e => setInviteEmail(e.target.value)} autoFocus />
+                    <button type="submit" className="btn-primary text-sm px-3">Agregar</button>
+                    <button type="button" onClick={() => setShowInvite(false)} className="btn-secondary text-sm px-3">Cancelar</button>
+                  </form>
+                ) : (
+                  <button onClick={() => setShowInvite(true)} className="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1">
+                    <UserPlus className="w-4 h-4" /> Invitar miembro
+                  </button>
+                )
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Question Navigation Panel (sidebar) */}
@@ -242,9 +486,9 @@ export default function ResolverExamen() {
 
               {/* Question text */}
               <div className="bg-gray-50 rounded-xl p-4 mb-6">
-                <p className="text-gray-800 text-base leading-relaxed font-medium">
-                  {currentPregunta.enunciado}
-                </p>
+                <div className="text-gray-800 text-base leading-relaxed font-medium">
+                  <MathText text={currentPregunta.enunciado} />
+                </div>
               </div>
 
               {/* Answer Section */}
@@ -268,7 +512,7 @@ export default function ResolverExamen() {
                           {letters[j] || (j + 1)}
                         </div>
                         <span className={`text-sm ${isSelected ? 'text-primary-800 font-medium' : 'text-gray-700'}`}>
-                          {opt}
+                          <MathText text={opt} />
                         </span>
                         {isSelected && <CheckCircle2 className="w-5 h-5 text-primary-600 ml-auto shrink-0" />}
                       </button>
@@ -364,6 +608,9 @@ export default function ResolverExamen() {
           <SopaLetras
             grid={examen.contenido_json.sopa_letras.grid}
             palabras={examen.contenido_json.sopa_letras.palabras || []}
+            onChange={(foundWords) => {
+              updateResp('sopa_letras', foundWords.join(', '));
+            }}
             onComplete={(foundWords) => {
               updateResp('sopa_letras', foundWords.join(', '));
               toast.success('¡Encontraste todas las palabras! 🎉');
@@ -380,11 +627,52 @@ export default function ResolverExamen() {
           </h2>
           <Crucigrama
             crucigrama={examen.contenido_json.crucigrama}
-            onComplete={(userGrid) => {
+            onChange={(userGrid) => {
               updateResp('crucigrama', JSON.stringify(userGrid));
-              toast.success('¡Crucigrama completado! 🎉');
             }}
           />
+        </div>
+      )}
+
+      {/* Interactive Matching */}
+      {examen.contenido_json?.emparejar?.pares && (
+        <div className="card mt-6">
+          <h2 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+            🔗 Emparejar
+          </h2>
+          <Emparejar
+            emparejar={examen.contenido_json.emparejar}
+            onChange={(matchesObj) => {
+              updateResp('emparejar', JSON.stringify(matchesObj));
+            }}
+            onComplete={(results) => {
+              updateResp('emparejar', JSON.stringify(results));
+              toast.success(`¡Emparejar completado! ${results.correct}/${results.total} correctas 🎉`);
+            }}
+          />
+        </div>
+      )}
+
+      {/* Story */}
+      {examen.contenido_json?.cuento && (
+        <div className="card mt-6">
+          <Cuento
+            cuento={examen.contenido_json.cuento}
+            titulo={examen.contenido_json.titulo || examen.titulo}
+          />
+        </div>
+      )}
+
+      {/* Activity-only submit button — shown when there are no standard preguntas */}
+      {totalQ === 0 && Object.keys(respuestas).length > 0 && (
+        <div className="flex justify-center mt-8">
+          <button
+            onClick={() => setShowConfirm(true)}
+            className="flex items-center gap-2 px-8 py-3 rounded-xl text-base font-bold
+              bg-green-600 text-white hover:bg-green-700 transition-colors shadow-lg"
+          >
+            <Send className="w-5 h-5" /> Terminar y Enviar
+          </button>
         </div>
       )}
 
@@ -396,13 +684,19 @@ export default function ResolverExamen() {
               <div className="w-16 h-16 mx-auto rounded-full bg-amber-100 flex items-center justify-center mb-4">
                 <AlertTriangle className="w-8 h-8 text-amber-600" />
               </div>
-              <h3 className="text-xl font-bold text-gray-900">¿Enviar examen?</h3>
+              <h3 className="text-xl font-bold text-gray-900">{totalQ === 0 ? '¿Enviar actividad?' : '¿Enviar examen?'}</h3>
               <p className="text-gray-500 text-sm mt-2">
-                Has respondido <span className="font-bold text-primary-600">{answered}</span> de <span className="font-bold">{totalQ}</span> preguntas.
-                {answered < totalQ && (
-                  <span className="text-amber-600 block mt-1">
-                    ⚠️ Hay {totalQ - answered} pregunta(s) sin responder.
-                  </span>
+                {totalQ > 0 ? (
+                  <>
+                    Has respondido <span className="font-bold text-primary-600">{answered}</span> de <span className="font-bold">{totalQ}</span> preguntas.
+                    {answered < totalQ && (
+                      <span className="text-amber-600 block mt-1">
+                        ⚠️ Hay {totalQ - answered} pregunta(s) sin responder.
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <>Has completado <span className="font-bold text-primary-600">{Object.keys(respuestas).length}</span> actividad(es). Esta acción no se puede deshacer.</>
                 )}
               </p>
               <p className="text-gray-400 text-xs mt-2">

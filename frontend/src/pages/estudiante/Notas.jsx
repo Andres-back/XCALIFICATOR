@@ -11,6 +11,7 @@ import { es } from 'date-fns/locale';
 import StatCard from '../../components/StatCard';
 import EmptyState from '../../components/EmptyState';
 import SkeletonLoader from '../../components/SkeletonLoader';
+import MathText from '../../components/MathText';
 
 export default function EstudianteNotas() {
   const [notas, setNotas] = useState([]);
@@ -152,14 +153,14 @@ export default function EstudianteNotas() {
                     {n.retroalimentacion && (
                       <div className="p-4 bg-blue-50 rounded-xl border border-blue-100">
                         <h3 className="text-sm font-semibold text-blue-800 mb-1">Retroalimentación General</h3>
-                        <p className="text-sm text-blue-700 whitespace-pre-line">{n.retroalimentacion}</p>
+                        <MathText text={n.retroalimentacion} className="text-sm text-blue-700 whitespace-pre-line" />
                       </div>
                     )}
 
                     {n.detalle_json?.preguntas && (
                       <div className="space-y-2">
                         <h3 className="text-sm font-semibold text-gray-700">
-                          Detalle por Pregunta ({n.detalle_json.preguntas.filter(p => p.correcto).length}/{n.detalle_json.preguntas.length} correctas)
+                          Detalle ({n.detalle_json.preguntas.filter(p => p.correcto).length}/{n.detalle_json.preguntas.length} correctas)
                         </h3>
                         {n.detalle_json.preguntas.map((p, i) => (
                           <div key={i} className={`p-3 rounded-xl border ${
@@ -173,21 +174,94 @@ export default function EstudianteNotas() {
                               )}
                               <div className="flex-1 min-w-0">
                                 <div className="flex justify-between">
-                                  <span className="text-sm font-medium">Pregunta {p.numero}</span>
+                                  <span className="text-sm font-medium">
+                                    {p.tipo === 'crucigrama' ? '🧩 Crucigrama'
+                                      : p.tipo === 'sopa_letras' ? '🔍 Sopa de Letras'
+                                      : p.tipo === 'emparejar' ? '🔗 Emparejar'
+                                      : `Pregunta ${p.numero}`}
+                                  </span>
                                   <span className="text-sm font-semibold">{p.nota}/{p.nota_maxima}</span>
                                 </div>
-                                {p.respuesta_estudiante && (
-                                  <p className="text-xs text-gray-700 mt-1">
-                                    <span className="font-medium">Tu respuesta:</span> {p.respuesta_estudiante}
-                                  </p>
+
+                                {/* Normal question feedback */}
+                                {p.tipo !== 'crucigrama' && p.tipo !== 'sopa_letras' && p.tipo !== 'emparejar' && (
+                                  <>
+                                    {p.respuesta_estudiante && (
+                                      <p className="text-xs text-gray-700 mt-1">
+                                        <span className="font-medium">Tu respuesta:</span> <MathText text={p.respuesta_estudiante} />
+                                      </p>
+                                    )}
+                                    {p.respuesta_correcta && !p.correcto && (
+                                      <p className="text-xs text-green-700 mt-0.5">
+                                        <span className="font-medium">Correcta:</span> <MathText text={p.respuesta_correcta} />
+                                      </p>
+                                    )}
+                                  </>
                                 )}
-                                {p.respuesta_correcta && !p.correcto && (
-                                  <p className="text-xs text-green-700 mt-0.5">
-                                    <span className="font-medium">Correcta:</span> {p.respuesta_correcta}
-                                  </p>
+
+                                {/* Crucigrama word details */}
+                                {p.tipo === 'crucigrama' && p.detalle_palabras && (
+                                  <div className="mt-2 space-y-1">
+                                    {p.detalle_palabras.map((w, wi) => (
+                                      <div key={wi} className={`flex items-center gap-2 text-xs px-2 py-1 rounded-lg ${
+                                        w.correcto ? 'bg-green-100/60' : 'bg-red-100/60'
+                                      }`}>
+                                        {w.correcto
+                                          ? <CheckCircle className="w-3 h-3 text-green-600 shrink-0" />
+                                          : <XCircle className="w-3 h-3 text-red-600 shrink-0" />}
+                                        <span className="font-medium">{w.numero}{w.dir === 'H' ? '→' : '↓'}</span>
+                                        <span className="text-gray-600 truncate flex-1">{w.pista}</span>
+                                        {!w.correcto && (
+                                          <span className="text-green-700 font-medium shrink-0">{w.respuesta_correcta}</span>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
                                 )}
+
+                                {/* Sopa de letras feedback */}
+                                {p.tipo === 'sopa_letras' && (
+                                  <>
+                                    {p.respuesta_estudiante && (
+                                      <p className="text-xs text-gray-700 mt-1">
+                                        <span className="font-medium">Encontradas:</span> {p.respuesta_estudiante}
+                                      </p>
+                                    )}
+                                    {!p.correcto && p.respuesta_correcta && (
+                                      <p className="text-xs text-green-700 mt-0.5">
+                                        <span className="font-medium">Todas:</span> {p.respuesta_correcta}
+                                      </p>
+                                    )}
+                                  </>
+                                )}
+
+                                {/* Emparejar pair details */}
+                                {p.tipo === 'emparejar' && p.detalle_pares && (
+                                  <div className="mt-2 space-y-1">
+                                    {p.detalle_pares.map((par, pi) => (
+                                      <div key={pi} className={`flex items-center gap-2 text-xs px-2 py-1 rounded-lg ${
+                                        par.correcto ? 'bg-green-100/60' : 'bg-red-100/60'
+                                      }`}>
+                                        {par.correcto
+                                          ? <CheckCircle className="w-3 h-3 text-green-600 shrink-0" />
+                                          : <XCircle className="w-3 h-3 text-red-600 shrink-0" />}
+                                        <span className="font-medium">{par.izquierda}</span>
+                                        <span className="text-gray-400">→</span>
+                                        {par.correcto ? (
+                                          <span className="text-green-700">{par.derecha_correcta}</span>
+                                        ) : (
+                                          <>
+                                            <span className="text-red-600 line-through">{par.derecha_estudiante || '—'}</span>
+                                            <span className="text-green-700 font-medium">({par.derecha_correcta})</span>
+                                          </>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+
                                 {p.retroalimentacion && (
-                                  <p className="text-xs text-gray-600 mt-1 italic">{p.retroalimentacion}</p>
+                                  <MathText text={p.retroalimentacion} className="text-xs text-gray-600 mt-1 italic" />
                                 )}
                               </div>
                             </div>

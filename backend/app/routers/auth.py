@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
+from datetime import datetime, timezone
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 import httpx
@@ -22,6 +23,15 @@ from app.services.notification_service import send_email
 
 router = APIRouter(prefix="/auth", tags=["Autenticación"])
 settings = get_settings()
+
+
+async def _close_user_sessions(db: AsyncSession, user_id):
+    """Close all open sessions for a user (set fecha_fin)."""
+    await db.execute(
+        update(Sesion)
+        .where(Sesion.user_id == user_id, Sesion.fecha_fin.is_(None))
+        .values(fecha_fin=datetime.now(timezone.utc))
+    )
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
@@ -151,6 +161,9 @@ async def login(
     if not user.activo:
         raise HTTPException(status_code=403, detail="Usuario deshabilitado")
 
+    # Close previous open sessions for normal login
+    await _close_user_sessions(db, user.id)
+
     # Register session
     sesion = Sesion(
         user_id=user.id,
@@ -215,6 +228,9 @@ async def google_login(
 
     if not user.activo:
         raise HTTPException(status_code=403, detail="Usuario deshabilitado")
+
+    # Close previous open sessions for google login
+    await _close_user_sessions(db, user.id)
 
     sesion = Sesion(
         user_id=user.id,
@@ -293,3 +309,14 @@ async def change_own_password(
     current_user.password_hash = hash_password(data.new_password)
     await db.commit()
     return {"detail": "Contraseña actualizada exitosamente"}
+
+
+@router.post("/logout")
+async def logout(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Close all active sessions for the current user."""
+    await _close_user_sessions(db, current_user.id)
+    await db.commit()
+    return {"detail": "Sesión cerrada"}

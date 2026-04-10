@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
+import useStore from '../../store';
 import toast from 'react-hot-toast';
 import {
   BookOpen, Plus, FileText, ClipboardList, X, Clock,
   CheckCircle, Calendar, TrendingUp, AlertCircle, Award,
+  ChevronRight, ScrollText, Sparkles,
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -13,6 +15,7 @@ import EmptyState from '../../components/EmptyState';
 import SkeletonLoader from '../../components/SkeletonLoader';
 
 export default function EstudianteHome() {
+  const { user } = useStore();
   const [materias, setMaterias] = useState([]);
   const [examenesPorMateria, setExamenesPorMateria] = useState({});
   const [respondidos, setRespondidos] = useState(new Set());
@@ -88,19 +91,33 @@ export default function EstudianteHome() {
     </div>
   );
 
+  // Greeting based on time of day
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Buenos días' : hour < 18 ? 'Buenas tardes' : 'Buenas noches';
+  const firstName = user?.nombre?.split(' ')[0] || '';
+
   return (
     <div className="space-y-6">
       {/* Page header with greeting */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Mis Materias</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-900">
+            {greeting}{firstName ? `, ${firstName}` : ''} <span className="inline-block animate-bounce">👋</span>
+          </h1>
           <p className="text-sm text-gray-500 mt-1">
-            Bienvenido, aquí puedes ver tus materias y exámenes disponibles.
+            {pendientes.length > 0
+              ? `Tienes ${pendientes.length} examen${pendientes.length > 1 ? 'es' : ''} pendiente${pendientes.length > 1 ? 's' : ''} por resolver.`
+              : '¡Todo al día! No tienes exámenes pendientes.'}
           </p>
         </div>
-        <button onClick={() => setShowInscribir(true)} className="btn-primary flex items-center gap-2 text-sm shrink-0">
-          <Plus className="w-4 h-4" /> Inscribirme
-        </button>
+        <div className="flex items-center gap-2">
+          <Link to="/estudiante/boletin" className="btn-secondary flex items-center gap-2 text-sm shrink-0">
+            <ScrollText className="w-4 h-4" /> Mi Boletín
+          </Link>
+          <button onClick={() => setShowInscribir(true)} className="btn-primary flex items-center gap-2 text-sm shrink-0">
+            <Plus className="w-4 h-4" /> Inscribirme
+          </button>
+        </div>
       </div>
 
       {/* Dashboard Stats */}
@@ -148,109 +165,110 @@ export default function EstudianteHome() {
           }
         />
       ) : (
-        <div className="space-y-4">
-          {materias.map(m => {
-            const examenesMateria = examenesPorMateria[m.id] || [];
-            const completados = examenesMateria.filter(ex => respondidos.has(ex.id)).length;
-            const progreso = examenesMateria.length > 0 ? Math.round((completados / examenesMateria.length) * 100) : 0;
+        <>
+          {/* Materia Grid Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {materias.map(m => {
+              const examenesMateria = examenesPorMateria[m.id] || [];
+              const completados = examenesMateria.filter(ex => respondidos.has(ex.id)).length;
+              const progreso = examenesMateria.length > 0 ? Math.round((completados / examenesMateria.length) * 100) : 0;
+              const pendientesMateria = examenesMateria.filter(ex => !respondidos.has(ex.id) && !(ex.fecha_limite && new Date(ex.fecha_limite) < new Date()));
 
-            return (
-              <div key={m.id} className="bg-white rounded-xl border border-gray-200 overflow-hidden hover:shadow-md transition-shadow">
-                {/* Materia header */}
-                <div className="flex items-center justify-between p-5 pb-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-primary-100 to-indigo-100 flex items-center justify-center shrink-0">
-                      <BookOpen className="w-5 h-5 text-primary-700" />
+              return (
+                <div key={m.id} className="bg-white rounded-xl border border-gray-200 overflow-hidden hover:shadow-lg transition-all duration-300 flex flex-col">
+                  {/* Card header */}
+                  <div className="p-5 pb-3">
+                    <div className="flex items-start justify-between mb-3">
+                      <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-primary-100 to-indigo-100 flex items-center justify-center shrink-0">
+                        <BookOpen className="w-5 h-5 text-primary-700" />
+                      </div>
+                      <Link to={`/estudiante/notas?materia=${encodeURIComponent(m.nombre)}`}
+                        className="text-xs text-primary-600 hover:text-primary-800 font-medium flex items-center gap-1">
+                        <Award className="w-3.5 h-3.5" /> Notas
+                      </Link>
                     </div>
-                    <div className="min-w-0">
-                      <h3 className="font-semibold text-gray-900 truncate">{m.nombre}</h3>
-                      <p className="text-xs text-gray-400">Código: {m.codigo}</p>
-                    </div>
+                    <h3 className="font-semibold text-gray-900 text-base truncate">{m.nombre}</h3>
+                    <p className="text-xs text-gray-400 mt-0.5">Código: {m.codigo}</p>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <Link to={`/estudiante/notas?materia=${encodeURIComponent(m.nombre)}`}
-                      className="text-xs text-primary-600 hover:text-primary-800 font-medium flex items-center gap-1">
-                      <Award className="w-3.5 h-3.5" /> Mis Notas
-                    </Link>
-                  </div>
-                </div>
 
-                {/* Progress bar */}
-                {examenesMateria.length > 0 && (
-                  <div className="px-5 pb-3">
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-xs text-gray-500">Progreso: {completados}/{examenesMateria.length} exámenes</span>
-                      <span className="text-xs font-medium text-primary-600">{progreso}%</span>
-                    </div>
-                    <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                      <div className="h-full bg-gradient-to-r from-primary-500 to-indigo-500 rounded-full transition-all duration-500"
-                        style={{ width: `${progreso}%` }} />
-                    </div>
-                  </div>
-                )}
-
-                {/* Exam list */}
-                <div className="border-t border-gray-100">
-                  {examenesMateria.length > 0 ? (
-                    <div className="divide-y divide-gray-50">
-                      {examenesMateria.map(ex => {
-                        const yaRespondido = respondidos.has(ex.id);
-                        const vencido = ex.fecha_limite && new Date(ex.fecha_limite) < new Date();
-                        return (
-                          <div key={ex.id} className={`flex items-center justify-between px-5 py-3.5 ${
-                            yaRespondido ? 'bg-green-50/50' : vencido ? 'bg-gray-50/50' : 'hover:bg-blue-50/50'
-                          } transition-colors`}>
-                            <div className="flex items-center gap-3 min-w-0">
-                              {yaRespondido ? (
-                                <CheckCircle className="w-5 h-5 text-green-500 shrink-0" />
-                              ) : vencido ? (
-                                <Clock className="w-5 h-5 text-gray-400 shrink-0" />
-                              ) : (
-                                <ClipboardList className="w-5 h-5 text-primary-500 shrink-0" />
-                              )}
-                              <div className="min-w-0">
-                                <p className={`text-sm font-medium truncate ${
-                                  yaRespondido ? 'text-green-800' : vencido ? 'text-gray-500' : 'text-gray-800'
-                                }`}>{ex.titulo}</p>
-                                {ex.fecha_limite && (
-                                  <p className={`text-xs flex items-center gap-1 mt-0.5 ${
-                                    vencido ? 'text-red-500' : 'text-gray-400'
-                                  }`}>
-                                    <Calendar className="w-3 h-3" />
-                                    {vencido ? 'Vencido ' : 'Vence '}
-                                    {formatDistanceToNow(new Date(ex.fecha_limite), { addSuffix: true, locale: es })}
-                                  </p>
-                                )}
-                              </div>
-                            </div>
-                            {yaRespondido ? (
-                              <span className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-green-700 bg-green-100 border border-green-200">
-                                <CheckCircle className="w-3 h-3" /> Respondido
-                              </span>
-                            ) : vencido ? (
-                              <span className="px-3 py-1.5 rounded-lg text-xs font-semibold text-gray-500 bg-gray-100">
-                                Vencido
-                              </span>
-                            ) : (
-                              <Link to={`/estudiante/examen/${ex.id}`}
-                                className="bg-primary-600 text-white px-4 py-2 rounded-lg text-xs font-semibold hover:bg-primary-700 transition-colors shrink-0">
-                                Resolver
-                              </Link>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="px-5 py-6 text-center">
-                      <p className="text-sm text-gray-400">No hay exámenes disponibles en este momento.</p>
+                  {/* Progress bar */}
+                  {examenesMateria.length > 0 && (
+                    <div className="px-5 pb-3">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-xs text-gray-500">{completados}/{examenesMateria.length} completados</span>
+                        <span className="text-xs font-medium text-primary-600">{progreso}%</span>
+                      </div>
+                      <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-gradient-to-r from-primary-500 to-indigo-500 rounded-full transition-all duration-500"
+                          style={{ width: `${progreso}%` }} />
+                      </div>
                     </div>
                   )}
+
+                  {/* Quick exam pills */}
+                  <div className="px-5 pb-4 flex-1">
+                    {pendientesMateria.length > 0 ? (
+                      <div className="space-y-2">
+                        {pendientesMateria.slice(0, 3).map(ex => (
+                          <Link key={ex.id} to={`/estudiante/examen/${ex.id}`}
+                            className="flex items-center justify-between p-2.5 rounded-lg bg-blue-50/60 hover:bg-blue-100/80 transition-colors group">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <ClipboardList className="w-4 h-4 text-primary-500 shrink-0" />
+                              <span className="text-sm text-gray-700 truncate">{ex.titulo}</span>
+                            </div>
+                            <ChevronRight className="w-4 h-4 text-gray-400 group-hover:text-primary-500 shrink-0" />
+                          </Link>
+                        ))}
+                        {pendientesMateria.length > 3 && (
+                          <p className="text-xs text-gray-400 text-center">+{pendientesMateria.length - 3} más</p>
+                        )}
+                      </div>
+                    ) : examenesMateria.length > 0 ? (
+                      <div className="flex items-center gap-2 p-2.5 rounded-lg bg-green-50/60">
+                        <CheckCircle className="w-4 h-4 text-green-500" />
+                        <span className="text-sm text-green-700">¡Todo completado!</span>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-400 text-center py-2">Sin exámenes disponibles</p>
+                    )}
+                  </div>
                 </div>
+              );
+            })}
+          </div>
+
+          {/* Recent completed exams */}
+          {notas.length > 0 && (
+            <div>
+              <h2 className="text-base font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-amber-500" /> Actividad Reciente
+              </h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {notas.slice(0, 6).map(n => (
+                  <div key={n.id} className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3">
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-sm font-bold ${
+                      (n.nota || 0) >= 3.0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                    }`}>
+                      {n.nota != null ? n.nota.toFixed(1) : '—'}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-gray-800 truncate">{n.examen_titulo || 'Examen'}</p>
+                      <p className="text-xs text-gray-400">
+                        {n.calificado_at ? format(new Date(n.calificado_at), 'dd MMM yyyy', { locale: es }) : 'Pendiente de calificación'}
+                      </p>
+                    </div>
+                    {n.id && (
+                      <Link to={`/estudiante/chat/${n.id}`} title="Hablar con Xali"
+                        className="text-primary-500 hover:text-primary-700 shrink-0">
+                        <Sparkles className="w-4 h-4" />
+                      </Link>
+                    )}
+                  </div>
+                ))}
               </div>
-            );
-          })}
-        </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* Inscripción Modal */}

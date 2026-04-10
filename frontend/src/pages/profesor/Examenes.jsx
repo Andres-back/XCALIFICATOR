@@ -8,6 +8,7 @@ import {
   ChevronUp, Plus, Minus, Save, Loader2,
 } from 'lucide-react';
 import { format } from 'date-fns';
+import MathText from '../../components/MathText';
 
 export default function ProfesorExamenes({ materiaId: propMateriaId, embedded = false }) {
   const params = useParams();
@@ -99,7 +100,12 @@ export default function ProfesorExamenes({ materiaId: propMateriaId, embedded = 
       const d = res.data;
       const preguntas = (d.contenido_json?.preguntas || []).map(p => {
         const c = (d.clave_respuestas?.preguntas || []).find(c => c.numero === p.numero);
-        return { ...p, respuesta_correcta: c?.respuesta_correcta || '', puntos: c?.puntos || 1.0 };
+        return {
+          ...p,
+          enunciado: p.enunciado || p.pregunta || p.texto || p.statement || '',
+          respuesta_correcta: c?.respuesta_correcta || '',
+          puntos: c?.puntos || 1.0,
+        };
       });
       setEditModal({
         show: true, saving: false,
@@ -161,7 +167,14 @@ export default function ProfesorExamenes({ materiaId: propMateriaId, embedded = 
     const ex = editModal.examen;
     setEditModal(prev => ({ ...prev, saving: true }));
     try {
-      const preguntas_limpio = ex.preguntas.map(({ respuesta_correcta, puntos, ...rest }) => rest);
+      const preguntas_limpio = ex.preguntas.map(({ respuesta_correcta, puntos, ...rest }) => {
+        const enunciado = (rest.enunciado || rest.pregunta || '').trim();
+        return {
+          ...rest,
+          enunciado,
+          pregunta: enunciado,
+        };
+      });
       const clave_preguntas = ex.preguntas.map(p => ({
         numero: p.numero, respuesta_correcta: p.respuesta_correcta || '', puntos: parseFloat(p.puntos) || 1.0,
       }));
@@ -204,76 +217,82 @@ export default function ProfesorExamenes({ materiaId: propMateriaId, embedded = 
           <p className="text-gray-500">No hay exámenes. ¡Genera tu primer examen con IA!</p>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {examenes.map(ex => (
-            <div key={ex.id} className="card">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="min-w-0">
+            <div key={ex.id} className="card hover:shadow-lg transition-shadow">
+              <div className="flex items-start justify-between gap-3 mb-3">
+                <div className="min-w-0 flex-1">
                   <h3 className="font-semibold text-gray-900 truncate">{ex.titulo}</h3>
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs text-gray-500">
                     <span className="px-2 py-0.5 rounded bg-gray-100 font-medium">{ex.tipo || 'Generado'}</span>
                     <span>{format(new Date(ex.created_at), 'dd/MM/yyyy')}</span>
-                    {ex.fecha_limite && (
-                      <span className="flex items-center gap-1">
-                        <Calendar className="w-3 h-3" /> Límite: {format(new Date(ex.fecha_limite), 'dd/MM/yyyy HH:mm')}
-                      </span>
-                    )}
-                    {ex.fecha_activacion && new Date(ex.fecha_activacion) > new Date() && (
-                      <span className="text-amber-600 font-medium">
-                        Programado: {format(new Date(ex.fecha_activacion), 'dd/MM/yyyy HH:mm')}
-                      </span>
-                    )}
                     <span className={`px-2 py-0.5 rounded text-xs font-medium ${ex.activo_online ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
                       {ex.activo_online ? 'Online' : 'Inactivo'}
                     </span>
                   </div>
                 </div>
-                {/* Action buttons */}
-                <div className="flex items-center gap-1 flex-wrap shrink-0">
-                  <button onClick={() => toggleOnline(ex.id)} title={ex.activo_online ? 'Desactivar online' : 'Activar online'}
-                    className={`p-2 rounded-lg transition ${ex.activo_online ? 'text-green-600 bg-green-50 hover:bg-green-100' : 'text-gray-400 bg-gray-50 hover:bg-gray-100'}`}>
-                    {ex.activo_online ? <ToggleRight className="w-5 h-5" /> : <ToggleLeft className="w-5 h-5" />}
-                  </button>
-                  <button onClick={() => openPreview(ex.id, ex.titulo, false)} title="Vista previa PDF"
-                    className="p-2 rounded-lg text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition">
-                    <FileSearch className="w-5 h-5" />
-                  </button>
-                  {/* Single download button with dropdown */}
-                  <div className="relative">
-                    <button onClick={(e) => { e.stopPropagation(); setDownloadMenu(downloadMenu === ex.id ? null : ex.id); }}
-                      title="Descargar PDF" className="p-2 rounded-lg text-blue-600 bg-blue-50 hover:bg-blue-100 transition">
-                      <Download className="w-5 h-5" />
-                    </button>
-                    {downloadMenu === ex.id && (
-                      <div className="absolute right-0 top-full mt-1 w-52 bg-white rounded-lg shadow-xl border border-gray-200 z-30 py-1 animate-in fade-in">
-                        <button onClick={() => downloadPdf(ex.id, false)}
-                          className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2">
-                          <FileText className="w-4 h-4 text-gray-400" /> Sin respuestas
-                        </button>
-                        <button onClick={() => downloadPdf(ex.id, true)}
-                          className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2">
-                          <BookOpen className="w-4 h-4 text-gray-400" /> Con respuestas
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                  <button onClick={() => openEdit(ex)} title="Editar examen"
-                    className="p-2 rounded-lg text-orange-600 bg-orange-50 hover:bg-orange-100 transition">
-                    <Edit3 className="w-5 h-5" />
-                  </button>
-                  <Link to={`/profesor/calificar/${ex.id}`} title="Calificar entregas"
-                    className="p-2 rounded-lg text-amber-600 bg-amber-50 hover:bg-amber-100 transition">
-                    <ClipboardCheck className="w-5 h-5" />
-                  </Link>
-                  <Link to={`/profesor/notas/${ex.id}`} title="Ver notas y métricas"
-                    className="p-2 rounded-lg text-emerald-600 bg-emerald-50 hover:bg-emerald-100 transition">
-                    <Award className="w-5 h-5" />
-                  </Link>
-                  <button onClick={() => deleteExamen(ex.id)} title="Eliminar examen"
-                    className="p-2 rounded-lg text-red-600 bg-red-50 hover:bg-red-100 transition">
-                    <Trash2 className="w-5 h-5" />
-                  </button>
+                <button onClick={() => toggleOnline(ex.id)} title={ex.activo_online ? 'Desactivar online' : 'Activar online'}
+                  className={`p-2 rounded-lg transition shrink-0 ${ex.activo_online ? 'text-green-600 bg-green-50 hover:bg-green-100' : 'text-gray-400 bg-gray-50 hover:bg-gray-100'}`}>
+                  {ex.activo_online ? <ToggleRight className="w-5 h-5" /> : <ToggleLeft className="w-5 h-5" />}
+                </button>
+              </div>
+
+              {/* Dates row */}
+              {(ex.fecha_limite || (ex.fecha_activacion && new Date(ex.fecha_activacion) > new Date())) && (
+                <div className="flex flex-wrap gap-2 mb-3 text-xs">
+                  {ex.fecha_limite && (
+                    <span className="flex items-center gap-1 text-gray-500">
+                      <Calendar className="w-3 h-3" /> Límite: {format(new Date(ex.fecha_limite), 'dd/MM/yyyy HH:mm')}
+                    </span>
+                  )}
+                  {ex.fecha_activacion && new Date(ex.fecha_activacion) > new Date() && (
+                    <span className="text-amber-600 font-medium">
+                      Programado: {format(new Date(ex.fecha_activacion), 'dd/MM/yyyy HH:mm')}
+                    </span>
+                  )}
                 </div>
+              )}
+
+              {/* Action buttons */}
+              <div className="flex items-center gap-1 flex-wrap pt-3 border-t border-gray-100">
+                <button onClick={() => openPreview(ex.id, ex.titulo, false)} title="Vista previa PDF"
+                  className="p-2 rounded-lg text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition">
+                  <FileSearch className="w-4 h-4" />
+                </button>
+                <div className="relative">
+                  <button onClick={(e) => { e.stopPropagation(); setDownloadMenu(downloadMenu === ex.id ? null : ex.id); }}
+                    title="Descargar PDF" className="p-2 rounded-lg text-blue-600 bg-blue-50 hover:bg-blue-100 transition">
+                    <Download className="w-4 h-4" />
+                  </button>
+                  {downloadMenu === ex.id && (
+                    <div className="absolute right-0 top-full mt-1 w-52 bg-white rounded-lg shadow-xl border border-gray-200 z-30 py-1 animate-in fade-in">
+                      <button onClick={() => downloadPdf(ex.id, false)}
+                        className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2">
+                        <FileText className="w-4 h-4 text-gray-400" /> Sin respuestas
+                      </button>
+                      <button onClick={() => downloadPdf(ex.id, true)}
+                        className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2">
+                        <BookOpen className="w-4 h-4 text-gray-400" /> Con respuestas
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <button onClick={() => openEdit(ex)} title="Editar examen"
+                  className="p-2 rounded-lg text-orange-600 bg-orange-50 hover:bg-orange-100 transition">
+                  <Edit3 className="w-4 h-4" />
+                </button>
+                <Link to={`/profesor/calificar/${ex.id}`} title="Calificar entregas"
+                  className="p-2 rounded-lg text-amber-600 bg-amber-50 hover:bg-amber-100 transition">
+                  <ClipboardCheck className="w-4 h-4" />
+                </Link>
+                <Link to={`/profesor/notas/${ex.id}`} title="Ver notas y métricas"
+                  className="p-2 rounded-lg text-emerald-600 bg-emerald-50 hover:bg-emerald-100 transition">
+                  <Award className="w-4 h-4" />
+                </Link>
+                <button onClick={() => deleteExamen(ex.id)} title="Eliminar examen"
+                  className="p-2 rounded-lg text-red-600 bg-red-50 hover:bg-red-100 transition ml-auto">
+                  <Trash2 className="w-4 h-4" />
+                </button>
               </div>
             </div>
           ))}
@@ -351,20 +370,18 @@ export default function ProfesorExamenes({ materiaId: propMateriaId, embedded = 
                           {p.numero}
                         </span>
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm text-gray-800 font-medium">{p.enunciado}</p>
+                          <MathText text={p.enunciado || p.pregunta || 'Sin enunciado'} className="text-sm text-gray-800 font-medium" />
                           <span className="text-xs text-gray-400 mt-1">{p.tipo} · {c?.puntos || p.puntos || 1} pts</span>
                         </div>
                       </div>
                       <div className="px-4 py-3 bg-green-50 border-t border-green-100">
                         <p className="text-xs font-semibold text-green-700 mb-0.5">Respuesta correcta:</p>
-                        <p className="text-sm text-green-800">{c?.respuesta_correcta || '—'}</p>
+                        <MathText text={c?.respuesta_correcta || '—'} className="text-sm text-green-800" />
                       </div>
                       {p.opciones && p.opciones.length > 0 && (
                         <div className="px-4 py-2 border-t border-gray-100 space-y-1">
                           {p.opciones.map((opt, j) => (
-                            <p key={j} className={`text-xs ${c?.respuesta_correcta && opt.includes(c.respuesta_correcta) ? 'text-green-700 font-semibold' : 'text-gray-600'}`}>
-                              {opt}
-                            </p>
+                            <MathText key={j} text={opt} className={`text-xs ${c?.respuesta_correcta && opt.includes(c.respuesta_correcta) ? 'text-green-700 font-semibold' : 'text-gray-600'}`} />
                           ))}
                         </div>
                       )}
@@ -374,7 +391,7 @@ export default function ProfesorExamenes({ materiaId: propMateriaId, embedded = 
                   <div key={i} className="flex items-start gap-3 p-3 rounded-lg bg-gray-50 border border-gray-200">
                     <span className="flex-shrink-0 w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 font-bold text-sm flex items-center justify-center">{c.numero}</span>
                     <div>
-                      <p className="text-sm text-gray-800">{c.respuesta_correcta}</p>
+                      <MathText text={c.respuesta_correcta} className="text-sm text-gray-800" />
                       <p className="text-xs text-gray-400">{c.puntos} pts</p>
                     </div>
                   </div>
@@ -524,6 +541,7 @@ export default function ProfesorExamenes({ materiaId: propMateriaId, embedded = 
 function EditPreguntaCard({ pregunta, index, updatePregunta, updateOpcion, addOpcion, removeOpcion }) {
   const [open, setOpen] = useState(false);
   const p = pregunta;
+  const enunciado = p.enunciado || p.pregunta || '';
   return (
     <div className="border border-gray-200 rounded-xl overflow-hidden">
       <button onClick={() => setOpen(!open)}
@@ -532,7 +550,7 @@ function EditPreguntaCard({ pregunta, index, updatePregunta, updateOpcion, addOp
           <span className="flex-shrink-0 w-7 h-7 rounded-full bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center justify-center">
             {p.numero}
           </span>
-          <span className="text-sm text-gray-800 truncate">{p.enunciado?.slice(0, 80) || 'Sin enunciado'}</span>
+          <span className="text-sm text-gray-800 truncate">{enunciado.slice(0, 80) || 'Sin enunciado'}</span>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <span className="text-xs text-gray-400">{p.tipo} · {p.puntos} pts</span>
@@ -543,7 +561,7 @@ function EditPreguntaCard({ pregunta, index, updatePregunta, updateOpcion, addOp
         <div className="p-4 space-y-3">
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Enunciado</label>
-            <textarea value={p.enunciado || ''}
+            <textarea value={enunciado}
               onChange={e => updatePregunta(index, 'enunciado', e.target.value)}
               className="input-field text-sm h-20" />
           </div>

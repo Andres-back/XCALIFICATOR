@@ -36,7 +36,7 @@ export default function MateriaCalificaciones({ materiaId }) {
         await Promise.all(
           exRes.data.map(async (ex) => {
             try {
-              const nRes = await api.get(`/examenes/${ex.id}/notas`);
+              const nRes = await api.get(`/examenes/notas/examen/${ex.id}`);
               notasMap[ex.id] = nRes.data;
             } catch {
               notasMap[ex.id] = [];
