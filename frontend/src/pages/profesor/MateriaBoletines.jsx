@@ -8,6 +8,16 @@ import {
 } from 'lucide-react';
 import EmptyState from '../../components/EmptyState';
 
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export default function MateriaBoletines({ materiaId, materiaNombre }) {
   const [periodos, setPeriodos] = useState([]);
   const [selectedPeriodo, setSelectedPeriodo] = useState('');
@@ -77,7 +87,7 @@ export default function MateriaBoletines({ materiaId, materiaNombre }) {
   const printAll = () => {
     if (filtered.length === 0) return;
     const pages = filtered.map(b => buildBoletinPageHtml(b, materiaNombre, periodoNombre)).join('<div style="page-break-after:always"></div>');
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Boletines - ${materiaNombre}</title>
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Boletines - ${escapeHtml(materiaNombre || '')}</title>
       <style>
         @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -335,6 +345,9 @@ function buildBoletinPageHtml(b, materiaNombre, periodoNombre) {
   const color = b.nota_final >= 4.0 ? '#16a34a' : b.nota_final >= 3.0 ? '#2563eb' : '#dc2626';
   const estado = b.nota_final >= 3.0 ? 'APROBADO' : 'REPROBADO';
   const estadoColor = b.nota_final >= 3.0 ? '#16a34a' : '#dc2626';
+  const safeEstudianteNombre = escapeHtml(b.estudiante_nombre || 'N/A');
+  const safeMateriaNombre = escapeHtml(materiaNombre || b.materia_nombre || '');
+  const safePeriodoNombre = escapeHtml(periodoNombre || b.periodo_nombre || '');
 
   let actRows = '';
   if (b.desglose_json?.actividades) {
@@ -342,9 +355,11 @@ function buildBoletinPageHtml(b, materiaNombre, periodoNombre) {
       const n = a.nota != null ? a.nota.toFixed(1) : '—';
       const nColor = a.nota != null ? (a.nota >= 3.0 ? '#16a34a' : '#dc2626') : '#9ca3af';
       const pct = a.porcentaje ? `${a.porcentaje}%` : '—';
+      const tipo = escapeHtml(a.tipo || '');
+      const tituloActividad = escapeHtml(a.titulo || '');
       return `<tr>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-transform:capitalize">${a.tipo}</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb">${a.titulo || ''}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-transform:capitalize">${tipo}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb">${tituloActividad}</td>
         <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:center;color:#6b7280">${pct}</td>
         <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:center;font-weight:600;color:${nColor}">${n}</td>
       </tr>`;
@@ -354,7 +369,7 @@ function buildBoletinPageHtml(b, materiaNombre, periodoNombre) {
   let configHtml = '';
   if (b.desglose_json?.config && Object.keys(b.desglose_json.config).length > 0) {
     const tags = Object.entries(b.desglose_json.config).map(([t, p]) =>
-      `<span style="display:inline-block;padding:2px 10px;background:#f3f4f6;border-radius:9999px;font-size:11px;text-transform:capitalize;margin-right:6px">${t}: ${p}%</span>`
+      `<span style="display:inline-block;padding:2px 10px;background:#f3f4f6;border-radius:9999px;font-size:11px;text-transform:capitalize;margin-right:6px">${escapeHtml(t)}: ${p}%</span>`
     ).join('');
     configHtml = `<div style="margin-bottom:16px">${tags}</div>`;
   }
@@ -368,11 +383,11 @@ function buildBoletinPageHtml(b, materiaNombre, periodoNombre) {
 
       <table style="width:100%;margin-bottom:20px;font-size:13px">
         <tr>
-          <td style="padding:4px 0"><strong>Estudiante:</strong> ${b.estudiante_nombre || 'N/A'}</td>
-          <td style="padding:4px 0;text-align:right"><strong>Materia:</strong> ${materiaNombre || b.materia_nombre || ''}</td>
+          <td style="padding:4px 0"><strong>Estudiante:</strong> ${safeEstudianteNombre}</td>
+          <td style="padding:4px 0;text-align:right"><strong>Materia:</strong> ${safeMateriaNombre}</td>
         </tr>
         <tr>
-          <td style="padding:4px 0"><strong>Período:</strong> ${periodoNombre || b.periodo_nombre || ''}</td>
+          <td style="padding:4px 0"><strong>Período:</strong> ${safePeriodoNombre}</td>
           <td style="padding:4px 0;text-align:right"><strong>Fecha:</strong> ${b.publicado_at ? new Date(b.publicado_at).toLocaleDateString('es-CO') : new Date().toLocaleDateString('es-CO')}</td>
         </tr>
       </table>
@@ -438,7 +453,7 @@ function buildBoletinPageHtml(b, materiaNombre, periodoNombre) {
 
 function buildBoletinHtml(b, materiaNombre, periodoNombre) {
   return `<!DOCTYPE html><html><head><meta charset="UTF-8">
-    <title>Boletín - ${b.estudiante_nombre}</title>
+    <title>Boletín - ${escapeHtml(b.estudiante_nombre || 'Estudiante')}</title>
     <style>
       @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap');
       * { margin: 0; padding: 0; box-sizing: border-box; }

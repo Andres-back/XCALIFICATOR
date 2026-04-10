@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>xCalificator | Flujo Visual</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="bg-shape shape-a"></div>
+    <div class="bg-shape shape-b"></div>
+    <div class="bg-shape shape-c"></div>
+
+    <header class="topbar">
+      <div class="brand">
+        <p class="eyebrow">xCalificator</p>
+        <h1>Flujo Visual de Sistema</h1>
+      </div>
+      <nav class="quick-nav" aria-label="Secciones principales">
+        <button data-target="overview">Vista</button>
+        <button data-target="architecture">Arquitectura</button>
+        <button data-target="flows">Flujos</button>
+        <button data-target="roles">Roles</button>
+        <button data-target="endpoints">Endpoints</button>
+        <button data-target="entities">Entidades</button>
+        <button data-target="failures">Fallos</button>
+        <button data-target="improvements">Mejoras</button>
+        <button data-target="checklist">Checklist</button>
+        <button data-target="runbook">Runbook</button>
+        <button data-target="changes">Cambios</button>
+      </nav>
+    </header>
+
+    <main>
+      <section id="overview" class="panel reveal">
+        <div>
+          <p class="eyebrow">Objetivo</p>
+          <h2>Entender rapido como se mueve la informacion</h2>
+          <p>
+            Este sitio resume como viajan requests, datos y errores entre frontend,
+            nginx, backend, base de datos y servicios externos. Sirve para depurar,
+            prevenir fallos y priorizar mejoras sin tocar logica productiva.
+          </p>
+          <div class="chip-row">
+            <span>FastAPI</span>
+            <span>React + Vite</span>
+            <span>PostgreSQL</span>
+            <span>Redis</span>
+            <span>PaddleOCR</span>
+            <span>Groq LLM</span>
+          </div>
+          <div class="kpi-grid" id="overview-kpis"></div>
+        </div>
+        <div class="pipeline-card">
+          <p class="mono">pipeline principal</p>
+          <div class="pipeline">
+            <div class="stage">UI<br />Frontend</div>
+            <div class="arrow">-></div>
+            <div class="stage">Gateway<br />Nginx</div>
+            <div class="arrow">-></div>
+            <div class="stage">Core API<br />FastAPI</div>
+            <div class="arrow">-></div>
+            <div class="stage">Datos + IA<br />DB/Redis/OCR/Groq</div>
+          </div>
+          <p class="mono subtle">latencia total depende de DB, OCR y LLM</p>
+        </div>
+      </section>
+
+      <section id="architecture" class="panel reveal">
+        <div class="section-head">
+          <p class="eyebrow">Mapa tecnico</p>
+          <h2>Arquitectura runtime en una sola vista</h2>
+        </div>
+        <p class="map-intro">
+          Vista por carriles: entrada de trafico, nucleo de negocio, estado de datos y
+          servicios externos. El objetivo es ver rapido donde escalar primero.
+        </p>
+        <div class="graph-shell" id="graph-shell">
+          <div id="architecture-lanes" class="architecture-lanes"></div>
+          <div id="critical-path" class="critical-path"></div>
+        </div>
+      </section>
+
+      <section id="flows" class="panel reveal">
+        <div class="section-head">
+          <p class="eyebrow">Flujos criticos</p>
+          <h2>Explorador de procesos paso a paso (backend + frontend)</h2>
+        </div>
+        <div id="flow-tabs" class="flow-tabs" role="tablist"></div>
+        <article id="flow-detail" class="flow-detail"></article>
+      </section>
+
+      <section id="roles" class="panel reveal">
+        <div class="section-head">
+          <p class="eyebrow">Experiencia por rol</p>
+          <h2>Que hace cada perfil y por donde pasa</h2>
+        </div>
+        <div id="role-tabs" class="flow-tabs" role="tablist"></div>
+        <article id="role-detail" class="flow-detail"></article>
+      </section>
+
+      <section id="endpoints" class="panel reveal">
+        <div class="section-head">
+          <p class="eyebrow">Mapa API</p>
+          <h2>Routers, endpoints clave y dependencias</h2>
+        </div>
+        <div class="router-tools">
+          <label>
+            Buscar endpoint o router
+            <input id="endpoint-search" type="text" placeholder="ej: /reportes, auth, grading" />
+          </label>
+        </div>
+        <div id="router-grid" class="router-grid"></div>
+      </section>
+
+      <section id="entities" class="panel reveal">
+        <div class="section-head">
+          <p class="eyebrow">Modelo de datos</p>
+          <h2>Entidades, responsabilidades y puntos de riesgo</h2>
+        </div>
+        <div id="entity-grid" class="entity-grid"></div>
+      </section>
+
+      <section id="failures" class="panel reveal">
+        <div class="section-head">
+          <p class="eyebrow">Riesgo operativo</p>
+          <h2>Fallos frecuentes, sintomas y lectura rapida</h2>
+        </div>
+        <div class="filters">
+          <label>
+            Severidad
+            <select id="severity-filter">
+              <option value="all">Todas</option>
+              <option value="alta">Alta</option>
+              <option value="media">Media</option>
+              <option value="baja">Baja</option>
+            </select>
+          </label>
+          <label>
+            Capa
+            <select id="layer-filter">
+              <option value="all">Todas</option>
+              <option value="frontend">Frontend</option>
+              <option value="nginx">Nginx</option>
+              <option value="backend">Backend</option>
+              <option value="db">DB/Redis</option>
+              <option value="externo">Externo</option>
+            </select>
+          </label>
+        </div>
+        <div id="failure-grid" class="failure-grid"></div>
+      </section>
+
+      <section id="improvements" class="panel reveal">
+        <div class="section-head">
+          <p class="eyebrow">Roadmap tactico</p>
+          <h2>Mejoras sugeridas por horizonte de tiempo</h2>
+        </div>
+        <div id="improvement-columns" class="improvement-columns"></div>
+      </section>
+
+      <section id="checklist" class="panel reveal">
+        <div class="section-head">
+          <p class="eyebrow">Checklist de remediacion</p>
+          <h2>Que ya se reparo y que falta para escalar con menos riesgo</h2>
+        </div>
+        <div id="checklist-summary" class="checklist-summary"></div>
+        <div id="checklist-grid" class="checklist-grid"></div>
+      </section>
+
+      <section id="runbook" class="panel reveal">
+        <div class="section-head">
+          <p class="eyebrow">Diagnostico guiado</p>
+          <h2>Selecciona un sintoma y sigue el rastro</h2>
+        </div>
+        <div class="runbook-box">
+          <label>
+            Sintoma visible
+            <select id="symptom-select"></select>
+          </label>
+          <div id="symptom-result" class="symptom-result"></div>
+          <div id="diagnostic-commands" class="diagnostic-commands"></div>
+        </div>
+      </section>
+
+      <section id="changes" class="panel reveal">
+        <div class="section-head">
+          <p class="eyebrow">Para empezar cambios</p>
+          <h2>Guia de impacto: donde tocar y que validar</h2>
+        </div>
+        <div id="change-grid" class="change-grid"></div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>
+        Flujo visual generado con lectura del proyecto completo. Solo documentacion
+        visual, sin afectar servicios productivos.
+      </p>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>

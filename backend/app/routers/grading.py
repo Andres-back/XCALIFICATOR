@@ -7,7 +7,7 @@ from sqlalchemy import select
 from app.core.database import get_db
 from app.core.dependencies import require_role
 from app.core.config import get_settings
-from app.models.models import User, Examen, Nota
+from app.models.models import User, Examen, Nota, Materia, Matricula
 from app.services.ocr_service import process_exam_image
 from app.services.groq_service import grade_exam
 from app.schemas.schemas import NotaOut
@@ -15,6 +15,45 @@ from app.schemas.schemas import NotaOut
 router = APIRouter(prefix="/grading", tags=["Calificación Automática"])
 settings = get_settings()
 logger = logging.getLogger(__name__)
+
+ALLOWED_UPLOAD_TYPES = {"image/jpeg", "image/png", "image/jpg", "application/pdf"}
+ALLOWED_UPLOAD_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf"}
+
+
+async def _assert_examen_access(
+    db: AsyncSession,
+    examen_id: str,
+    current_user: User,
+) -> Examen:
+    examen_result = await db.execute(select(Examen).where(Examen.id == examen_id))
+    examen = examen_result.scalar_one_or_none()
+    if not examen:
+        raise HTTPException(status_code=404, detail="Examen no encontrado")
+
+    materia_result = await db.execute(select(Materia).where(Materia.id == examen.materia_id))
+    materia = materia_result.scalar_one_or_none()
+    if not materia:
+        raise HTTPException(status_code=404, detail="Materia no encontrada")
+
+    if current_user.rol == "profesor" and str(materia.profesor_id) != str(current_user.id):
+        raise HTTPException(status_code=403, detail="Sin permiso")
+
+    return examen
+
+
+async def _assert_student_enrolled(
+    db: AsyncSession,
+    materia_id: str,
+    estudiante_id: str,
+) -> None:
+    enrollment_result = await db.execute(
+        select(Matricula.id).where(
+            Matricula.materia_id == materia_id,
+            Matricula.estudiante_id == estudiante_id,
+        )
+    )
+    if not enrollment_result.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="El estudiante no está inscrito en la materia del examen")
 
 # ──────── SMART GRADING HELPERS ────────
 
@@ -134,25 +173,30 @@ async def grade_uploaded_exam(
     if file.size and file.size > settings.MAX_UPLOAD_SIZE:
         raise HTTPException(status_code=400, detail="Archivo muy grande (máx 10MB)")
 
-    allowed_types = {"image/jpeg", "image/png", "image/jpg", "application/pdf"}
-    if file.content_type not in allowed_types:
+    if file.content_type not in ALLOWED_UPLOAD_TYPES:
         raise HTTPException(status_code=400, detail="Tipo de archivo no permitido")
 
-    # Get exam with answer key
-    result = await db.execute(select(Examen).where(Examen.id == examen_id))
-    examen = result.scalar_one_or_none()
-    if not examen:
-        raise HTTPException(status_code=404, detail="Examen no encontrado")
+    # Get exam with answer key and enforce ownership
+    examen = await _assert_examen_access(db, examen_id, current_user)
     if not examen.clave_respuestas:
         raise HTTPException(status_code=400, detail="El examen no tiene clave de respuestas")
 
+    await _assert_student_enrolled(db, str(examen.materia_id), estudiante_id)
+
     # Read file
     file_bytes = await file.read()
+    if len(file_bytes) > settings.MAX_UPLOAD_SIZE:
+        raise HTTPException(status_code=400, detail="Archivo muy grande (máx 10MB)")
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Archivo vacío")
+
     filename = file.filename or "upload.png"
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in ALLOWED_UPLOAD_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Extensión de archivo no permitida")
 
     # Save original file
     file_id = str(uuid.uuid4())
-    ext = os.path.splitext(filename)[1]
     save_path = os.path.join(settings.UPLOAD_DIR, f"{file_id}{ext}")
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
     with open(save_path, "wb") as f:
@@ -267,11 +311,12 @@ async def grade_online_response(
         await db.delete(old_nota)
         await db.flush()
 
-    # Get exam
-    result = await db.execute(select(Examen).where(Examen.id == examen_id))
-    examen = result.scalar_one_or_none()
-    if not examen or not examen.clave_respuestas:
+    # Get exam and enforce ownership
+    examen = await _assert_examen_access(db, examen_id, current_user)
+    if not examen.clave_respuestas:
         raise HTTPException(status_code=404, detail="Examen o clave no encontrada")
+
+    await _assert_student_enrolled(db, str(examen.materia_id), estudiante_id)
 
     # Get student response
     result = await db.execute(

@@ -168,6 +168,14 @@ CREATE TABLE herramientas (
   updated_at       TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- FLAGS GLOBALES DE HERRAMIENTAS (admin habilita/deshabilita tipos)
+CREATE TABLE tool_feature_flags (
+  tipo        VARCHAR(50) PRIMARY KEY,
+  enabled     BOOLEAN NOT NULL DEFAULT TRUE,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_by  UUID REFERENCES users(id) ON DELETE SET NULL
+);
+
 -- ASISTENCIA
 CREATE TABLE asistencia (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -251,6 +259,36 @@ CREATE TABLE chat_sessions (
   inicio           TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- EVIDENCIA DE IMPACTO TESIS
+CREATE TABLE tiempos_evaluacion (
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  profesor_id           UUID REFERENCES users(id) ON DELETE CASCADE,
+  materia_id            UUID REFERENCES materias(id) ON DELETE SET NULL,
+  examen_id             UUID REFERENCES examenes(id) ON DELETE SET NULL,
+  fase                  VARCHAR(20) NOT NULL CHECK (fase IN ('sin_sistema', 'con_sistema')),
+  actividad_tipo        VARCHAR(50) NOT NULL DEFAULT 'examen',
+  grupo_pareado         VARCHAR(120),
+  duracion_minutos      DECIMAL(8,2) NOT NULL CHECK (duracion_minutos > 0),
+  estudiantes_evaluados INTEGER NOT NULL DEFAULT 1 CHECK (estudiantes_evaluados > 0),
+  observacion           TEXT,
+  created_at            TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE encuestas_impacto (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id       UUID REFERENCES users(id) ON DELETE CASCADE,
+  rol           VARCHAR(20) NOT NULL,
+  hito          VARCHAR(50) NOT NULL DEFAULT 'post_uso',
+  claridad      INTEGER NOT NULL CHECK (claridad BETWEEN 1 AND 5),
+  utilidad      INTEGER NOT NULL CHECK (utilidad BETWEEN 1 AND 5),
+  pertinencia   INTEGER NOT NULL CHECK (pertinencia BETWEEN 1 AND 5),
+  satisfaccion  INTEGER CHECK (satisfaccion BETWEEN 1 AND 5),
+  facilidad_uso INTEGER CHECK (facilidad_uso BETWEEN 1 AND 5),
+  comentario    TEXT,
+  consentimiento BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Agregar campo grupo_id y modo_grupal a examenes
 ALTER TABLE examenes ADD COLUMN modo_grupal BOOLEAN DEFAULT FALSE;
 ALTER TABLE examenes ADD COLUMN max_integrantes INTEGER DEFAULT 3;
@@ -271,6 +309,9 @@ CREATE INDEX idx_asistencia_estudiante ON asistencia(estudiante_id);
 CREATE INDEX idx_boletines_estudiante ON boletines(estudiante_id);
 CREATE INDEX idx_boletines_materia_periodo ON boletines(materia_id, periodo_id);
 CREATE INDEX idx_chat_sessions_estudiante_nota ON chat_sessions(estudiante_id, nota_id);
+CREATE INDEX idx_tiempos_eval_profesor ON tiempos_evaluacion(profesor_id, fase);
+CREATE INDEX idx_tiempos_eval_materia ON tiempos_evaluacion(materia_id, actividad_tipo);
+CREATE INDEX idx_encuestas_hito_rol ON encuestas_impacto(hito, rol);
 
 -- Crear usuario admin por defecto (password: Admin123!)
 INSERT INTO users (nombre, apellido, documento, correo, password_hash, rol)

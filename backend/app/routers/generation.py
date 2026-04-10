@@ -4,6 +4,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.database import get_db
 from app.core.dependencies import require_role
+from app.core.tool_flags import is_tool_enabled
+from app.core.latex_utils import normalize_latex_payload
+from app.core.math_exam_validator import infer_correct_option_for_math_question
 from app.models.models import User, Examen, Materia
 from app.schemas.schemas import ExamGenerationRequest, ExamenProfesorOut
 from app.services.groq_service import generate_exam
@@ -17,8 +20,68 @@ import copy
 router = APIRouter(prefix="/generate", tags=["Generación de Exámenes"])
 
 
+async def _assert_materia_access(
+    db: AsyncSession,
+    materia_id: str,
+    current_user: User,
+) -> Materia:
+    result = await db.execute(select(Materia).where(Materia.id == materia_id))
+    materia = result.scalar_one_or_none()
+    if not materia:
+        raise HTTPException(status_code=404, detail="Materia no encontrada")
+
+    if current_user.rol == "profesor" and str(materia.profesor_id) != str(current_user.id):
+        raise HTTPException(status_code=403, detail="Sin permiso")
+
+    return materia
+
+
+async def _assert_examen_access(
+    db: AsyncSession,
+    examen_id: str,
+    current_user: User,
+) -> Examen:
+    result = await db.execute(select(Examen).where(Examen.id == examen_id))
+    examen = result.scalar_one_or_none()
+    if not examen:
+        raise HTTPException(status_code=404, detail="Examen no encontrado")
+
+    await _assert_materia_access(db, str(examen.materia_id), current_user)
+    return examen
+
+
 def _strip_accents(s: str) -> str:
     return ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
+
+
+def _normalize_question_statements(content: dict | None) -> dict | None:
+    """Ensure each question exposes both enunciado and pregunta keys for compatibility."""
+    if not isinstance(content, dict):
+        return content
+
+    preguntas = content.get("preguntas")
+    if not isinstance(preguntas, list):
+        return content
+
+    normalized = []
+    for item in preguntas:
+        if not isinstance(item, dict):
+            normalized.append(item)
+            continue
+
+        q = dict(item)
+        enunciado = q.get("enunciado") or q.get("pregunta") or q.get("texto") or q.get("statement")
+        if isinstance(enunciado, str) and enunciado.strip():
+            normalized_enunciado = normalize_latex_payload(enunciado)
+            q["enunciado"] = normalized_enunciado
+            q["pregunta"] = normalized_enunciado
+
+        if isinstance(q.get("opciones"), list):
+            q["opciones"] = normalize_latex_payload(q["opciones"])
+        normalized.append(q)
+
+    content["preguntas"] = normalized
+    return content
 
 
 # ─────────────────────────────────────────────────
@@ -293,12 +356,50 @@ def _build_crucigrama_grid(pistas_h: list[dict], pistas_v: list[dict]) -> dict:
             else:
                 grid[(row + k, col)] = word[k]
 
+    def _grid_bounds(grid: dict) -> tuple[int, int, int, int] | None:
+        if not grid:
+            return None
+        rs = [r for r, c in grid]
+        cs = [c for r, c in grid]
+        return min(rs), max(rs), min(cs), max(cs)
+
+    def _word_bounds(word: str, d: str, row: int, col: int) -> tuple[int, int, int, int]:
+        if d == "h":
+            return row, row, col, col + len(word) - 1
+        return row, row + len(word) - 1, col, col
+
+    def _merge_bounds(a: tuple[int, int, int, int] | None, b: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+        if a is None:
+            return b
+        return (
+            min(a[0], b[0]),
+            max(a[1], b[1]),
+            min(a[2], b[2]),
+            max(a[3], b[3]),
+        )
+
+    # Target orientation ratio based on incoming H/V hints.
+    h_hint = sum(1 for p in (pistas_h or []) if isinstance(p, dict) and _norm(p.get("respuesta", "")))
+    v_hint = sum(1 for p in (pistas_v or []) if isinstance(p, dict) and _norm(p.get("respuesta", "")))
+    total_hint = h_hint + v_hint
+
+    if len(entries) <= 1:
+        target_h = 1
+    elif total_hint > 0:
+        target_h = round(len(entries) * (h_hint / total_hint))
+    else:
+        target_h = len(entries) // 2
+
+    if len(entries) > 1:
+        target_h = max(1, min(len(entries) - 1, target_h))
+    target_v = max(0, len(entries) - target_h)
+
     # ── Run multiple attempts, keep the best ───────────────────────
     best_grid = None
     best_placed = None
     best_score = -1
 
-    for attempt in range(10):
+    for attempt in range(24):
         grid: dict = {}
         placed: list[dict] = []
 
@@ -309,11 +410,16 @@ def _build_crucigrama_grid(pistas_h: list[dict], pistas_v: list[dict]) -> dict:
         else:
             order.sort(key=lambda i: -len(entries[i]["word"]) + random.randint(-3, 3))
 
-        # Place first word horizontally at origin
+        # Place first word at origin; alternate direction between attempts
         first = entries[order[0]]
-        _do_place(grid, first["word"], "h", 0, 0)
+        start_dir = "h" if attempt % 2 == 0 else "v"
+        _do_place(grid, first["word"], start_dir, 0, 0)
         placed.append({"word": first["word"], "pista": first["pista"],
-                        "dir": "h", "row": 0, "col": 0})
+                "dir": start_dir, "row": 0, "col": 0})
+
+        h_count = 1 if start_dir == "h" else 0
+        v_count = 1 if start_dir == "v" else 0
+        total_crossings = 0
 
         remaining = order[1:]
 
@@ -328,7 +434,9 @@ def _build_crucigrama_grid(pistas_h: list[dict], pistas_v: list[dict]) -> dict:
                 entry = entries[idx]
                 w = entry["word"]
                 best_pos = None
-                best_cross = 0
+                best_eval = None
+
+                bounds = _grid_bounds(grid)
 
                 for p in placed:
                     pw, pd = p["word"], p["dir"]
@@ -344,15 +452,40 @@ def _build_crucigrama_grid(pistas_h: list[dict], pistas_v: list[dict]) -> dict:
                                 nd, nr, nc = "h", pr + j, pc - i
                             if _can_place(grid, w, nd, nr, nc):
                                 sc = _crossings(grid, w, nd, nr, nc)
-                                if sc > best_cross:
-                                    best_cross = sc
-                                    best_pos = (nd, nr, nc)
+                                if sc <= 0:
+                                    continue
+
+                                h_after = h_count + (1 if nd == "h" else 0)
+                                v_after = v_count + (1 if nd == "v" else 0)
+                                balance_pen = abs(h_after - target_h) + abs(v_after - target_v)
+
+                                merged = _merge_bounds(bounds, _word_bounds(w, nd, nr, nc))
+                                height = merged[1] - merged[0] + 1
+                                width = merged[3] - merged[2] + 1
+                                area = height * width
+                                shape_pen = abs(height - width)
+
+                                # Prefer more crossings, compact shape, and H/V balance.
+                                eval_score = (
+                                    sc * 100
+                                    - balance_pen * 8
+                                    - area * 0.7
+                                    - shape_pen * 1.4
+                                    + random.random() * 0.01
+                                )
+
+                                if best_eval is None or eval_score > best_eval:
+                                    best_eval = eval_score
+                                    best_pos = (nd, nr, nc, sc)
 
                 if best_pos:
-                    d, r, c = best_pos
+                    d, r, c, cross = best_pos
                     _do_place(grid, w, d, r, c)
                     placed.append({"word": w, "pista": entry["pista"],
                                    "dir": d, "row": r, "col": c})
+                    h_count += 1 if d == "h" else 0
+                    v_count += 1 if d == "v" else 0
+                    total_crossings += cross
                     progress = True
                 else:
                     new_remaining.append(idx)
@@ -361,39 +494,35 @@ def _build_crucigrama_grid(pistas_h: list[dict], pistas_v: list[dict]) -> dict:
             if not progress:
                 break
 
-        # ── Force-place words that couldn't intersect ──────────────
-        force_count = len(remaining)
-        for idx in remaining:
-            entry = entries[idx]
-            w = entry["word"]
-            if grid:
-                max_r = max(r for r, c in grid)
-                min_c = min(c for r, c in grid)
-            else:
-                max_r = min_c = 0
-            nr = max_r + 2
-            ok = False
-            for ct in range(min_c, min_c + 40):
-                if _can_place(grid, w, "h", nr, ct):
-                    _do_place(grid, w, "h", nr, ct)
-                    placed.append({"word": w, "pista": entry["pista"],
-                                   "dir": "h", "row": nr, "col": ct})
-                    ok = True
-                    break
-            if not ok:
-                _do_place(grid, w, "h", nr, min_c)
-                placed.append({"word": w, "pista": entry["pista"],
-                               "dir": "h", "row": nr, "col": min_c})
+        unplaced_count = len(remaining)
+        bounds = _grid_bounds(grid)
+        if bounds:
+            height = bounds[1] - bounds[0] + 1
+            width = bounds[3] - bounds[2] + 1
+            area = height * width
+            shape_pen = abs(height - width)
+        else:
+            area = 0
+            shape_pen = 0
 
-        # Score: connected words minus penalty for forced
-        score = (len(entries) - force_count) * 100 - force_count * 50
+        imbalance = abs(h_count - target_h) + abs(v_count - target_v)
+
+        # Strongly prefer connected, compact, balanced layouts.
+        score = (
+            len(placed) * 1000
+            + total_crossings * 50
+            - unplaced_count * 250
+            - area * 3
+            - shape_pen * 8
+            - imbalance * 30
+        )
         if score > best_score:
             best_score = score
             best_grid = dict(grid)
             best_placed = list(placed)
 
-        if force_count == 0:
-            break  # Perfect layout, stop
+        if unplaced_count == 0 and imbalance <= 1:
+            break  # Excellent layout, stop
 
     grid = best_grid or {}
     placed = best_placed or []
@@ -435,6 +564,10 @@ def _build_crucigrama_grid(pistas_h: list[dict], pistas_v: list[dict]) -> dict:
     for p in placed:
         nr, nc = p["row"] - min_r, p["col"] - min_c
         num = cell_number.get((nr, nc), 0)
+        if num == 0:
+            num = num_counter
+            cell_number[(nr, nc)] = num_counter
+            num_counter += 1
         entry = {
             "numero": num,
             "pista": p["pista"],
@@ -487,15 +620,14 @@ async def get_exam_answers(
     current_user: User = Depends(require_role("profesor", "admin")),
 ):
     """Get the answer key for an exam (professor only)."""
-    result = await db.execute(select(Examen).where(Examen.id == examen_id))
-    examen = result.scalar_one_or_none()
-    if not examen:
-        raise HTTPException(status_code=404, detail="Examen no encontrado")
+    examen = await _assert_examen_access(db, examen_id, current_user)
+    content = _normalize_question_statements(copy.deepcopy(examen.contenido_json))
+    content = normalize_latex_payload(content)
     return {
         "examen_id": str(examen.id),
         "titulo": examen.titulo,
-        "clave_respuestas": examen.clave_respuestas,
-        "contenido_json": examen.contenido_json,
+        "clave_respuestas": normalize_latex_payload(examen.clave_respuestas),
+        "contenido_json": content,
     }
 
 
@@ -506,13 +638,10 @@ async def generate_exam_endpoint(
     current_user: User = Depends(require_role("profesor", "admin")),
 ):
     """Generate exam using LLM and save to database."""
-    # Verify materia
-    result = await db.execute(select(Materia).where(Materia.id == data.materia_id))
-    materia = result.scalar_one_or_none()
-    if not materia:
-        raise HTTPException(status_code=404, detail="Materia no encontrada")
-    if materia.profesor_id != current_user.id and current_user.rol != "admin":
-        raise HTTPException(status_code=403, detail="Sin permiso")
+    if not await is_tool_enabled(db, "examen"):
+        raise HTTPException(status_code=403, detail="La herramienta 'Examen' está deshabilitada por administración")
+
+    await _assert_materia_access(db, str(data.materia_id), current_user)
 
     # Generate with LLM
     try:
@@ -523,6 +652,7 @@ async def generate_exam_endpoint(
             contenido_base=data.contenido_base or "",
             grado=data.grado or "",
         )
+        exam_data = normalize_latex_payload(exam_data)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generando examen: {str(e)}")
 
@@ -531,6 +661,10 @@ async def generate_exam_endpoint(
     clave_respuestas = []
 
     for p in exam_data.get("preguntas", []):
+        if isinstance(p, dict):
+            inferred = infer_correct_option_for_math_question(p)
+            if inferred:
+                p["respuesta_correcta"] = inferred
         pregunta_limpia = {k: v for k, v in p.items() if k != "respuesta_correcta"}
         preguntas_sin_respuesta.append(pregunta_limpia)
         clave_respuestas.append({
@@ -573,12 +707,12 @@ async def download_exam_pdf(
     current_user: User = Depends(require_role("profesor", "admin")),
 ):
     """Download exam as PDF."""
-    result = await db.execute(select(Examen).where(Examen.id == examen_id))
-    examen = result.scalar_one_or_none()
-    if not examen or not examen.contenido_json:
+    examen = await _assert_examen_access(db, examen_id, current_user)
+    if not examen.contenido_json:
         raise HTTPException(status_code=404, detail="Examen no encontrado")
 
-    content = dict(examen.contenido_json)
+    content = normalize_latex_payload(dict(examen.contenido_json))
+    content = _normalize_question_statements(content)
 
     # Merge answers back into content when include_answers is True
     if include_answers and examen.clave_respuestas:
@@ -610,12 +744,12 @@ async def preview_exam_pdf(
     current_user: User = Depends(require_role("profesor", "admin")),
 ):
     """Preview exam as PDF inline in the browser."""
-    result = await db.execute(select(Examen).where(Examen.id == examen_id))
-    examen = result.scalar_one_or_none()
-    if not examen or not examen.contenido_json:
+    examen = await _assert_examen_access(db, examen_id, current_user)
+    if not examen.contenido_json:
         raise HTTPException(status_code=404, detail="Examen no encontrado")
 
-    content = dict(examen.contenido_json)
+    content = normalize_latex_payload(dict(examen.contenido_json))
+    content = _normalize_question_statements(content)
 
     # Merge answers back into content when include_answers is True
     if include_answers and examen.clave_respuestas:
@@ -646,13 +780,13 @@ async def download_exam_pdf_student(
     current_user: User = Depends(require_role("profesor", "admin")),
 ):
     """Download student version (no answers)."""
-    result = await db.execute(select(Examen).where(Examen.id == examen_id))
-    examen = result.scalar_one_or_none()
-    if not examen or not examen.contenido_json:
+    examen = await _assert_examen_access(db, examen_id, current_user)
+    if not examen.contenido_json:
         raise HTTPException(status_code=404, detail="Examen no encontrado")
 
     # Remove answers from content
-    content = dict(examen.contenido_json)
+    content = normalize_latex_payload(dict(examen.contenido_json))
+    content = _normalize_question_statements(content)
     if "preguntas" in content:
         content["preguntas"] = [
             {k: v for k, v in p.items() if k != "respuesta_correcta"}

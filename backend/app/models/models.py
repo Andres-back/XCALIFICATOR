@@ -347,3 +347,42 @@ class ChatSession(Base):
     cerrada = Column(Boolean, default=False)
     preguntas_usadas = Column(Integer, default=0)
     inicio = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class TiempoEvaluacion(Base):
+    __tablename__ = "tiempos_evaluacion"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    profesor_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    materia_id = Column(UUID(as_uuid=True), ForeignKey("materias.id", ondelete="SET NULL"), nullable=True)
+    examen_id = Column(UUID(as_uuid=True), ForeignKey("examenes.id", ondelete="SET NULL"), nullable=True)
+    fase = Column(String(20), nullable=False)  # sin_sistema | con_sistema
+    actividad_tipo = Column(String(50), nullable=False, default="examen")
+    grupo_pareado = Column(String(120), nullable=True)
+    duracion_minutos = Column(Numeric(8, 2), nullable=False)
+    estudiantes_evaluados = Column(Integer, nullable=False, default=1)
+    observacion = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    profesor = relationship("User")
+    materia = relationship("Materia")
+    examen = relationship("Examen")
+
+
+class EncuestaImpacto(Base):
+    __tablename__ = "encuestas_impacto"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    rol = Column(String(20), nullable=False)
+    hito = Column(String(50), nullable=False, default="post_uso")
+    claridad = Column(Integer, nullable=False)
+    utilidad = Column(Integer, nullable=False)
+    pertinencia = Column(Integer, nullable=False)
+    satisfaccion = Column(Integer, nullable=True)
+    facilidad_uso = Column(Integer, nullable=True)
+    comentario = Column(Text, nullable=True)
+    consentimiento = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    user = relationship("User")

@@ -12,8 +12,8 @@
     "@jaredreisinger/react-crossword": "^5.2.0",
     "@react-oauth/google": "^0.12.1",
     "axios": "^1.7.5",
-    "styled-components": "^5.3.11",
     "date-fns": "^3.6.0",
+    "dompurify": "^3.3.3",
     "katex": "^0.16.28",
     "lucide-react": "^0.441.0",
     "react": "^18.3.1",
@@ -22,6 +22,8 @@
     "react-hot-toast": "^2.4.1",
     "react-router-dom": "^6.26.0",
     "recharts": "^3.7.0",
+    "styled-components": "^5.3.11",
+    "xlsx": "^0.18.5",
     "zustand": "^4.5.5"
   },
   "devDependencies": {

@@ -1,6 +1,16 @@
 import { useState, useCallback } from 'react';
 import { BookOpen, Star, Users, Download, Printer, Palette, ImageIcon, RefreshCw, Paintbrush, Sun } from 'lucide-react';
 
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 /**
  * Educational Story (Cuento) display component.
  * Supports dual images: full-color illustration + B&W coloring page.
@@ -58,9 +68,15 @@ export default function Cuento({ cuento, titulo }) {
   /* ── Print entire cuento (uses color illustration) ── */
   const handlePrint = () => {
     const imgUrl = effectiveColorUrl || effectiveBWUrl;
+    const safeTitle = escapeHtml(titulo || 'Cuento');
+    const safePersonajes = personajes.map((p) => escapeHtml(p)).join(', ');
+    const safeParagraphs = paragraphs.map((p) => `<p>${escapeHtml(p)}</p>`).join('');
+    const safeMoraleja = escapeHtml(moraleja);
+    const safeImgUrl = imgUrl ? escapeHtml(imgUrl) : '';
+
     const pw = window.open('', '_blank');
     if (!pw) return;
-    pw.document.write(`<!DOCTYPE html><html><head><title>${titulo || 'Cuento'}</title>
+    pw.document.write(`<!DOCTYPE html><html><head><title>${safeTitle}</title>
 <style>
   body{font-family:Georgia,serif;max-width:700px;margin:40px auto;padding:20px;line-height:1.8;color:#333}
   h1{text-align:center;color:#4F46E5;font-size:28px;margin-bottom:30px}
@@ -72,11 +88,11 @@ export default function Cuento({ cuento, titulo }) {
   .personajes{text-align:center;margin:15px 0;font-size:14px;color:#6B7280}
   @media print{body{margin:20px}}
 </style></head><body>
-  <h1>${titulo || 'Cuento'}</h1>
-  ${personajes.length ? `<p class="personajes">Personajes: ${personajes.join(', ')}</p>` : ''}
-  ${imgUrl ? `<div class="img-c"><img src="${imgUrl}" alt="Ilustración" /></div>` : ''}
-  ${paragraphs.map(p => `<p>${p}</p>`).join('')}
-  <div class="moraleja"><strong>✨ Moraleja:</strong> ${moraleja}</div>
+  <h1>${safeTitle}</h1>
+  ${personajes.length ? `<p class="personajes">Personajes: ${safePersonajes}</p>` : ''}
+  ${imgUrl ? `<div class="img-c"><img src="${safeImgUrl}" alt="Ilustración" /></div>` : ''}
+  ${safeParagraphs}
+  <div class="moraleja"><strong>✨ Moraleja:</strong> ${safeMoraleja}</div>
 </body></html>`);
     pw.document.close();
     if (imgUrl) {
@@ -91,9 +107,12 @@ export default function Cuento({ cuento, titulo }) {
   const handlePrintColoringPage = () => {
     const imgUrl = effectiveBWUrl || effectiveColorUrl;
     if (!imgUrl) return;
+    const safeTitle = escapeHtml(titulo || 'Página para colorear');
+    const safeImgUrl = escapeHtml(imgUrl);
+
     const pw = window.open('', '_blank');
     if (!pw) return;
-    pw.document.write(`<!DOCTYPE html><html><head><title>Página para Colorear - ${titulo || 'Cuento'}</title>
+    pw.document.write(`<!DOCTYPE html><html><head><title>Página para Colorear - ${safeTitle}</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   html,body{width:100%;height:100%}
@@ -102,8 +121,8 @@ export default function Cuento({ cuento, titulo }) {
   img{max-width:100%;max-height:calc(100vh - 60px);object-fit:contain;border-radius:8px}
   @media print{body{padding:5mm}h2{font-size:20px}}
 </style></head><body>
-  <h2>🎨 ${titulo || 'Página para colorear'}</h2>
-  <img src="${imgUrl}" alt="Página para colorear" />
+  <h2>🎨 ${safeTitle}</h2>
+  <img src="${safeImgUrl}" alt="Página para colorear" />
 </body></html>`);
     pw.document.close();
     const img = new Image();

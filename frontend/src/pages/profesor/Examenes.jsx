@@ -100,7 +100,12 @@ export default function ProfesorExamenes({ materiaId: propMateriaId, embedded = 
       const d = res.data;
       const preguntas = (d.contenido_json?.preguntas || []).map(p => {
         const c = (d.clave_respuestas?.preguntas || []).find(c => c.numero === p.numero);
-        return { ...p, respuesta_correcta: c?.respuesta_correcta || '', puntos: c?.puntos || 1.0 };
+        return {
+          ...p,
+          enunciado: p.enunciado || p.pregunta || p.texto || p.statement || '',
+          respuesta_correcta: c?.respuesta_correcta || '',
+          puntos: c?.puntos || 1.0,
+        };
       });
       setEditModal({
         show: true, saving: false,
@@ -162,7 +167,14 @@ export default function ProfesorExamenes({ materiaId: propMateriaId, embedded = 
     const ex = editModal.examen;
     setEditModal(prev => ({ ...prev, saving: true }));
     try {
-      const preguntas_limpio = ex.preguntas.map(({ respuesta_correcta, puntos, ...rest }) => rest);
+      const preguntas_limpio = ex.preguntas.map(({ respuesta_correcta, puntos, ...rest }) => {
+        const enunciado = (rest.enunciado || rest.pregunta || '').trim();
+        return {
+          ...rest,
+          enunciado,
+          pregunta: enunciado,
+        };
+      });
       const clave_preguntas = ex.preguntas.map(p => ({
         numero: p.numero, respuesta_correcta: p.respuesta_correcta || '', puntos: parseFloat(p.puntos) || 1.0,
       }));
@@ -358,7 +370,7 @@ export default function ProfesorExamenes({ materiaId: propMateriaId, embedded = 
                           {p.numero}
                         </span>
                         <div className="flex-1 min-w-0">
-                          <MathText text={p.enunciado} className="text-sm text-gray-800 font-medium" />
+                          <MathText text={p.enunciado || p.pregunta || 'Sin enunciado'} className="text-sm text-gray-800 font-medium" />
                           <span className="text-xs text-gray-400 mt-1">{p.tipo} · {c?.puntos || p.puntos || 1} pts</span>
                         </div>
                       </div>
@@ -529,6 +541,7 @@ export default function ProfesorExamenes({ materiaId: propMateriaId, embedded = 
 function EditPreguntaCard({ pregunta, index, updatePregunta, updateOpcion, addOpcion, removeOpcion }) {
   const [open, setOpen] = useState(false);
   const p = pregunta;
+  const enunciado = p.enunciado || p.pregunta || '';
   return (
     <div className="border border-gray-200 rounded-xl overflow-hidden">
       <button onClick={() => setOpen(!open)}
@@ -537,7 +550,7 @@ function EditPreguntaCard({ pregunta, index, updatePregunta, updateOpcion, addOp
           <span className="flex-shrink-0 w-7 h-7 rounded-full bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center justify-center">
             {p.numero}
           </span>
-          <span className="text-sm text-gray-800 truncate">{p.enunciado?.slice(0, 80) || 'Sin enunciado'}</span>
+          <span className="text-sm text-gray-800 truncate">{enunciado.slice(0, 80) || 'Sin enunciado'}</span>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <span className="text-xs text-gray-400">{p.tipo} · {p.puntos} pts</span>
@@ -548,7 +561,7 @@ function EditPreguntaCard({ pregunta, index, updatePregunta, updateOpcion, addOp
         <div className="p-4 space-y-3">
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Enunciado</label>
-            <textarea value={p.enunciado || ''}
+            <textarea value={enunciado}
               onChange={e => updatePregunta(index, 'enunciado', e.target.value)}
               className="input-field text-sm h-20" />
           </div>

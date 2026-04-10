@@ -46,6 +46,234 @@ function QuestionBar({ pregunta }) {
   );
 }
 
+function normalizeWord(value) {
+  return String(value || '')
+    .trim()
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+function parseMaybeJson(value) {
+  if (value == null) return null;
+  if (typeof value === 'object') return value;
+  if (typeof value !== 'string') return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function parseRespuestaMap(respuestasJson) {
+  const map = {};
+  if (!respuestasJson) return map;
+
+  const items = Array.isArray(respuestasJson)
+    ? respuestasJson
+    : Array.isArray(respuestasJson.preguntas)
+      ? respuestasJson.preguntas
+      : [];
+
+  items.forEach((item) => {
+    if (!item || typeof item !== 'object') return;
+    const key = String(item.numero);
+    map[key] = item.respuesta;
+  });
+
+  return map;
+}
+
+function getQuestionText(examContent, numero) {
+  const preguntas = examContent?.preguntas;
+  if (!Array.isArray(preguntas)) return null;
+  const found = preguntas.find((q) => String(q?.numero) === String(numero));
+  if (!found) return null;
+  return found.enunciado || found.pregunta || found.texto || found.statement || null;
+}
+
+function toDisplayText(value) {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function splitWords(text) {
+  if (!text) return [];
+  return String(text)
+    .split(',')
+    .map((w) => normalizeWord(w))
+    .filter(Boolean);
+}
+
+function SopaReview({ sopa, respuestaRaw }) {
+  const grid = Array.isArray(sopa?.grid) ? sopa.grid : [];
+  const palabras = Array.isArray(sopa?.palabras) ? sopa.palabras : [];
+  const correctWords = palabras.map((w) => normalizeWord(typeof w === 'object' ? w?.palabra : w));
+  const foundWords = splitWords(respuestaRaw);
+  const foundSet = new Set(foundWords);
+  const missing = correctWords.filter((w) => !foundSet.has(w));
+
+  return (
+    <div className="space-y-3">
+      {grid.length > 0 && (
+        <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white p-2">
+          <table className="mx-auto border-collapse">
+            <tbody>
+              {grid.map((row, rIdx) => (
+                <tr key={rIdx}>
+                  {row.map((cell, cIdx) => (
+                    <td
+                      key={`${rIdx}-${cIdx}`}
+                      className="w-7 h-7 text-center text-[11px] font-bold border border-indigo-100 text-indigo-900"
+                    >
+                      {String(cell || '').toUpperCase()}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+        <div className="rounded-lg border border-green-200 bg-green-50 p-2">
+          <p className="text-[10px] font-semibold uppercase text-green-700 mb-1">Palabras encontradas por el estudiante</p>
+          <div className="flex flex-wrap gap-1.5">
+            {foundWords.length > 0 ? foundWords.map((w, i) => (
+              <span key={`${w}-${i}`} className="px-2 py-0.5 rounded-full text-[11px] bg-white border border-green-300 text-green-700">{w}</span>
+            )) : <span className="text-xs text-green-700">No registró palabras.</span>}
+          </div>
+        </div>
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-2">
+          <p className="text-[10px] font-semibold uppercase text-amber-700 mb-1">Palabras faltantes</p>
+          <div className="flex flex-wrap gap-1.5">
+            {missing.length > 0 ? missing.map((w, i) => (
+              <span key={`${w}-${i}`} className="px-2 py-0.5 rounded-full text-[11px] bg-white border border-amber-300 text-amber-700">{w}</span>
+            )) : <span className="text-xs text-green-700">Completó todas las palabras.</span>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CrucigramaReview({ crucigrama, respuestaRaw, detallePalabras }) {
+  const grid = Array.isArray(crucigrama?.grid) ? crucigrama.grid : [];
+  const studentGrid = parseMaybeJson(respuestaRaw) || {};
+
+  let minR = Infinity;
+  let maxR = -1;
+  let minC = Infinity;
+  let maxC = -1;
+  for (let r = 0; r < grid.length; r += 1) {
+    for (let c = 0; c < (grid[r]?.length || 0); c += 1) {
+      if (grid[r][c] && String(grid[r][c]).trim()) {
+        minR = Math.min(minR, r);
+        maxR = Math.max(maxR, r);
+        minC = Math.min(minC, c);
+        maxC = Math.max(maxC, c);
+      }
+    }
+  }
+
+  const hasBounds = maxR >= minR && maxC >= minC;
+
+  return (
+    <div className="space-y-3">
+      {hasBounds && (
+        <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white p-2">
+          <table className="mx-auto border-collapse">
+            <tbody>
+              {Array.from({ length: maxR - minR + 1 }).map((_, rr) => {
+                const r = minR + rr;
+                return (
+                  <tr key={r}>
+                    {Array.from({ length: maxC - minC + 1 }).map((__, cc) => {
+                      const c = minC + cc;
+                      const active = grid[r]?.[c] && String(grid[r][c]).trim();
+                      const key = `${r},${c}`;
+                      const letter = active ? String(studentGrid[key] || '').toUpperCase() : '';
+                      return (
+                        <td
+                          key={key}
+                          className={`w-8 h-8 text-center text-[11px] font-bold border ${
+                            active ? 'bg-white border-indigo-200 text-indigo-800' : 'bg-indigo-900 border-indigo-900'
+                          }`}
+                        >
+                          {letter}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {Array.isArray(detallePalabras) && detallePalabras.length > 0 && (
+        <div className="space-y-1.5">
+          {detallePalabras.map((item, idx) => (
+            <div
+              key={`${item.numero || idx}-${item.dir || 'x'}`}
+              className={`rounded-lg border p-2 text-xs ${item.correcto ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}`}
+            >
+              <p className="font-semibold text-gray-800">
+                {item.numero}{item.dir ? item.dir.toUpperCase() : ''}. {item.pista || 'Pista'}
+              </p>
+              <p className="text-gray-700 mt-0.5">Estudiante: {item.respuesta_estudiante || '-'}</p>
+              <p className="text-gray-700">Correcta: {item.respuesta_correcta || '-'}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EmparejarReview({ emparejar, respuestaRaw, detallePares }) {
+  const pares = Array.isArray(emparejar?.pares) ? emparejar.pares : [];
+  let matches = parseMaybeJson(respuestaRaw) || {};
+  if (matches && typeof matches === 'object' && matches.matches && typeof matches.matches === 'object') {
+    matches = matches.matches;
+  }
+
+  const rows = Array.isArray(detallePares) && detallePares.length > 0
+    ? detallePares
+    : pares.map((par) => {
+      const rid = matches?.[String(par.id)] ?? matches?.[par.id];
+      const right = pares.find((p) => String(p.id) === String(rid));
+      return {
+        izquierda: par.izquierda,
+        derecha_correcta: par.derecha,
+        derecha_estudiante: right?.derecha || '',
+        correcto: String(rid) === String(par.id),
+      };
+    });
+
+  return (
+    <div className="space-y-1.5">
+      {rows.map((row, idx) => (
+        <div
+          key={`${row.izquierda || 'left'}-${idx}`}
+          className={`rounded-lg border p-2 text-xs ${row.correcto ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}`}
+        >
+          <p className="font-semibold text-gray-800">{row.izquierda || 'Concepto'}</p>
+          <p className="text-gray-700 mt-0.5">Emparejó con: {row.derecha_estudiante || '-'}</p>
+          <p className="text-gray-700">Correcta: {row.derecha_correcta || '-'}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function ProfesorNotas() {
   const { examenId } = useParams();
   const [notas, setNotas] = useState([]);
@@ -248,6 +476,9 @@ export default function ProfesorNotas() {
             const hasDetail = n.detalle_json?.preguntas?.length > 0;
             const isAutoGraded = n.detalle_json?.calificacion_automatica;
             const hasPending = n.detalle_json?.tiene_preguntas_abiertas;
+            const examContent = n.examen_contenido_json || {};
+            const respuestasMap = parseRespuestaMap(n.respuestas_json);
+            const examType = n.examen_tipo || n.detalle_json?.tipo || '';
 
             return (
               <div key={n.id} className="card">
@@ -268,12 +499,22 @@ export default function ProfesorNotas() {
                         {n.detalle_json?.nota_maxima && (
                           <span className="text-xs text-gray-400">/ {n.detalle_json.nota_maxima}</span>
                         )}
+                        {examType && (
+                          <span className="px-1.5 py-0.5 text-[10px] font-medium bg-violet-100 text-violet-700 rounded uppercase">
+                            {String(examType).replaceAll('_', ' ')}
+                          </span>
+                        )}
                         {isAutoGraded && (
                           <span className="px-1.5 py-0.5 text-[10px] font-medium bg-blue-100 text-blue-700 rounded">Auto</span>
                         )}
                         {hasPending && (
                           <span className="px-1.5 py-0.5 text-[10px] font-medium bg-amber-100 text-amber-700 rounded flex items-center gap-0.5">
                             <AlertTriangle className="w-2.5 h-2.5" /> Pendientes
+                          </span>
+                        )}
+                        {n.enviado_at && (
+                          <span className="text-xs text-gray-400">
+                            Enviado: {format(new Date(n.enviado_at), 'dd/MM/yyyy HH:mm')}
                           </span>
                         )}
                       </div>
@@ -323,48 +564,119 @@ export default function ProfesorNotas() {
                   </div>
                 )}
 
-                {/* Per-question detail — student answer vs correct answer + feedback */}
+                {/* Per-question detail — transparent context for review */}
                 {expanded === n.id && hasDetail && (
                   <div className="mt-3 border-t border-gray-100 pt-3 space-y-2">
-                    {n.detalle_json.preguntas.map((p, i) => (
-                      <div key={i} className={`rounded-xl border overflow-hidden text-sm
-                        ${p.pendiente ? 'border-amber-200' : p.correcto ? 'border-emerald-200' : 'border-red-200'}`}>
-                        <div className={`flex items-center justify-between px-4 py-2
-                          ${p.pendiente ? 'bg-amber-50' : p.correcto ? 'bg-emerald-50' : 'bg-red-50'}`}>
-                          <div className="flex items-center gap-2">
-                            {p.pendiente
-                              ? <AlertTriangle className="w-4 h-4 text-amber-500" />
-                              : p.correcto
-                                ? <CheckCircle className="w-4 h-4 text-emerald-600" />
-                                : <XCircle className="w-4 h-4 text-red-500" />}
-                            <span className="font-medium">Pregunta {p.numero}</span>
+                    {n.detalle_json.preguntas.map((p, i) => {
+                      const numeroKey = String(p.numero);
+                      const tipo = p.tipo || numeroKey;
+                      const isSopa = tipo === 'sopa_letras' || numeroKey === 'sopa_letras';
+                      const isCrucigrama = tipo === 'crucigrama' || numeroKey === 'crucigrama';
+                      const isEmparejar = tipo === 'emparejar' || numeroKey === 'emparejar';
+                      const isInteractive = isSopa || isCrucigrama || isEmparejar;
+
+                      const respuestaRaw = p.respuesta_estudiante ?? respuestasMap[numeroKey];
+                      const respuestaTexto = toDisplayText(respuestaRaw);
+                      const correctaTexto = toDisplayText(p.respuesta_correcta);
+                      const preguntaTexto = getQuestionText(examContent, p.numero);
+
+                      let actividadTexto = preguntaTexto;
+                      if (isSopa) {
+                        actividadTexto = examContent?.sopa_letras?.instrucciones
+                          || examContent?.sopa_letras?.tema
+                          || 'Encuentra las palabras solicitadas en la sopa de letras.';
+                      }
+                      if (isCrucigrama) {
+                        actividadTexto = examContent?.crucigrama?.instrucciones
+                          || examContent?.crucigrama?.tema
+                          || 'Resuelve el crucigrama con las pistas dadas.';
+                      }
+                      if (isEmparejar) {
+                        actividadTexto = examContent?.emparejar?.instrucciones
+                          || examContent?.emparejar?.tema
+                          || 'Empareja cada concepto con su definición correcta.';
+                      }
+
+                      return (
+                        <div key={i} className={`rounded-xl border overflow-hidden text-sm
+                          ${p.pendiente ? 'border-amber-200' : p.correcto ? 'border-emerald-200' : 'border-red-200'}`}>
+                          <div className={`flex items-center justify-between px-4 py-2
+                            ${p.pendiente ? 'bg-amber-50' : p.correcto ? 'bg-emerald-50' : 'bg-red-50'}`}>
+                            <div className="flex items-center gap-2">
+                              {p.pendiente
+                                ? <AlertTriangle className="w-4 h-4 text-amber-500" />
+                                : p.correcto
+                                  ? <CheckCircle className="w-4 h-4 text-emerald-600" />
+                                  : <XCircle className="w-4 h-4 text-red-500" />}
+                              <span className="font-medium">
+                                {isInteractive ? `Actividad ${numeroKey.replaceAll('_', ' ')}` : `Pregunta ${p.numero}`}
+                              </span>
+                            </div>
+                            <span className={`font-bold text-xs ${p.pendiente ? 'text-amber-700' : p.correcto ? 'text-emerald-700' : 'text-red-700'}`}>
+                              {p.nota}/{p.nota_maxima}
+                            </span>
                           </div>
-                          <span className={`font-bold text-xs ${p.pendiente ? 'text-amber-700' : p.correcto ? 'text-emerald-700' : 'text-red-700'}`}>
-                            {p.nota}/{p.nota_maxima}
-                          </span>
+
+                          <div className="px-4 py-3 space-y-2 bg-white">
+                            {actividadTexto && (
+                              <div>
+                                <p className="text-[10px] font-semibold text-gray-500 uppercase mb-0.5">Actividad / Pregunta</p>
+                                <p className="text-xs text-gray-800 bg-gray-50 rounded-lg px-3 py-2 whitespace-pre-wrap">{actividadTexto}</p>
+                              </div>
+                            )}
+
+                            {!isInteractive && (
+                              <>
+                                <div>
+                                  <p className="text-[10px] font-semibold text-gray-500 uppercase mb-0.5">Respuesta del estudiante</p>
+                                  <pre className="text-xs text-gray-800 bg-gray-50 rounded-lg px-3 py-2 whitespace-pre-wrap break-words font-sans">
+                                    {respuestaTexto || 'Sin respuesta registrada.'}
+                                  </pre>
+                                </div>
+                                {correctaTexto && (
+                                  <div>
+                                    <p className="text-[10px] font-semibold text-green-600 uppercase mb-0.5">Respuesta correcta</p>
+                                    <pre className="text-xs text-green-800 bg-green-50 rounded-lg px-3 py-2 whitespace-pre-wrap break-words font-sans">
+                                      {correctaTexto}
+                                    </pre>
+                                  </div>
+                                )}
+                              </>
+                            )}
+
+                            {isSopa && (
+                              <SopaReview
+                                sopa={examContent?.sopa_letras}
+                                respuestaRaw={respuestaRaw}
+                              />
+                            )}
+
+                            {isCrucigrama && (
+                              <CrucigramaReview
+                                crucigrama={examContent?.crucigrama}
+                                respuestaRaw={respuestaRaw}
+                                detallePalabras={p.detalle_palabras}
+                              />
+                            )}
+
+                            {isEmparejar && (
+                              <EmparejarReview
+                                emparejar={examContent?.emparejar}
+                                respuestaRaw={respuestaRaw}
+                                detallePares={p.detalle_pares}
+                              />
+                            )}
+
+                            <div>
+                              <p className="text-[10px] font-semibold text-blue-500 uppercase mb-0.5">Justificación de calificación</p>
+                              <p className="text-xs text-blue-800 bg-blue-50 rounded-lg px-3 py-2 whitespace-pre-wrap italic">
+                                {p.retroalimentacion || 'Sin justificación registrada.'}
+                              </p>
+                            </div>
+                          </div>
                         </div>
-                        <div className="px-4 py-3 space-y-2 bg-white">
-                          {p.respuesta_estudiante && (
-                            <div>
-                              <p className="text-[10px] font-semibold text-gray-400 uppercase mb-0.5">Respuesta del estudiante</p>
-                              <p className="text-xs text-gray-800 bg-gray-50 rounded-lg px-3 py-2">{p.respuesta_estudiante}</p>
-                            </div>
-                          )}
-                          {p.respuesta_correcta && (
-                            <div>
-                              <p className="text-[10px] font-semibold text-green-600 uppercase mb-0.5">Respuesta correcta</p>
-                              <p className="text-xs text-green-800 bg-green-50 rounded-lg px-3 py-2">{p.respuesta_correcta}</p>
-                            </div>
-                          )}
-                          {p.retroalimentacion && (
-                            <div>
-                              <p className="text-[10px] font-semibold text-blue-500 uppercase mb-0.5">Retroalimentación</p>
-                              <p className="text-xs text-blue-800 bg-blue-50 rounded-lg px-3 py-2 italic">{p.retroalimentacion}</p>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
 

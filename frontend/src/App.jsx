@@ -16,12 +16,14 @@ import ProfesorCalificar from './pages/profesor/Calificar';
 import ProfesorNotas from './pages/profesor/Notas';
 import ProfesorHerramientas from './pages/profesor/Herramientas';
 import ProfesorReportes from './pages/profesor/Reportes';
+import ImpactoTesis from './pages/profesor/ImpactoTesis';
 import MateriaDetail from './pages/profesor/MateriaDetail';
 import EstudianteHome from './pages/estudiante/Home';
 import EstudianteNotas from './pages/estudiante/Notas';
 import EstudianteExamen from './pages/estudiante/ResolverExamen';
 import EstudianteChat from './pages/estudiante/Chat';
 import EstudianteBoletin from './pages/estudiante/Boletin';
+import EncuestaImpacto from './pages/EncuestaImpacto';
 import Perfil from './pages/Perfil';
 import Layout from './components/Layout';
 
@@ -87,6 +89,11 @@ export default function App() {
             <Layout><AdminBoletines /></Layout>
           </ProtectedRoute>
         } />
+        <Route path="/admin/impacto" element={
+          <ProtectedRoute roles={['admin']}>
+            <Layout><ImpactoTesis /></Layout>
+          </ProtectedRoute>
+        } />
 
         {/* Profesor */}
         <Route path="/profesor/materias" element={
@@ -129,6 +136,11 @@ export default function App() {
             <Layout><ProfesorReportes /></Layout>
           </ProtectedRoute>
         } />
+        <Route path="/profesor/impacto" element={
+          <ProtectedRoute roles={['profesor', 'admin']}>
+            <Layout><ImpactoTesis /></Layout>
+          </ProtectedRoute>
+        } />
 
         {/* Estudiante */}
         <Route path="/estudiante" element={
@@ -154,6 +166,12 @@ export default function App() {
         <Route path="/estudiante/boletin" element={
           <ProtectedRoute roles={['estudiante']}>
             <Layout><EstudianteBoletin /></Layout>
+          </ProtectedRoute>
+        } />
+
+        <Route path="/encuesta/impacto" element={
+          <ProtectedRoute roles={['admin', 'profesor', 'estudiante']}>
+            <Layout><EncuestaImpacto /></Layout>
           </ProtectedRoute>
         } />
 

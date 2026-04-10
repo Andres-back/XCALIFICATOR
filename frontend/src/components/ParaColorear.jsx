@@ -1,5 +1,15 @@
 import { Download, Printer, Palette } from 'lucide-react';
 
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export default function ParaColorear({ data, titulo }) {
   const imagen = data?.imagen_url;
   const descripcion = data?.descripcion || '';
@@ -7,7 +17,11 @@ export default function ParaColorear({ data, titulo }) {
   const handlePrint = () => {
     const w = window.open('', '_blank', 'width=900,height=700');
     if (!w) return;
-    w.document.write(`<!DOCTYPE html><html><head><title>${titulo || 'Para Colorear'}</title>
+    const safeTitle = escapeHtml(titulo || 'Para Colorear');
+    const safeDescripcion = escapeHtml(descripcion);
+    const safeImagen = escapeHtml(imagen || '');
+
+    w.document.write(`<!DOCTYPE html><html><head><title>${safeTitle}</title>
       <style>
         @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap');
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -21,9 +35,9 @@ export default function ParaColorear({ data, titulo }) {
         }
       </style>
     </head><body>
-      <h1>${titulo || 'Para Colorear'}</h1>
-      ${descripcion ? `<p class="desc">${descripcion}</p>` : ''}
-      <img src="${imagen}" alt="Para colorear" />
+      <h1>${safeTitle}</h1>
+      ${descripcion ? `<p class="desc">${safeDescripcion}</p>` : ''}
+      <img src="${safeImagen}" alt="Para colorear" />
       <script>
         const img = document.querySelector('img');
         img.onload = () => { window.print(); };

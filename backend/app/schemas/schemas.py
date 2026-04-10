@@ -238,7 +238,11 @@ class NotaOut(BaseModel):
     estudiante_nombre: Optional[str] = None
     estudiante_apellido: Optional[str] = None
     examen_titulo: Optional[str] = None
+    examen_tipo: Optional[str] = None
+    examen_contenido_json: Optional[dict] = None
     materia_nombre: Optional[str] = None
+    respuestas_json: Optional[dict] = None
+    enviado_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -365,6 +369,18 @@ class APIUsageStats(BaseModel):
     daily_history: list[dict] = []               # last 7 days
 
 
+class HerramientaFlagUpdate(BaseModel):
+    enabled: bool
+
+
+class HerramientaFlagOut(BaseModel):
+    tipo: str
+    label: str
+    enabled: bool
+    updated_at: Optional[datetime] = None
+    updated_by: Optional[UUID] = None
+
+
 # --- Períodos Académicos ---
 class PeriodoAcademicoCreate(BaseModel):
     nombre: str
@@ -435,6 +451,11 @@ class HerramientaGenerate(BaseModel):
     moraleja_tema: Optional[str] = ""
     # Para colorear customization
     description_imagen: Optional[str] = ""
+    # OCR-focused generation options
+    ocr_friendly: Optional[bool] = True
+    ocr_prefijo: Optional[str] = "R"
+    ocr_hoja_respuestas: Optional[bool] = True
+    ocr_lineas_abiertas: Optional[int] = 3
 
     @field_validator("tipo")
     @classmethod
@@ -443,6 +464,24 @@ class HerramientaGenerate(BaseModel):
         if v not in valid:
             raise ValueError(f"Tipo debe ser: {', '.join(valid)}")
         return v
+
+    @field_validator("ocr_prefijo")
+    @classmethod
+    def validate_ocr_prefijo(cls, v: Optional[str]) -> str:
+        pref = (v or "R").strip().upper()
+        if not pref:
+            pref = "R"
+        return pref[:4]
+
+    @field_validator("ocr_lineas_abiertas")
+    @classmethod
+    def validate_ocr_lineas(cls, v: Optional[int]) -> int:
+        lines = 3 if v is None else int(v)
+        if lines < 1:
+            return 1
+        if lines > 8:
+            return 8
+        return lines
 
 
 class HerramientaCreate(BaseModel):
@@ -587,6 +626,102 @@ class ChatSessionOut(BaseModel):
     minutos_restantes: float = 10.0
     cerrada: bool = True
     inicio: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+# --- Tesis Impacto ---
+class TiempoEvaluacionCreate(BaseModel):
+    materia_id: Optional[UUID] = None
+    examen_id: Optional[UUID] = None
+    fase: str
+    actividad_tipo: str = "examen"
+    grupo_pareado: Optional[str] = None
+    duracion_minutos: float
+    estudiantes_evaluados: int = 1
+    observacion: Optional[str] = None
+
+    @field_validator("fase")
+    @classmethod
+    def validate_fase(cls, v: str) -> str:
+        valid = ("sin_sistema", "con_sistema")
+        if v not in valid:
+            raise ValueError(f"Fase debe ser: {', '.join(valid)}")
+        return v
+
+    @field_validator("duracion_minutos")
+    @classmethod
+    def validate_duracion(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("La duración debe ser mayor a 0")
+        return v
+
+    @field_validator("estudiantes_evaluados")
+    @classmethod
+    def validate_estudiantes(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("Debe ser al menos 1 estudiante")
+        return v
+
+
+class TiempoEvaluacionOut(BaseModel):
+    id: UUID
+    profesor_id: UUID
+    materia_id: Optional[UUID] = None
+    examen_id: Optional[UUID] = None
+    fase: str
+    actividad_tipo: str
+    grupo_pareado: Optional[str] = None
+    duracion_minutos: float
+    estudiantes_evaluados: int
+    observacion: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class EncuestaImpactoCreate(BaseModel):
+    hito: str = "post_uso"
+    claridad: int
+    utilidad: int
+    pertinencia: int
+    satisfaccion: Optional[int] = None
+    facilidad_uso: Optional[int] = None
+    comentario: Optional[str] = None
+    consentimiento: bool = True
+
+    @field_validator("claridad", "utilidad", "pertinencia", "satisfaccion", "facilidad_uso")
+    @classmethod
+    def validate_likert(cls, v: Optional[int]) -> Optional[int]:
+        if v is None:
+            return v
+        if v < 1 or v > 5:
+            raise ValueError("La escala Likert debe estar entre 1 y 5")
+        return v
+
+    @field_validator("consentimiento")
+    @classmethod
+    def validate_consent(cls, v: bool) -> bool:
+        if not v:
+            raise ValueError("Debes aceptar el consentimiento para participar")
+        return v
+
+
+class EncuestaImpactoOut(BaseModel):
+    id: UUID
+    user_id: UUID
+    rol: str
+    hito: str
+    claridad: int
+    utilidad: int
+    pertinencia: int
+    satisfaccion: Optional[int] = None
+    facilidad_uso: Optional[int] = None
+    comentario: Optional[str] = None
+    consentimiento: bool
+    created_at: datetime
 
     class Config:
         from_attributes = True

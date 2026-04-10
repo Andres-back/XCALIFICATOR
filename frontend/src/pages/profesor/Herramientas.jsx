@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import katex from 'katex';
 import api from '../../api';
 import toast from 'react-hot-toast';
 import {
@@ -14,6 +15,7 @@ import Cuento from '../../components/Cuento';
 import ParaColorear from '../../components/ParaColorear';
 import EmptyState from '../../components/EmptyState';
 import ConfirmDialog from '../../components/ConfirmDialog';
+import MathText, { normalizeLatexFormula, normalizePlainMathText } from '../../components/MathText';
 
 const TIPOS = [
   { value: 'examen', label: 'Examen', icon: FileText, color: 'blue' },
@@ -66,6 +68,99 @@ const GRADOS_COLOMBIA = [
   ]},
 ];
 
+const escapeHtml = (value) => String(value ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
+
+const stripOptionPrefixes = (value) => String(value ?? '')
+  .replace(/^(\s*[A-Ha-h]\)\s*)+/, '')
+  .trim();
+
+const renderMathForPrint = (value) => {
+  if (value == null) return '';
+
+  let text = normalizePlainMathText(value);
+  const placeholders = [];
+  const hold = (html) => {
+    const idx = placeholders.length;
+    placeholders.push(html);
+    return `@@MATH_${idx}@@`;
+  };
+
+  const renderFormula = (formula, displayMode) => {
+    const normalizedFormula = normalizeLatexFormula(formula).trim();
+    const render = (candidate) => katex.renderToString(candidate, {
+      displayMode,
+      throwOnError: false,
+      strict: 'ignore',
+      trust: false,
+    });
+
+    try {
+      let html = render(normalizedFormula);
+
+      // Retry once after collapsing repeated slash prefixes in malformed TeX.
+      if (html.includes('katex-error')) {
+        const repaired = normalizeLatexFormula(
+          normalizedFormula
+            .replace(/\\{2,}\s*(?=[a-zA-Z]+)/g, '\\')
+            .replace(/\\{2,}(?=[()\[\]])/g, '\\')
+        ).trim();
+
+        if (repaired && repaired !== normalizedFormula) {
+          html = render(repaired);
+        }
+      }
+
+      if (html.includes('katex-error')) {
+        throw new Error('KaTeX parse error');
+      }
+
+      return html;
+    } catch {
+      const delim = displayMode ? '$$' : '$';
+      return `<span class="math-fallback">${escapeHtml(`${delim}${normalizedFormula}${delim}`)}</span>`;
+    }
+  };
+
+  const isMixedProseAndMatrix = (formula) => {
+    const normalizedFormula = normalizeLatexFormula(formula);
+    if (!/\\begin\{[a-zA-Z]+matrix\}/.test(normalizedFormula)) return false;
+    if (/\\text\s*\{/.test(normalizedFormula)) return false;
+    return /[¿¡]|[áéíóúñ]/i.test(normalizedFormula)
+      || /\b(?:si|cual|cuál|resultado|propiedad|siempre|verdadero|falso|matriz)\b/i.test(normalizedFormula);
+  };
+
+  text = text.replace(/\$\$([\s\S]+?)\$\$/g, (_, f) => hold(renderFormula(f, true)));
+  text = text.replace(/\\\[([\s\S]+?)\\\]/g, (_, f) => hold(renderFormula(f, true)));
+  text = text.replace(/(?<!\$)\$(?!\$)([^$\n]+?)\$(?!\$)/g, (_, f) => {
+    if (isMixedProseAndMatrix(f)) {
+      return normalizeLatexFormula(f);
+    }
+    return hold(renderFormula(f, false));
+  });
+  text = text.replace(/\\\((.+?)\\\)/g, (_, f) => {
+    if (isMixedProseAndMatrix(f)) {
+      return normalizeLatexFormula(f);
+    }
+    return hold(renderFormula(f, false));
+  });
+
+  // Render bare matrix environments even when the model omitted $...$ delimiters.
+  text = text.replace(/(?:\\\s*)+begin\{([a-zA-Z]+matrix)\}([\s\S]*?)(?:\\\s*)+end\{\1\}/g, (_, env, body) => {
+    return hold(renderFormula(`\\begin{${env}}${body}\\end{${env}}`, false));
+  });
+
+  text = escapeHtml(text)
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\n/g, '<br/>');
+
+  return text.replace(/@@MATH_(\d+)@@/g, (_, idx) => placeholders[Number(idx)] || '');
+};
+
 export default function ProfesorHerramientas() {
   const [herramientas, setHerramientas] = useState([]);
   const [materias, setMaterias] = useState([]);
@@ -79,6 +174,7 @@ export default function ProfesorHerramientas() {
   const [editModal, setEditModal] = useState(null);
   const [editForm, setEditForm] = useState({ titulo: '', contenido_json: null });
   const [saving, setSaving] = useState(false);
+  const [toolFlags, setToolFlags] = useState([]);
 
   const [genForm, setGenForm] = useState({
     tipo: 'examen',
@@ -101,8 +197,11 @@ export default function ProfesorHerramientas() {
     num_pares: 6,
     // Cuento
     moraleja_tema: '',
-    // Para colorear
-    description_imagen: '',
+    // OCR settings
+    ocr_friendly: true,
+    ocr_prefijo: 'R',
+    ocr_hoja_respuestas: true,
+    ocr_lineas_abiertas: 3,
   });
 
   const [assignForm, setAssignForm] = useState({
@@ -112,12 +211,14 @@ export default function ProfesorHerramientas() {
 
   const fetchData = async () => {
     try {
-      const [hRes, mRes] = await Promise.all([
+      const [hRes, mRes, flagsRes] = await Promise.all([
         api.get('/herramientas/'),
         api.get('/materias/mis-materias'),
+        api.get('/herramientas/config/flags').catch(() => ({ data: [] })),
       ]);
       setHerramientas(hRes.data);
       setMaterias(mRes.data);
+      setToolFlags(Array.isArray(flagsRes.data) ? flagsRes.data : []);
     } catch {
       toast.error('Error cargando datos');
     } finally {
@@ -127,8 +228,35 @@ export default function ProfesorHerramientas() {
 
   useEffect(() => { fetchData(); }, []);
 
+  const enabledToolTypes = toolFlags
+    .filter((f) => f.enabled !== false)
+    .map((f) => f.tipo);
+
+  const availableTipos = toolFlags.length > 0
+    ? TIPOS.filter((t) => enabledToolTypes.includes(t.value))
+    : TIPOS;
+
+  const disabledTools = toolFlags.filter((f) => f.enabled === false);
+
+  useEffect(() => {
+    if (toolFlags.length === 0) return;
+    if (enabledToolTypes.includes(genForm.tipo)) return;
+    if (enabledToolTypes.length === 0) return;
+    setGenForm((prev) => ({ ...prev, tipo: enabledToolTypes[0] }));
+  }, [toolFlags, genForm.tipo]);
+
   const handleGenerate = async (e) => {
     e.preventDefault();
+
+    if (toolFlags.length > 0 && !enabledToolTypes.includes(genForm.tipo)) {
+      toast.error('Este tipo de herramienta está deshabilitado por administración');
+      return;
+    }
+    if (toolFlags.length > 0 && enabledToolTypes.length === 0) {
+      toast.error('No hay herramientas habilitadas en este momento');
+      return;
+    }
+
     setGenerating(true);
     try {
       const payload = {
@@ -138,6 +266,10 @@ export default function ProfesorHerramientas() {
         nivel: genForm.nivel,
         grado: genForm.grado || '',
         contenido_base: genForm.contenido_base || '',
+        ocr_friendly: !!genForm.ocr_friendly,
+        ocr_prefijo: (genForm.ocr_prefijo || 'R').trim().toUpperCase().slice(0, 4),
+        ocr_hoja_respuestas: !!genForm.ocr_hoja_respuestas,
+        ocr_lineas_abiertas: parseInt(genForm.ocr_lineas_abiertas, 10) || 3,
       };
 
       if (genForm.tipo === 'examen') {
@@ -155,8 +287,6 @@ export default function ProfesorHerramientas() {
         payload.num_pares = genForm.num_pares;
       } else if (genForm.tipo === 'cuento') {
         payload.moraleja_tema = genForm.moraleja_tema || '';
-      } else if (genForm.tipo === 'para_colorear') {
-        payload.description_imagen = genForm.description_imagen || '';
       }
 
       await api.post('/herramientas/generate', payload);
@@ -166,7 +296,8 @@ export default function ProfesorHerramientas() {
         tipo: 'examen', titulo: '', tema: '', nivel: 'intermedio', grado: '', contenido_base: '',
         distribucion: {}, num_palabras: 8, palabras_obligatorias: [], nueva_palabra: '',
         num_horizontales: 5, num_verticales: 5, palabras_obligatorias_cruc: [], nueva_palabra_cruc: '',
-        num_pares: 6, moraleja_tema: '', description_imagen: '',
+        num_pares: 6, moraleja_tema: '',
+        ocr_friendly: true, ocr_prefijo: 'R', ocr_hoja_respuestas: true, ocr_lineas_abiertas: 3,
       });
       fetchData();
     } catch (err) {
@@ -181,6 +312,16 @@ export default function ProfesorHerramientas() {
       toast.error('Selecciona una materia');
       return;
     }
+
+    if (toolFlags.length > 0) {
+      const herramienta = herramientas.find((item) => item.id === herramientaId);
+      const flag = herramienta ? toolFlags.find((f) => f.tipo === herramienta.tipo) : null;
+      if (flag && flag.enabled === false) {
+        toast.error('Esta herramienta fue deshabilitada por administración');
+        return;
+      }
+    }
+
     try {
       await api.post(`/herramientas/${herramientaId}/assign`, {
         materia_id: assignForm.materia_id,
@@ -232,15 +373,56 @@ export default function ProfesorHerramientas() {
   /* ─── Unified Print Function (iframe, no popup) ─── */
   const handlePrintHerramienta = (h) => {
     const c = h.contenido_json || {};
+    const ocr = h.config_json?.ocr || c.metadata?.ocr || {};
+    const ocrEnabled = ocr.enabled !== false;
+    const ocrPrefix = (ocr.prefijo || 'R').toString().trim().toUpperCase() || 'R';
+    const ocrAnswerSheet = ocr.hoja_respuestas !== false;
+    const ocrLongLines = Number(ocr.lineas_abiertas || 3);
     let body = '';
     let extraCss = '';
 
     if (h.tipo === 'examen' && c.preguntas) {
-      body = c.preguntas.map(p =>
-        `<div class="q"><p class="qn">${p.numero}. ${p.enunciado}</p>` +
-        (p.opciones ? `<div class="opts">${p.opciones.map(o => `<p class="opt">${o}</p>`).join('')}</div>` : '') +
-        `</div>`
-      ).join('');
+      const preguntas = Array.isArray(c.preguntas) ? c.preguntas : [];
+      const answerRows = [];
+
+      body = preguntas.map((p, idx) => {
+        const numero = p.numero || idx + 1;
+        const texto = p.enunciado || p.pregunta || p.texto || `Pregunta ${numero}`;
+        const tipo = p.tipo || '';
+        const options = Array.isArray(p.opciones) ? p.opciones : [];
+
+        if (ocrEnabled) {
+          const tipoHint = (tipo === 'seleccion_multiple' || tipo === 'verdadero_falso')
+            ? 'A/B/C/D o V/F'
+            : 'Texto';
+          answerRows.push(`<tr><td>${numero}</td><td>${tipoHint}</td><td>${ocrPrefix}${numero}: ____________________________</td></tr>`);
+        }
+
+        let responseFields = '';
+        if (ocrEnabled) {
+          const lineCount = tipo === 'desarrollo'
+            ? Math.max(2, ocrLongLines)
+            : (tipo === 'respuesta_corta' ? 2 : 1);
+          responseFields = `<div class="resp-wrap">${Array.from({ length: lineCount }).map((_, lineIdx) => {
+            const label = lineIdx === 0 ? `${ocrPrefix}${numero}:` : '&nbsp;';
+            return `<div class="resp-line"><span class="resp-label">${label}</span><span class="resp-fill"></span></div>`;
+          }).join('')}</div>`;
+        }
+
+        return `<div class="q"><p class="qn"><span class="q-no">${numero}.</span> ${renderMathForPrint(texto)}</p>` +
+          (options.length ? `<div class="opts">${options.map((o, optIdx) => {
+            const letter = String.fromCharCode(65 + optIdx);
+            const optionText = stripOptionPrefixes(o);
+            return `<p class="opt"><span class="opt-l">${letter})</span> ${renderMathForPrint(optionText)}</p>`;
+          }).join('')}</div>` : '') +
+          responseFields +
+          `</div>`;
+      }).join('');
+
+      if (ocrEnabled && ocrAnswerSheet && answerRows.length) {
+        body += `<div class="ocr-sheet"><h3>Hoja de Respuestas OCR</h3><p>Escribe una sola respuesta por renglón usando el prefijo ${ocrPrefix}.</p>
+          <table class="ocr-table"><thead><tr><th>#</th><th>Formato</th><th>Respuesta</th></tr></thead><tbody>${answerRows.join('')}</tbody></table></div>`;
+      }
     } else if (h.tipo === 'crucigrama' && c.crucigrama) {
       const grid = c.crucigrama.grid || [];
       const pH = c.crucigrama.pistas_horizontal || [];
@@ -265,9 +447,20 @@ export default function ProfesorHerramientas() {
         }
         body = `<table class="cruz">${trs.join('')}</table>
         <div class="cols">
-          ${pH.length ? `<div class="col"><h3>\u2192 Horizontales</h3>${pH.map(p => `<p><span class="n">${typeof p==='object'?p.numero:''}.</span> ${typeof p==='object'?p.pista:p}</p>`).join('')}</div>` : ''}
-          ${pV.length ? `<div class="col"><h3>\u2193 Verticales</h3>${pV.map(p => `<p><span class="n">${typeof p==='object'?p.numero:''}.</span> ${typeof p==='object'?p.pista:p}</p>`).join('')}</div>` : ''}
+            ${pH.length ? `<div class="col"><h3>\u2192 Horizontales</h3>${pH.map((p) => {
+              const num = typeof p === 'object' ? (p.numero ?? '') : '';
+              const clue = typeof p === 'object' ? p.pista : p;
+              return `<p><span class="n">${escapeHtml(String(num))}.</span> ${renderMathForPrint(clue)}</p>`;
+            }).join('')}</div>` : ''}
+            ${pV.length ? `<div class="col"><h3>\u2193 Verticales</h3>${pV.map((p) => {
+              const num = typeof p === 'object' ? (p.numero ?? '') : '';
+              const clue = typeof p === 'object' ? p.pista : p;
+              return `<p><span class="n">${escapeHtml(String(num))}.</span> ${renderMathForPrint(clue)}</p>`;
+            }).join('')}</div>` : ''}
         </div>`;
+        if (ocrEnabled) {
+          body += `<div class="ocr-mini"><h3>Respuestas OCR</h3><p>Escribe en tu hoja: ${ocrPrefix}1H: palabra, ${ocrPrefix}2V: palabra, ...</p><div class="resp-line"><span class="resp-label">${ocrPrefix}H/V:</span><span class="resp-fill"></span></div></div>`;
+        }
       }
       extraCss = `.cruz{border-collapse:collapse;margin:0 auto 20px}
         .cruz td{width:36px;height:36px;text-align:center;vertical-align:middle;position:relative;font-size:14px;padding:0}
@@ -286,23 +479,30 @@ export default function ProfesorHerramientas() {
         '<tr>' + row.map(cell => `<td>${cell}</td>`).join('') + '</tr>'
       ).join('')}</table>
       <div class="words"><h3>Palabras a encontrar</h3><div class="word-list">${palabras.map(w =>
-        `<span class="word">${typeof w === 'object' ? w.palabra : w}</span>`
+        `<span class="word">${escapeHtml(String(typeof w === 'object' ? w.palabra : w))}</span>`
       ).join('')}</div></div>`;
+      if (ocrEnabled) {
+        body += `<div class="ocr-mini"><h3>Respuestas OCR</h3><p>Escribe una sola linea: ${ocrPrefix}SOPA: palabra1,palabra2,palabra3</p><div class="resp-line"><span class="resp-label">${ocrPrefix}SOPA:</span><span class="resp-fill"></span></div></div>`;
+      }
     } else if (h.tipo === 'emparejar' && c.emparejar) {
       const pares = c.emparejar.pares || c.emparejar || [];
       body = `<table class="match"><thead><tr><th>Columna A</th><th>Columna B</th></tr></thead><tbody>${
-        pares.map((p, i) => `<tr><td>${i + 1}. ${p.concepto || p.columna_a || ''}</td><td>${String.fromCharCode(65 + i)}. ${p.definicion || p.columna_b || ''}</td></tr>`).join('')
+        pares.map((p, i) => `<tr><td>${i + 1}. ${renderMathForPrint(p.concepto || p.columna_a || '')}</td><td>${String.fromCharCode(65 + i)}. ${renderMathForPrint(p.definicion || p.columna_b || '')}</td></tr>`).join('')
       }</tbody></table>`;
+      if (ocrEnabled) {
+        body += `<div class="ocr-mini"><h3>Respuestas OCR</h3><p>Formato sugerido por linea: ${ocrPrefix}1: A, ${ocrPrefix}2: C, ...</p>${pares.map((_, i) => `<div class="resp-line"><span class="resp-label">${ocrPrefix}${i + 1}:</span><span class="resp-fill"></span></div>`).join('')}</div>`;
+      }
     } else if (h.tipo === 'cuento' && c.cuento) {
-      body = `<div class="story">${c.cuento.texto ? `<div class="story-text">${c.cuento.texto.replace(/\n/g, '<br/>')}</div>` : ''}
-        ${c.cuento.moraleja ? `<div class="moraleja"><strong>Moraleja:</strong> ${c.cuento.moraleja}</div>` : ''}
+      body = `<div class="story">${c.cuento.texto ? `<div class="story-text">${renderMathForPrint(c.cuento.texto)}</div>` : ''}
+        ${c.cuento.moraleja ? `<div class="moraleja"><strong>Moraleja:</strong> ${renderMathForPrint(c.cuento.moraleja)}</div>` : ''}
         ${c.cuento.imagen_url ? `<img src="${c.cuento.imagen_url}" class="story-img" />` : ''}</div>`;
     } else if (h.tipo === 'para_colorear' && c.para_colorear) {
       body = `<div class="coloring">${c.para_colorear.imagen_url ? `<img src="${c.para_colorear.imagen_url}" class="color-img" />` : ''}
-        ${c.para_colorear.descripcion ? `<p class="desc">${c.para_colorear.descripcion}</p>` : ''}</div>`;
+        ${c.para_colorear.descripcion ? `<p class="desc">${renderMathForPrint(c.para_colorear.descripcion)}</p>` : ''}</div>`;
     }
 
-    const html = `<!DOCTYPE html><html><head><title>${h.titulo}</title>
+    const html = `<!DOCTYPE html><html><head><title>${escapeHtml(h.titulo)}</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap');
   *{box-sizing:border-box;margin:0;padding:0}
@@ -311,8 +511,26 @@ export default function ProfesorHerramientas() {
   .sub{text-align:center;font-size:11px;color:#888;margin-bottom:20px}
   .q{margin:10px 0;padding:10px 12px;border:1px solid #E5E7EB;border-radius:8px}
   .qn{font-size:13px;font-weight:600;color:#1E1B4B}
+  .q-no{margin-right:4px}
   .opts{margin:6px 0 0 16px}
   .opt{font-size:12px;color:#555;margin:2px 0}
+  .opt-l{font-weight:700;color:#4338CA;margin-right:4px}
+  .katex{font-size:1.02em}
+  .katex-display{margin:.45em 0}
+  .math-fallback{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#DC2626}
+  .resp-wrap{margin-top:8px;display:flex;flex-direction:column;gap:6px}
+  .resp-line{display:flex;align-items:center;gap:8px}
+  .resp-label{font-size:11px;color:#312E81;font-weight:700;min-width:42px}
+  .resp-fill{display:inline-block;flex:1;height:18px;border-bottom:1.4px solid #94A3B8}
+  .ocr-sheet{margin-top:16px;padding:12px;border:1px solid #C7D2FE;border-radius:8px;background:#EEF2FF}
+  .ocr-sheet h3{font-size:13px;color:#312E81;margin-bottom:4px}
+  .ocr-sheet p{font-size:11px;color:#4F46E5;margin-bottom:8px}
+  .ocr-table{width:100%;border-collapse:collapse;background:white}
+  .ocr-table th,.ocr-table td{font-size:11px;padding:6px;border:1px solid #C7D2FE;text-align:left}
+  .ocr-table th{background:#E0E7FF;color:#312E81}
+  .ocr-mini{margin-top:12px;padding:10px;border:1px dashed #A5B4FC;border-radius:8px;background:#EEF2FF}
+  .ocr-mini h3{font-size:12px;color:#312E81;margin-bottom:4px}
+  .ocr-mini p{font-size:10px;color:#4F46E5;margin-bottom:6px}
   .sopag{border-collapse:collapse;margin:0 auto 16px}
   .sopag td{width:28px;height:28px;text-align:center;font-size:13px;font-weight:600;border:1px solid #C7D2FE;color:#1E1B4B}
   .words{text-align:center;margin-top:12px}
@@ -329,8 +547,8 @@ export default function ProfesorHerramientas() {
   ${extraCss}
   @media print{body{margin:8px;padding:8px}}
 </style></head><body>
-  <h1>${h.titulo}</h1>
-  <p class="sub">${(h.tipo || '').replace('_', ' ')} \u00b7 ${new Date(h.created_at).toLocaleDateString('es-CO')}</p>
+  <h1>${renderMathForPrint(h.titulo)}</h1>
+  <p class="sub">${escapeHtml((h.tipo || '').replace('_', ' '))} \u00b7 ${escapeHtml(new Date(h.created_at).toLocaleDateString('es-CO'))}</p>
   ${body}
 </body></html>`;
 
@@ -384,7 +602,8 @@ export default function ProfesorHerramientas() {
           </p>
         </div>
         <button onClick={() => setShowGenerate(true)}
-          className="btn-primary flex items-center gap-2 shrink-0">
+          disabled={toolFlags.length > 0 && availableTipos.length === 0}
+          className={`btn-primary flex items-center gap-2 shrink-0 ${(toolFlags.length > 0 && availableTipos.length === 0) ? 'opacity-60 cursor-not-allowed' : ''}`}>
           <Wand2 className="w-4 h-4" /> Generar con IA
         </button>
       </div>
@@ -395,10 +614,22 @@ export default function ProfesorHerramientas() {
         <div>
           <p className="text-sm text-indigo-800 font-medium">Flujo de trabajo</p>
           <p className="text-xs text-indigo-600 mt-0.5">
-            1. Genera la herramienta con IA → 2. Revisa y edita si es necesario → 3. Asigna a una materia cuando esté lista.
+            1. Genera la herramienta con plantilla OCR → 2. Revisa/edita sin duplicar campos → 3. Descarga o asigna a una materia.
           </p>
         </div>
       </div>
+
+      {disabledTools.length > 0 && (
+        <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+          <AlertCircle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm text-amber-800 font-medium">Herramientas deshabilitadas por administración</p>
+            <p className="text-xs text-amber-700 mt-0.5">
+              {disabledTools.map((t) => t.label).join(', ')}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Filter tabs */}
       {herramientas.length > 0 && (
@@ -433,7 +664,11 @@ export default function ProfesorHerramientas() {
           title={filter !== 'all' ? 'Sin herramientas de este tipo' : 'No has generado herramientas aún'}
           description="Genera exámenes, crucigramas, sopas de letras, actividades de emparejar, cuentos y páginas para colorear con IA."
           action={
-            <button onClick={() => setShowGenerate(true)} className="btn-primary flex items-center gap-2">
+            <button
+              onClick={() => setShowGenerate(true)}
+              disabled={toolFlags.length > 0 && availableTipos.length === 0}
+              className={`btn-primary flex items-center gap-2 ${(toolFlags.length > 0 && availableTipos.length === 0) ? 'opacity-60 cursor-not-allowed' : ''}`}
+            >
               <Wand2 className="w-4 h-4" /> Generar primera herramienta
             </button>
           }
@@ -445,6 +680,7 @@ export default function ProfesorHerramientas() {
             const estado = ESTADO_BADGES[h.estado] || ESTADO_BADGES.borrador;
             const Icon = tipo.icon;
             const EstadoIcon = estado.icon;
+            const disabledByAdmin = toolFlags.some((f) => f.tipo === h.tipo && f.enabled === false);
 
             return (
               <div key={h.id} className="bg-white rounded-xl border border-gray-200 p-5 hover:shadow-md transition-shadow">
@@ -468,6 +704,12 @@ export default function ProfesorHerramientas() {
                   <p className="text-xs text-gray-500 mb-3 line-clamp-2">Tema: {h.tema}</p>
                 )}
 
+                {disabledByAdmin && (
+                  <div className="mb-3 inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] font-medium bg-red-100 text-red-700">
+                    <AlertCircle className="w-3 h-3" /> Tipo deshabilitado por administración
+                  </div>
+                )}
+
                 <div className="flex items-center gap-2 text-xs text-gray-400 mb-4">
                   <Clock className="w-3 h-3" />
                   {new Date(h.created_at).toLocaleDateString('es-CO')}
@@ -475,7 +717,8 @@ export default function ProfesorHerramientas() {
 
                 <div className="flex gap-2 flex-wrap">
                   <button onClick={() => { setShowAssign(h.id); setAssignForm({ materia_id: '', activo_online: true }); }}
-                    className="btn-primary text-xs flex items-center gap-1">
+                    disabled={disabledByAdmin}
+                    className={`btn-primary text-xs flex items-center gap-1 ${disabledByAdmin ? 'opacity-60 cursor-not-allowed' : ''}`}>
                     <Send className="w-3 h-3" /> Asignar
                   </button>
                   <button onClick={() => setPreview(preview === h.id ? null : h.id)}
@@ -537,11 +780,16 @@ export default function ProfesorHerramientas() {
                       <div className="space-y-2 max-h-60 overflow-y-auto">
                         {h.contenido_json.preguntas.map((p, i) => (
                           <div key={i} className="p-2 bg-gray-50 rounded-lg text-xs">
-                            <p className="font-medium text-gray-700">{p.numero}. {p.enunciado}</p>
+                            <MathText
+                              className="font-medium text-gray-700"
+                              text={`${p.numero || i + 1}. ${p.enunciado || p.pregunta || p.texto || 'Sin enunciado'}`}
+                            />
                             {p.opciones && (
                               <div className="mt-1 space-y-0.5 ml-3">
                                 {p.opciones.map((o, j) => (
-                                  <p key={j} className="text-gray-500">{o}</p>
+                                  <div key={j} className="text-gray-500">
+                                    <MathText text={`${String.fromCharCode(65 + j)}) ${stripOptionPrefixes(o)}`} />
+                                  </div>
                                 ))}
                               </div>
                             )}
@@ -581,23 +829,29 @@ export default function ProfesorHerramientas() {
                 {/* Type selector */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Tipo de herramienta</label>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
-                    {TIPOS.map(t => {
-                      const Icon = t.icon;
-                      return (
-                        <button key={t.value} type="button"
-                          onClick={() => setGenForm(p => ({ ...p, tipo: t.value }))}
-                          className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 transition-colors ${
-                            genForm.tipo === t.value
-                              ? 'bg-primary-50 border-primary-300 text-primary-700'
-                              : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'
-                          }`}>
-                          <Icon className="w-5 h-5" />
-                          <span className="text-xs font-medium">{t.label}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
+                  {availableTipos.length === 0 ? (
+                    <div className="p-3 rounded-xl border border-red-200 bg-red-50 text-sm text-red-700">
+                      No hay tipos de herramienta habilitados por administración.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
+                      {availableTipos.map(t => {
+                        const Icon = t.icon;
+                        return (
+                          <button key={t.value} type="button"
+                            onClick={() => setGenForm(p => ({ ...p, tipo: t.value }))}
+                            className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 transition-colors ${
+                              genForm.tipo === t.value
+                                ? 'bg-primary-50 border-primary-300 text-primary-700'
+                                : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'
+                            }`}>
+                            <Icon className="w-5 h-5" />
+                            <span className="text-xs font-medium">{t.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
 
                 {/* Title */}
@@ -664,6 +918,67 @@ export default function ProfesorHerramientas() {
                     placeholder="Pega aquí texto adicional como base para la generación..." />
                   <p className="text-xs text-gray-400 mt-1">Puedes pegar apuntes, texto del libro o temas clave</p>
                 </div>
+                )}
+
+                {/* OCR configuration */}
+                {!['cuento', 'para_colorear'].includes(genForm.tipo) && (
+                  <div className="space-y-3 p-4 bg-slate-50 border border-slate-200 rounded-xl">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-800">Plantilla OCR</p>
+                        <p className="text-xs text-slate-500">Estructura de respuestas estandarizada para facilitar lectura y calificacion automatica.</p>
+                      </div>
+                      <label className="inline-flex items-center gap-2 text-xs text-slate-700 font-medium">
+                        <input
+                          type="checkbox"
+                          checked={genForm.ocr_friendly}
+                          onChange={e => setGenForm(p => ({ ...p, ocr_friendly: e.target.checked }))}
+                          className="rounded border-gray-300 text-primary-600 w-4 h-4"
+                        />
+                        Activar OCR
+                      </label>
+                    </div>
+
+                    {genForm.ocr_friendly && (
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Prefijo de respuesta</label>
+                          <input
+                            type="text"
+                            maxLength={4}
+                            className="input-field"
+                            value={genForm.ocr_prefijo}
+                            onChange={e => setGenForm(p => ({ ...p, ocr_prefijo: e.target.value.toUpperCase() }))}
+                            placeholder="R"
+                          />
+                          <p className="text-[10px] text-gray-400 mt-1">Ejemplo: R1: A</p>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Lineas abiertas</label>
+                          <input
+                            type="number"
+                            min={1}
+                            max={8}
+                            className="input-field"
+                            value={genForm.ocr_lineas_abiertas}
+                            onChange={e => setGenForm(p => ({ ...p, ocr_lineas_abiertas: parseInt(e.target.value, 10) || 3 }))}
+                          />
+                          <p className="text-[10px] text-gray-400 mt-1">Para respuestas cortas/desarrollo</p>
+                        </div>
+
+                        <label className="flex items-center gap-2 p-3 bg-white border border-slate-200 rounded-lg text-xs text-slate-700 font-medium">
+                          <input
+                            type="checkbox"
+                            checked={genForm.ocr_hoja_respuestas}
+                            onChange={e => setGenForm(p => ({ ...p, ocr_hoja_respuestas: e.target.checked }))}
+                            className="rounded border-gray-300 text-primary-600 w-4 h-4"
+                          />
+                          Incluir hoja OCR en descarga
+                        </label>
+                      </div>
+                    )}
+                  </div>
                 )}
 
                 {/* ===== EXAMEN: Question distribution ===== */}
@@ -908,20 +1223,13 @@ export default function ProfesorHerramientas() {
                 {/* ===== PARA COLOREAR: Customization ===== */}
                 {genForm.tipo === 'para_colorear' && (
                   <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Descripción de la imagen <span className="text-gray-400 font-normal">(opcional)</span>
-                      </label>
-                      <textarea className="input-field h-20"
-                        value={genForm.description_imagen}
-                        onChange={e => setGenForm(p => ({ ...p, description_imagen: e.target.value }))}
-                        placeholder="Describe qué dibujo quieres generar. Ej: un dinosaurio en un bosque, una mariposa con flores..." />
-                      <p className="text-xs text-gray-400 mt-1">Si lo dejas vacío, se usará el tema como descripción</p>
-                    </div>
                     <div className="p-3 bg-teal-50 border border-teal-200 rounded-xl">
                       <p className="text-xs text-teal-700">
                         <span className="font-semibold">🎨 Para Colorear:</span> Se genera una imagen en blanco y negro con contornos gruesos,
-                        ideal para que los alumnos la impriman y coloreen. La imagen se genera automáticamente con IA.
+                        ideal para que los alumnos la impriman y coloreen. La descripcion se toma del campo Tema/Contenido para evitar duplicados.
+                      </p>
+                      <p className="text-xs text-teal-700 mt-2">
+                        Si necesitas letras o vocales, escríbelo explícitamente en Tema (ej: "vocales A E I O U con dibujos infantiles").
                       </p>
                     </div>
                   </div>
@@ -930,7 +1238,13 @@ export default function ProfesorHerramientas() {
                 <div className="flex gap-3 pt-2">
                   <button type="button" onClick={() => setShowGenerate(false)}
                     className="btn-secondary flex-1">Cancelar</button>
-                  <button type="submit" disabled={generating || !genForm.tema.trim() || (genForm.tipo === 'examen' && Object.values(genForm.distribucion).reduce((a, b) => a + b, 0) === 0)}
+                  <button type="submit" disabled={
+                    generating ||
+                    !genForm.tema.trim() ||
+                    (toolFlags.length > 0 && availableTipos.length === 0) ||
+                    (toolFlags.length > 0 && !enabledToolTypes.includes(genForm.tipo)) ||
+                    (genForm.tipo === 'examen' && Object.values(genForm.distribucion).reduce((a, b) => a + b, 0) === 0)
+                  }
                     className="btn-primary flex-1 flex items-center justify-center gap-2">
                     {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
                     {generating ? 'Generando...' : 'Generar con IA'}
@@ -1028,10 +1342,10 @@ export default function ProfesorHerramientas() {
                         <div className="flex items-center gap-2">
                           <span className="text-xs font-bold text-indigo-600 shrink-0">{q.numero || i + 1}.</span>
                           <input type="text" className="input-field text-xs flex-1"
-                            value={q.enunciado || ''}
+                            value={q.enunciado || q.pregunta || q.texto || ''}
                             onChange={e => {
                               const preg = [...editForm.contenido_json.preguntas];
-                              preg[i] = { ...preg[i], enunciado: e.target.value };
+                              preg[i] = { ...preg[i], enunciado: e.target.value, pregunta: e.target.value };
                               setEditForm(p => ({ ...p, contenido_json: { ...p.contenido_json, preguntas: preg } }));
                             }} />
                         </div>

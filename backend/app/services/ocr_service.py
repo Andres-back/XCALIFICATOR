@@ -87,38 +87,73 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> str:
 
 
 def parse_exam_text(raw_text: str) -> list[dict]:
-    """Parse extracted text into structured questions and answers."""
-    lines = raw_text.strip().split("\n")
-    questions = []
-    current_q = None
+    """Parse extracted text into structured questions and OCR-friendly answer lines."""
+    import re
 
-    for line in lines:
-        line = line.strip()
+    lines = raw_text.strip().split("\n")
+    questions_map: dict[int, dict] = {}
+    current_num: int | None = None
+
+    for raw_line in lines:
+        line = raw_line.strip()
         if not line:
             continue
 
-        # Detect question numbers: 1., 2., 1), 2), etc.
-        import re
-        match = re.match(r"^(\d+)[.)]\s*(.*)", line)
-        if match:
-            if current_q:
-                questions.append(current_q)
-            current_q = {
-                "numero": int(match.group(1)),
-                "texto": match.group(2),
-                "respuesta": "",
-            }
-        elif current_q:
-            # Check if it's an answer line
-            if line.startswith(("R:", "Respuesta:", "R/", "→")):
-                current_q["respuesta"] = line.split(":", 1)[-1].strip() if ":" in line else line[1:].strip()
+        # Question number format: 1. Enunciado / 1) Enunciado
+        q_match = re.match(r"^(\d{1,3})[.)]\s*(.+)$", line)
+        if q_match:
+            num = int(q_match.group(1))
+            texto = q_match.group(2).strip()
+            item = questions_map.get(num, {"numero": num, "texto": "", "respuesta": ""})
+            item["texto"] = (item.get("texto", "") + " " + texto).strip() if item.get("texto") else texto
+            questions_map[num] = item
+            current_num = num
+            continue
+
+        # Explicit OCR answer line: R1: A / RESPUESTA 2: texto / R-3) valor
+        ans_num_match = re.match(
+            r"^(?:R|RESP|RESPUESTA|ANS)\s*[-_ ]*(\d{1,3})\s*[:.)-]\s*(.*)$",
+            line,
+            flags=re.IGNORECASE,
+        )
+        if ans_num_match:
+            num = int(ans_num_match.group(1))
+            answer = ans_num_match.group(2).strip()
+            item = questions_map.get(num, {"numero": num, "texto": "", "respuesta": ""})
+            if answer:
+                item["respuesta"] = (
+                    (item.get("respuesta", "") + " " + answer).strip()
+                    if item.get("respuesta")
+                    else answer
+                )
+            questions_map[num] = item
+            current_num = num
+            continue
+
+        # Generic answer marker attached to current question
+        ans_inline_match = re.match(r"^(?:R|RESPUESTA|RESP|ANS|→)\s*[:\-/]?\s*(.*)$", line, flags=re.IGNORECASE)
+        if ans_inline_match and current_num is not None:
+            answer = ans_inline_match.group(1).strip()
+            item = questions_map.get(current_num, {"numero": current_num, "texto": "", "respuesta": ""})
+            if answer:
+                item["respuesta"] = (
+                    (item.get("respuesta", "") + " " + answer).strip()
+                    if item.get("respuesta")
+                    else answer
+                )
+            questions_map[current_num] = item
+            continue
+
+        # Continuation line: attach to question text or answer
+        if current_num is not None:
+            item = questions_map.get(current_num, {"numero": current_num, "texto": "", "respuesta": ""})
+            if item.get("respuesta"):
+                item["respuesta"] = (item["respuesta"] + " " + line).strip()
             else:
-                current_q["texto"] += " " + line
+                item["texto"] = (item.get("texto", "") + " " + line).strip() if item.get("texto") else line
+            questions_map[current_num] = item
 
-    if current_q:
-        questions.append(current_q)
-
-    return questions
+    return [questions_map[num] for num in sorted(questions_map.keys())]
 
 
 async def process_exam_image(file_bytes: bytes, filename: str) -> dict:

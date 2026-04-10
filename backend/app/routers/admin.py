@@ -6,10 +6,12 @@ from sqlalchemy.orm import selectinload
 from app.core.database import get_db
 from app.core.dependencies import require_role
 from app.core.security import hash_password
+from app.core.tool_flags import SUPPORTED_TOOL_TYPES, list_tool_flags, set_tool_flag
 from app.models.models import User, Sesion, Nota, AuditLog, Materia, Matricula, Examen, RespuestaOnline, APIUsageLog, Boletin, PeriodoAcademico
 from app.schemas.schemas import (
     UserOut, AdminUserCreate, AdminUserUpdate, ChangePasswordRequest, ChangeRoleRequest,
     SesionOut, AdminStats, AuditLogOut, AdminMateriaOut, APIUsageStats, APIUsageByModel,
+    HerramientaFlagOut, HerramientaFlagUpdate,
 )
 
 router = APIRouter(prefix="/admin", tags=["Administración"])
@@ -455,6 +457,48 @@ async def get_api_usage(
         usage_by_task=usage_by_task,
         daily_history=daily_history,
     )
+
+
+# ──────────────── TOOL FLAGS ────────────────
+
+@router.get("/herramientas-flags", response_model=list[HerramientaFlagOut])
+async def get_herramientas_flags(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin")),
+):
+    return await list_tool_flags(db)
+
+
+@router.put("/herramientas-flags/{tipo}", response_model=HerramientaFlagOut)
+async def update_herramientas_flag(
+    tipo: str,
+    data: HerramientaFlagUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin")),
+):
+    if tipo not in SUPPORTED_TOOL_TYPES:
+        raise HTTPException(status_code=404, detail="Tipo de herramienta no encontrado")
+
+    await set_tool_flag(
+        db=db,
+        tipo=tipo,
+        enabled=data.enabled,
+        updated_by=str(current_user.id),
+    )
+
+    audit = AuditLog(
+        user_id=current_user.id,
+        accion="admin_tool_flag_update",
+        detalle={"tipo": tipo, "enabled": data.enabled},
+    )
+    db.add(audit)
+    await db.commit()
+
+    flags = await list_tool_flags(db)
+    selected = next((f for f in flags if f.get("tipo") == tipo), None)
+    if not selected:
+        raise HTTPException(status_code=500, detail="No se pudo leer la configuración actualizada")
+    return selected
 
 
 # ──────────────── BOLETINES GLOBALES ────────────────

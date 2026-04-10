@@ -98,21 +98,33 @@ function printCrossword(data, horizontales, verticales) {
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap');
   *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:'Poppins',sans-serif;max-width:800px;margin:20px auto;padding:16px;color:#333}
-  h1{text-align:center;font-size:22px;margin-bottom:16px;color:#4338CA;font-weight:700}
+  body{font-family:'Poppins',sans-serif;max-width:860px;margin:16px auto;padding:16px;color:#202020;background:#efefef}
+  .top{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+  h1{text-align:left;font-size:28px;margin-bottom:0;color:#3e3e3e;font-weight:700}
+  .meta{font-size:12px;color:#555;line-height:1.5}
+  .line{display:inline-block;min-width:180px;border-bottom:1px dotted #4b5563;margin-left:4px;transform:translateY(-2px)}
+  .subtitle{font-size:24px;color:#11a6b5;font-weight:700}
+  .rule{height:3px;background:#2bb6c2;border-radius:99px;margin:8px 0 14px}
   table{border-collapse:collapse;margin:0 auto 20px}
   td{width:36px;height:36px;text-align:center;vertical-align:middle;position:relative;font-size:14px;padding:0}
-  .blk{background:#1E1B4B;border:1px solid #1E1B4B}
-  .cell{background:#fff;border:2px solid #6366F1}
-  .num{position:absolute;top:2px;left:3px;font-size:10px;font-weight:700;color:#312E81;line-height:1}
+  .blk{background:transparent;border:1px solid transparent}
+  .cell{background:#e8e8e8;border:1px solid #3f3f46;box-shadow:inset 0 0 0 3px #88d4db}
+  .num{position:absolute;top:1px;left:3px;font-size:10px;font-weight:700;color:#111827;line-height:1}
   .cols{display:flex;gap:36px;justify-content:center;margin-top:18px}
-  .col{flex:1;max-width:340px}
-  .col h3{font-size:14px;margin-bottom:8px;color:#4338CA;border-bottom:2px solid #C7D2FE;padding-bottom:4px}
+  .col{flex:1;max-width:360px;background:#f6f6f6;border:1px solid #d1d5db;border-radius:10px;padding:10px}
+  .col h3{font-size:14px;margin-bottom:8px;color:#0f766e;border-bottom:2px solid #99e2e7;padding-bottom:4px}
   .col p{font-size:12px;margin:5px 0;line-height:1.5}
-  .col .n{font-weight:700;color:#4338CA;margin-right:2px}
+  .col .n{font-weight:700;color:#0f766e;margin-right:2px}
   @media print{body{margin:8px;padding:8px}}
 </style></head><body>
-  <h1>Crucigrama</h1>
+  <div class="top">
+    <div class="meta">
+      <div>Mi nombre:<span class="line"></span></div>
+      <div>Fecha:<span class="line"></span> Hora:<span class="line" style="min-width:120px"></span></div>
+    </div>
+    <h1 class="subtitle">Crucigrama</h1>
+  </div>
+  <div class="rule"></div>
   <table>${trs}</table>
   <div class="cols">
     ${horizontales.length ? `<div class="col"><h3>\u2192 Horizontales</h3>${horizontales.map(p => `<p><span class="n">${typeof p==='object'?p.numero:''}.</span> ${typeof p==='object'?p.pista:p}</p>`).join('')}</div>` : ''}
@@ -251,10 +263,10 @@ export default function Crucigrama({ crucigrama, onChange, onComplete }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center">
-            <Puzzle className="w-4 h-4 text-indigo-600" />
+          <div className="w-8 h-8 rounded-lg bg-cyan-100 flex items-center justify-center">
+            <Puzzle className="w-4 h-4 text-cyan-700" />
           </div>
-          <span className="text-sm font-semibold text-indigo-700">Crucigrama</span>
+          <span className="text-sm font-semibold text-cyan-800">Crucigrama</span>
         </div>
         <div className="flex gap-2">
           <button onClick={() => printCrossword(data, horizontales, verticales)}
@@ -270,7 +282,7 @@ export default function Crucigrama({ crucigrama, onChange, onComplete }) {
         </div>
       </div>
 
-      <div className="overflow-x-auto flex justify-center">
+      <div className="overflow-x-auto flex justify-center bg-[#e7e7ea] rounded-xl border border-cyan-200 p-3 sm:p-4">
         <table className="border-collapse" style={{ borderSpacing: 0 }}>
           <tbody>
             {data.rows.map((row, ri) => (
@@ -278,27 +290,44 @@ export default function Crucigrama({ crucigrama, onChange, onComplete }) {
                 {row.map((cell, ci) => {
                   const key = `${cell.r},${cell.c}`;
                   const isHL = highlightSet.has(key);
+                  const cellStyle = cell.active
+                    ? (isHL && interactive
+                      ? {
+                          minWidth: 36,
+                          minHeight: 36,
+                          background: '#f7fcff',
+                          border: '1px solid #374151',
+                          boxShadow: 'inset 0 0 0 3px #38bdf8',
+                        }
+                      : {
+                          minWidth: 36,
+                          minHeight: 36,
+                          background: '#e7e7e7',
+                          border: '1px solid #3f3f46',
+                          boxShadow: 'inset 0 0 0 3px #88d4db',
+                        })
+                    : {
+                        minWidth: 36,
+                        minHeight: 36,
+                        background: 'transparent',
+                        border: '1px solid transparent',
+                      };
+
                   return (
                     <td key={ci}
-                      className={`w-9 h-9 sm:w-10 sm:h-10 text-center relative ${
-                        cell.active
-                          ? isHL && interactive
-                            ? 'bg-indigo-50 border-2 border-indigo-400'
-                            : 'bg-white border-2 border-indigo-300'
-                          : 'bg-indigo-900/90 border border-indigo-900/90'
-                      }`}
-                      style={{ minWidth: 36, minHeight: 36 }}
+                      className="w-9 h-9 sm:w-10 sm:h-10 text-center relative"
+                      style={cellStyle}
                       onClick={() => cell.active && interactive && handleCellClick(cell.r, cell.c)}
                     >
                       {cell.active && cell.num && (
-                        <span className="absolute top-0.5 left-1 text-[9px] font-bold text-indigo-700 leading-none select-none z-10">
+                        <span className="absolute top-0.5 left-1 text-[9px] font-bold text-gray-900 leading-none select-none z-10">
                           {cell.num}
                         </span>
                       )}
                       {cell.active && interactive && (
                         <input
                           ref={el => { if (el) inputRefs.current[key] = el; }}
-                          className="absolute inset-0 w-full h-full text-center font-bold text-sm uppercase bg-transparent outline-none caret-indigo-600 z-20 cursor-pointer"
+                          className="absolute inset-0 w-full h-full text-center font-bold text-sm uppercase bg-transparent outline-none caret-cyan-700 text-gray-900 z-20 cursor-pointer"
                           maxLength={1}
                           value={answers[key] || ''}
                           onChange={e => handleInput(cell.r, cell.c, e.target.value)}
@@ -318,8 +347,8 @@ export default function Crucigrama({ crucigrama, onChange, onComplete }) {
 
       <div className="flex flex-col sm:flex-row gap-4">
         {horizontales.length > 0 && (
-          <div className="flex-1 bg-white rounded-xl border border-indigo-100 p-3">
-            <h4 className="text-xs font-bold text-indigo-700 mb-2 border-b border-indigo-100 pb-1">→ Horizontales</h4>
+          <div className="flex-1 bg-white rounded-xl border border-cyan-100 p-3">
+            <h4 className="text-xs font-bold text-cyan-800 mb-2 border-b border-cyan-100 pb-1">→ Horizontales</h4>
             <div className="space-y-1">
               {horizontales.map((p, i) => {
                 const num = typeof p === 'object' ? p.numero : i + 1;
@@ -328,10 +357,10 @@ export default function Crucigrama({ crucigrama, onChange, onComplete }) {
                 return (
                   <p key={i}
                     className={`text-[11px] leading-relaxed rounded px-1.5 py-0.5 transition-colors ${
-                      isActive ? 'bg-indigo-100 text-indigo-800 font-semibold' : 'text-gray-600 hover:bg-gray-50'
+                      isActive ? 'bg-cyan-100 text-cyan-900 font-semibold' : 'text-gray-600 hover:bg-gray-50'
                     } ${interactive ? 'cursor-pointer' : ''}`}
                     onClick={() => interactive && wIdx >= 0 && selectWord(wIdx)}>
-                    <span className="font-bold text-indigo-600">{num}.</span>{' '}
+                    <span className="font-bold text-cyan-700">{num}.</span>{' '}
                     {typeof p === 'object' ? p.pista : p}
                   </p>
                 );
@@ -340,8 +369,8 @@ export default function Crucigrama({ crucigrama, onChange, onComplete }) {
           </div>
         )}
         {verticales.length > 0 && (
-          <div className="flex-1 bg-white rounded-xl border border-indigo-100 p-3">
-            <h4 className="text-xs font-bold text-indigo-700 mb-2 border-b border-indigo-100 pb-1">↓ Verticales</h4>
+          <div className="flex-1 bg-white rounded-xl border border-cyan-100 p-3">
+            <h4 className="text-xs font-bold text-cyan-800 mb-2 border-b border-cyan-100 pb-1">↓ Verticales</h4>
             <div className="space-y-1">
               {verticales.map((p, i) => {
                 const num = typeof p === 'object' ? p.numero : i + 1;
@@ -350,10 +379,10 @@ export default function Crucigrama({ crucigrama, onChange, onComplete }) {
                 return (
                   <p key={i}
                     className={`text-[11px] leading-relaxed rounded px-1.5 py-0.5 transition-colors ${
-                      isActive ? 'bg-indigo-100 text-indigo-800 font-semibold' : 'text-gray-600 hover:bg-gray-50'
+                      isActive ? 'bg-cyan-100 text-cyan-900 font-semibold' : 'text-gray-600 hover:bg-gray-50'
                     } ${interactive ? 'cursor-pointer' : ''}`}
                     onClick={() => interactive && wIdx >= 0 && selectWord(wIdx)}>
-                    <span className="font-bold text-indigo-600">{num}.</span>{' '}
+                    <span className="font-bold text-cyan-700">{num}.</span>{' '}
                     {typeof p === 'object' ? p.pista : p}
                   </p>
                 );

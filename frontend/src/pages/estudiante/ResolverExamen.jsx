@@ -4,7 +4,7 @@ import api from '../../api';
 import toast from 'react-hot-toast';
 import {
   Send, Loader2, Clock, ChevronLeft, ChevronRight, CheckCircle2,
-  Circle, AlertTriangle, FileText, Award, ArrowLeft, Users, UserPlus, X,
+  AlertTriangle, Award, ArrowLeft, Users, UserPlus, X,
 } from 'lucide-react';
 import SopaLetras from '../../components/SopaLetras';
 import Crucigrama from '../../components/Crucigrama';
@@ -28,6 +28,20 @@ const TIPO_COLORS = {
   completar: 'bg-pink-100 text-pink-700 border-pink-200',
 };
 
+const AUTOSAVE_VERSION = 1;
+const AUTOSAVE_DEBOUNCE_MS = 700;
+
+function getDraftStorageKey(examenId) {
+  try {
+    const rawUser = localStorage.getItem('user');
+    const user = rawUser ? JSON.parse(rawUser) : null;
+    const userId = user?.id || user?.correo || 'anon';
+    return `xcalificator_exam_draft_v${AUTOSAVE_VERSION}:${userId}:${examenId}`;
+  } catch {
+    return `xcalificator_exam_draft_v${AUTOSAVE_VERSION}:anon:${examenId}`;
+  }
+}
+
 export default function ResolverExamen() {
   const { examenId } = useParams();
   const navigate = useNavigate();
@@ -38,7 +52,10 @@ export default function ResolverExamen() {
   const [currentQ, setCurrentQ] = useState(0);
   const [showConfirm, setShowConfirm] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [autosaveState, setAutosaveState] = useState('idle');
+  const [lastSavedAt, setLastSavedAt] = useState(null);
   const startTime = useRef(Date.now());
+  const autosaveTimerRef = useRef(null);
 
   // Group mode state
   const [grupo, setGrupo] = useState(null); // current group
@@ -46,12 +63,15 @@ export default function ResolverExamen() {
   const [showInvite, setShowInvite] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
 
+  const draftStorageKey = getDraftStorageKey(examenId);
+
   useEffect(() => {
     const loadExam = async () => {
       try {
         // Check if already submitted
         const respRes = await api.get('/examenes/mis-respuestas');
         if (respRes.data.includes(examenId)) {
+          localStorage.removeItem(draftStorageKey);
           toast.error('Ya enviaste respuestas para este examen');
           navigate('/estudiante');
           return;
@@ -59,6 +79,37 @@ export default function ResolverExamen() {
 
         const res = await api.get(`/examenes/${examenId}`);
         setExamen(res.data);
+
+        try {
+          const savedDraftRaw = localStorage.getItem(draftStorageKey);
+          if (savedDraftRaw) {
+            const savedDraft = JSON.parse(savedDraftRaw);
+            const savedRespuestas = savedDraft?.respuestas;
+            const isValidRespuestas = savedRespuestas && typeof savedRespuestas === 'object' && !Array.isArray(savedRespuestas);
+            if (
+              savedDraft?.version === AUTOSAVE_VERSION
+              && savedDraft?.examen_id === examenId
+              && isValidRespuestas
+              && Object.keys(savedRespuestas).length > 0
+            ) {
+              setRespuestas(savedRespuestas);
+              setAutosaveState('saved');
+              if (savedDraft.saved_at) setLastSavedAt(savedDraft.saved_at);
+
+              const totalPreguntas = res.data.contenido_json?.preguntas?.length || 0;
+              if (Number.isInteger(savedDraft.current_q) && savedDraft.current_q >= 0 && savedDraft.current_q < totalPreguntas) {
+                setCurrentQ(savedDraft.current_q);
+              }
+
+              toast.success('Se restauró tu borrador guardado', { duration: 3500 });
+            } else {
+              localStorage.removeItem(draftStorageKey);
+            }
+          }
+        } catch {
+          localStorage.removeItem(draftStorageKey);
+        }
+
         if (!res.data.activo_online) {
           toast.error('Este examen no está disponible online');
           navigate('/estudiante');
@@ -85,7 +136,7 @@ export default function ResolverExamen() {
       }
     };
     loadExam();
-  }, [examenId]);
+  }, [examenId, draftStorageKey]);
 
   // Timer
   useEffect(() => {
@@ -146,6 +197,59 @@ export default function ResolverExamen() {
     setRespuestas(prev => ({ ...prev, [numero]: value }));
   }, []);
 
+  useEffect(() => {
+    if (loading || !examen || submitting) return undefined;
+
+    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+
+    if (Object.keys(respuestas).length === 0) {
+      localStorage.removeItem(draftStorageKey);
+      setAutosaveState('idle');
+      setLastSavedAt(null);
+      return undefined;
+    }
+
+    setAutosaveState('saving');
+    autosaveTimerRef.current = setTimeout(() => {
+      try {
+        const payload = {
+          version: AUTOSAVE_VERSION,
+          examen_id: examenId,
+          saved_at: Date.now(),
+          current_q: currentQ,
+          respuestas,
+        };
+        localStorage.setItem(draftStorageKey, JSON.stringify(payload));
+        setLastSavedAt(payload.saved_at);
+        setAutosaveState('saved');
+      } catch {
+        setAutosaveState('error');
+      }
+    }, AUTOSAVE_DEBOUNCE_MS);
+
+    return () => {
+      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    };
+  }, [respuestas, currentQ, loading, examen, submitting, draftStorageKey, examenId]);
+
+  useEffect(() => {
+    const flushDraft = () => {
+      if (loading || !examen || submitting || Object.keys(respuestas).length === 0) return;
+      try {
+        localStorage.setItem(draftStorageKey, JSON.stringify({
+          version: AUTOSAVE_VERSION,
+          examen_id: examenId,
+          saved_at: Date.now(),
+          current_q: currentQ,
+          respuestas,
+        }));
+      } catch { /* no-op */ }
+    };
+
+    window.addEventListener('beforeunload', flushDraft);
+    return () => window.removeEventListener('beforeunload', flushDraft);
+  }, [respuestas, currentQ, loading, examen, submitting, draftStorageKey, examenId]);
+
   const handleSubmit = async () => {
     setSubmitting(true);
     try {
@@ -176,6 +280,9 @@ export default function ResolverExamen() {
       } else {
         toast.success('¡Respuestas enviadas exitosamente!');
       }
+      localStorage.removeItem(draftStorageKey);
+      setAutosaveState('idle');
+      setLastSavedAt(null);
       navigate('/estudiante/notas');
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Error enviando respuestas');
@@ -201,6 +308,14 @@ export default function ResolverExamen() {
   const answered = preguntas.filter(p => respuestas[p.numero] !== undefined && respuestas[p.numero] !== '').length;
   const progress = totalQ > 0 ? (answered / totalQ) * 100 : 0;
   const currentPregunta = preguntas[currentQ];
+  const autosaveLabel = autosaveState === 'saving'
+    ? 'Guardando borrador...'
+    : autosaveState === 'saved'
+      ? `Borrador guardado${lastSavedAt ? ` a las ${new Date(lastSavedAt).toLocaleTimeString()}` : ''}`
+      : autosaveState === 'error'
+        ? 'No se pudo guardar el borrador'
+        : 'Borrador automatico activo';
+  const autosaveColor = autosaveState === 'error' ? 'text-red-200' : 'text-primary-100';
 
   return (
     <div className="max-w-4xl mx-auto">
@@ -223,6 +338,16 @@ export default function ResolverExamen() {
             <div className="flex items-center gap-2 bg-white/10 rounded-xl px-4 py-2 backdrop-blur-sm">
               <Clock className="w-5 h-5" />
               <span className="text-xl font-mono font-bold">{formatTime(elapsed)}</span>
+            </div>
+            <div className={`mt-2 text-xs flex items-center justify-end gap-1 ${autosaveColor}`}>
+              {autosaveState === 'saving' ? (
+                <Loader2 className="w-3 h-3 animate-spin" />
+              ) : autosaveState === 'error' ? (
+                <AlertTriangle className="w-3 h-3" />
+              ) : (
+                <CheckCircle2 className="w-3 h-3" />
+              )}
+              <span>{autosaveLabel}</span>
             </div>
           </div>
         </div>

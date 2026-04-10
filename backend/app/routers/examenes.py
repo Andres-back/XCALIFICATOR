@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from app.core.database import get_db
 from app.core.dependencies import require_role, get_current_user
+from app.core.latex_utils import normalize_latex_payload
 from app.models.models import User, Examen, Materia, Nota, Matricula, RespuestaOnline
 from app.schemas.schemas import (
     ExamenCreate, ExamenOut, ExamenProfesorOut,
@@ -19,6 +20,51 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/examenes", tags=["Exámenes"])
 
 
+async def _assert_materia_access(
+    db: AsyncSession,
+    materia_id: str,
+    current_user: User,
+    allow_student: bool = False,
+) -> Materia:
+    materia_result = await db.execute(select(Materia).where(Materia.id == materia_id))
+    materia = materia_result.scalar_one_or_none()
+    if not materia:
+        raise HTTPException(status_code=404, detail="Materia no encontrada")
+
+    if current_user.rol == "profesor" and str(materia.profesor_id) != str(current_user.id):
+        raise HTTPException(status_code=403, detail="Sin permiso")
+
+    if current_user.rol == "estudiante":
+        if not allow_student:
+            raise HTTPException(status_code=403, detail="Sin permiso")
+
+        enrollment_result = await db.execute(
+            select(Matricula.id).where(
+                Matricula.materia_id == materia_id,
+                Matricula.estudiante_id == current_user.id,
+            )
+        )
+        if not enrollment_result.scalar_one_or_none():
+            raise HTTPException(status_code=403, detail="No estás inscrito en esta materia")
+
+    return materia
+
+
+async def _assert_examen_access(
+    db: AsyncSession,
+    examen_id: str,
+    current_user: User,
+    allow_student: bool = False,
+) -> Examen:
+    examen_result = await db.execute(select(Examen).where(Examen.id == examen_id))
+    examen = examen_result.scalar_one_or_none()
+    if not examen:
+        raise HTTPException(status_code=404, detail="Examen no encontrado")
+
+    await _assert_materia_access(db, str(examen.materia_id), current_user, allow_student=allow_student)
+    return examen
+
+
 # ──────── AUTO-GRADING HELPER ────────
 
 def _normalize(s: str) -> str:
@@ -26,6 +72,36 @@ def _normalize(s: str) -> str:
     if not s:
         return ""
     return s.strip().lower().replace("á","a").replace("é","e").replace("í","i").replace("ó","o").replace("ú","u")
+
+
+def _normalize_question_statements(content: dict | None) -> dict | None:
+    """Ensure exam questions expose enunciado and pregunta for frontend compatibility."""
+    if not isinstance(content, dict):
+        return content
+
+    preguntas = content.get("preguntas")
+    if not isinstance(preguntas, list):
+        return content
+
+    normalized = []
+    for item in preguntas:
+        if not isinstance(item, dict):
+            normalized.append(item)
+            continue
+
+        q = dict(item)
+        enunciado = q.get("enunciado") or q.get("pregunta") or q.get("texto") or q.get("statement")
+        if isinstance(enunciado, str) and enunciado.strip():
+            normalized_enunciado = normalize_latex_payload(enunciado)
+            q["enunciado"] = normalized_enunciado
+            q["pregunta"] = normalized_enunciado
+
+        if isinstance(q.get("opciones"), list):
+            q["opciones"] = normalize_latex_payload(q["opciones"])
+        normalized.append(q)
+
+    content["preguntas"] = normalized
+    return content
 
 
 def auto_grade_objective(examen: Examen, respuestas_json: dict) -> dict | None:
@@ -302,6 +378,8 @@ async def create_nota(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("profesor", "admin")),
 ):
+    await _assert_examen_access(db, str(data.examen_id), current_user)
+
     nota = Nota(
         estudiante_id=data.estudiante_id,
         examen_id=data.examen_id,
@@ -327,6 +405,8 @@ async def update_nota(
     if not nota:
         raise HTTPException(status_code=404, detail="Nota no encontrada")
 
+    await _assert_examen_access(db, str(nota.examen_id), current_user)
+
     if data.nota is not None:
         nota.nota = data.nota
     if data.detalle_json is not None:
@@ -348,6 +428,9 @@ async def delete_nota(
     nota = result.scalar_one_or_none()
     if not nota:
         raise HTTPException(status_code=404, detail="Nota no encontrada")
+
+    await _assert_examen_access(db, str(nota.examen_id), current_user)
+
     await db.delete(nota)
     await db.commit()
 
@@ -361,9 +444,21 @@ async def get_notas_estudiante(
     if current_user.rol == "estudiante" and str(current_user.id) != estudiante_id:
         raise HTTPException(status_code=403, detail="Sin permiso")
 
-    result = await db.execute(
-        select(Nota).where(Nota.estudiante_id == estudiante_id).order_by(Nota.created_at.desc())
-    )
+    query = select(Nota).where(Nota.estudiante_id == estudiante_id).order_by(Nota.created_at.desc())
+
+    if current_user.rol == "profesor":
+        query = (
+            select(Nota)
+            .join(Examen, Nota.examen_id == Examen.id)
+            .join(Materia, Examen.materia_id == Materia.id)
+            .where(
+                Nota.estudiante_id == estudiante_id,
+                Materia.profesor_id == current_user.id,
+            )
+            .order_by(Nota.created_at.desc())
+        )
+
+    result = await db.execute(query)
     return [NotaOut.model_validate(n) for n in result.scalars().all()]
 
 
@@ -373,18 +468,35 @@ async def get_notas_examen(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("profesor", "admin")),
 ):
+    examen = await _assert_examen_access(db, examen_id, current_user)
+
     result = await db.execute(
         select(Nota)
         .options(selectinload(Nota.estudiante))
         .where(Nota.examen_id == examen_id)
         .order_by(Nota.created_at.desc())
     )
+
+    respuestas_result = await db.execute(
+        select(RespuestaOnline)
+        .where(RespuestaOnline.examen_id == examen_id)
+    )
+    respuestas_map = {str(r.estudiante_id): r for r in respuestas_result.scalars().all()}
+
     out = []
     for n in result.scalars().all():
         d = NotaOut.model_validate(n)
         if n.estudiante:
             d.estudiante_nombre = n.estudiante.nombre
             d.estudiante_apellido = n.estudiante.apellido
+        if examen:
+            d.examen_titulo = examen.titulo
+            d.examen_tipo = examen.tipo
+            d.examen_contenido_json = examen.contenido_json
+        r = respuestas_map.get(str(n.estudiante_id))
+        if r:
+            d.respuestas_json = r.respuestas_json
+            d.enviado_at = r.enviado_at
         out.append(d)
     return out
 
@@ -396,6 +508,8 @@ async def get_examen_stats(
     current_user: User = Depends(require_role("profesor", "admin")),
 ):
     """Detailed exam statistics for professor dashboard."""
+    await _assert_examen_access(db, examen_id, current_user)
+
     result = await db.execute(
         select(Nota)
         .options(selectinload(Nota.estudiante))
@@ -505,10 +619,7 @@ async def submit_response(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("estudiante")),
 ):
-    result = await db.execute(select(Examen).where(Examen.id == data.examen_id))
-    examen = result.scalar_one_or_none()
-    if not examen:
-        raise HTTPException(status_code=404, detail="Examen no encontrado")
+    examen = await _assert_examen_access(db, str(data.examen_id), current_user, allow_student=True)
     if not examen.activo_online:
         raise HTTPException(status_code=400, detail="Este examen no está activo online")
 
@@ -580,19 +691,14 @@ async def create_examen(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("profesor", "admin")),
 ):
-    result = await db.execute(select(Materia).where(Materia.id == materia_id))
-    materia = result.scalar_one_or_none()
-    if not materia:
-        raise HTTPException(status_code=404, detail="Materia no encontrada")
-    if materia.profesor_id != current_user.id and current_user.rol != "admin":
-        raise HTTPException(status_code=403, detail="Sin permiso")
+    await _assert_materia_access(db, materia_id, current_user)
 
     examen = Examen(
         materia_id=materia_id,
         titulo=data.titulo,
         tipo=data.tipo,
-        contenido_json=data.contenido_json,
-        clave_respuestas=data.clave_respuestas,
+        contenido_json=normalize_latex_payload(data.contenido_json),
+        clave_respuestas=normalize_latex_payload(data.clave_respuestas),
         activo_online=data.activo_online,
         fecha_limite=data.fecha_limite,
     )
@@ -609,10 +715,7 @@ async def get_respuestas_online(
     current_user: User = Depends(require_role("profesor", "admin")),
 ):
     """List all online submissions for a given exam, with student info and grading status."""
-    result = await db.execute(select(Examen).where(Examen.id == examen_id))
-    examen = result.scalar_one_or_none()
-    if not examen:
-        raise HTTPException(status_code=404, detail="Examen no encontrado")
+    await _assert_examen_access(db, examen_id, current_user)
 
     result = await db.execute(
         select(RespuestaOnline)
@@ -658,6 +761,8 @@ async def get_examenes_by_materia(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    await _assert_materia_access(db, materia_id, current_user, allow_student=True)
+
     result = await db.execute(
         select(Examen).where(Examen.materia_id == materia_id).order_by(Examen.created_at.desc())
     )
@@ -674,20 +779,20 @@ async def get_examen(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(Examen).where(Examen.id == examen_id))
-    examen = result.scalar_one_or_none()
-    if not examen:
-        raise HTTPException(status_code=404, detail="Examen no encontrado")
+    examen = await _assert_examen_access(db, examen_id, current_user, allow_student=True)
 
     if current_user.rol == "estudiante":
         out = ExamenOut.model_validate(examen)
+        out.contenido_json = _normalize_question_statements(dict(out.contenido_json or {})) if out.contenido_json else out.contenido_json
         if out.contenido_json and "preguntas" in out.contenido_json:
             out.contenido_json["preguntas"] = [
                 {k: v for k, v in p.items() if k != "respuesta_correcta"}
                 for p in out.contenido_json["preguntas"]
             ]
         return out
-    return ExamenProfesorOut.model_validate(examen)
+    out = ExamenProfesorOut.model_validate(examen)
+    out.contenido_json = _normalize_question_statements(dict(out.contenido_json or {})) if out.contenido_json else out.contenido_json
+    return out
 
 
 @router.patch("/{examen_id}/toggle-online")
@@ -696,12 +801,7 @@ async def toggle_online(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("profesor", "admin")),
 ):
-    result = await db.execute(
-        select(Examen).where(Examen.id == examen_id)
-    )
-    examen = result.scalar_one_or_none()
-    if not examen:
-        raise HTTPException(status_code=404, detail="Examen no encontrado")
+    examen = await _assert_examen_access(db, examen_id, current_user)
 
     was_active = examen.activo_online
     examen.activo_online = not examen.activo_online
@@ -741,15 +841,14 @@ async def update_examen(
     current_user: User = Depends(require_role("profesor", "admin")),
 ):
     """Update exam fields (titulo, contenido_json, clave_respuestas, activo_online, fecha_limite, fecha_activacion)."""
-    result = await db.execute(select(Examen).where(Examen.id == examen_id))
-    examen = result.scalar_one_or_none()
-    if not examen:
-        raise HTTPException(status_code=404, detail="Examen no encontrado")
+    examen = await _assert_examen_access(db, examen_id, current_user)
 
     allowed_fields = {"titulo", "contenido_json", "clave_respuestas", "activo_online", "fecha_limite", "fecha_activacion", "tipo"}
     date_fields = {"fecha_limite", "fecha_activacion"}
     for field, value in data.items():
         if field in allowed_fields:
+            if field in {"contenido_json", "clave_respuestas"}:
+                value = normalize_latex_payload(value)
             if field in date_fields and value:
                 # Parse date string to proper datetime
                 try:
@@ -787,6 +886,8 @@ async def send_feedback_to_student(
     nota = result.scalar_one_or_none()
     if not nota:
         raise HTTPException(status_code=404, detail="Nota no encontrada")
+
+    await _assert_examen_access(db, str(nota.examen_id), current_user)
 
     # Get student
     student_result = await db.execute(select(User).where(User.id == nota.estudiante_id))
@@ -846,9 +947,6 @@ async def delete_examen(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("profesor", "admin")),
 ):
-    result = await db.execute(select(Examen).where(Examen.id == examen_id))
-    examen = result.scalar_one_or_none()
-    if not examen:
-        raise HTTPException(status_code=404, detail="Examen no encontrado")
+    examen = await _assert_examen_access(db, examen_id, current_user)
     await db.delete(examen)
     await db.commit()

@@ -11,7 +11,7 @@ client = Groq(api_key=settings.GROQ_API_KEY)
 # Model assignments per task
 MODELS = {
     "grading": "llama-3.3-70b-versatile",
-    "exam_generation": "meta-llama/llama-4-maverick-17b-128e-instruct",
+    "exam_generation": "llama-3.3-70b-versatile",
     "rag_chat": "meta-llama/llama-4-scout-17b-16e-instruct",
     "classification": "llama-3.1-8b-instant",
 }
@@ -43,6 +43,11 @@ NO agregues texto fuera del JSON. NO uses markdown (excepto notación matemátic
 Cada pregunta debe tener numeración clara (1., 2., 3...).
 Las opciones de selección múltiple deben usar formato A) B) C) D).
 Si el tema involucra matemáticas, física, química u otra materia con fórmulas, SIEMPRE escribe las fórmulas usando notación LaTeX: usa $...$ para fórmulas en línea y $$...$$ para fórmulas centradas. Ejemplos: $x^2 + y^2 = r^2$, $\\frac{{a}}{{b}}$, $\\sqrt{{x}}$, $\\int_0^1 x^2 dx$.
+Reglas estrictas de formato matemático: NO uses notación ASCII como a/b, sqrt(x), sen(x) sin LaTeX o x**2; convierte todo a LaTeX válido (por ejemplo $\\frac{{a}}{{b}}$, $\\sqrt{{x}}$, $\\sin(x)$, $x^2$) y encierra SIEMPRE cada fórmula entre delimitadores $...$ o $$...$$.
+Como la salida es JSON, recuerda escapar cada barra invertida en strings (ejemplo: para representar $\\frac{{1}}{{2}}$ en JSON debes escribir \\\\frac{{1}}{{2}}).
+Si aparecen MATRICES, usa SIEMPRE notación LaTeX de matriz (por ejemplo $\\begin{{pmatrix}}1 & 2 \\\\ 3 & 4\\end{{pmatrix}}$) y NO uses formatos planos como (1 2 3 4).
+Si aparecen LOGARITMOS, usa SIEMPRE $\\log_{{b}}(x)$ indicando base correctamente (ej: $\\log_{{2}}(8)$, $\\log_{{10}}(100)$).
+Antes de responder, verifica coherencia matemática de cada pregunta: la respuesta_correcta debe ser consistente con el enunciado y opciones.
 Incluye la respuesta correcta en el campo 'respuesta_correcta' (NO visible en la version estudiante).
 Ajusta la dificultad al nivel: {nivel}.{grado_instruccion}
 Tema: {tema}
@@ -181,6 +186,9 @@ REGLAS OBLIGATORIAS:
 3. NO repitas la misma palabra en horizontales y verticales.
 4. Cada pista debe ser una descripción clara y educativa.
 5. NO generes grid, size, fila, columna ni longitud. Solo palabras y pistas.
+6. Longitud recomendada por palabra: entre 4 y 8 letras (máximo 10).
+7. Evita tecnicismos muy largos o palabras compuestas difíciles de cruzar.
+8. Mantén equilibrio semántico: horizontales y verticales deben tener dificultad similar.
 
 Responde SOLO con JSON válido:
 {{
@@ -427,8 +435,24 @@ Schema JSON EXACTO requerido:
     return json.loads(chat.choices[0].message.content)
 
 
-async def generate_coloring_prompt(descripcion: str) -> str:
+async def generate_coloring_prompt(descripcion: str, allow_letters: bool = False) -> str:
     """Translate a Spanish coloring-page description into a detailed English image prompt."""
+    if allow_letters:
+        constraints = (
+            "The prompt must: describe cute educational elements clearly, specify 'coloring book page', "
+            "'thick clean black outlines', 'white background', 'no color', 'no shading', "
+            "'printable line art', 'kid-friendly'. "
+            "If the request is about vowels/alphabet/syllables, include large uppercase tracing letters "
+            "requested by the user (for example A E I O U) with dotted guides. "
+            "Avoid decorative full sentences."
+        )
+    else:
+        constraints = (
+            "The prompt must: describe cute cartoon characters clearly, specify 'coloring book page', "
+            "'thick clean black outlines', 'white background', 'no color', 'no shading', 'no text', "
+            "'no words', 'no letters', 'no title', 'printable line art', 'kid-friendly'."
+        )
+
     chat = client.chat.completions.create(
         model=MODELS["classification"],
         messages=[
@@ -438,9 +462,7 @@ async def generate_coloring_prompt(descripcion: str) -> str:
                     "You are an image-prompt specialist for children's coloring pages. "
                     "The user gives you a description in Spanish. "
                     "Return ONLY a single English image prompt (no explanations, no markdown). "
-                    "The prompt must: describe cute cartoon characters clearly, specify 'coloring book page', "
-                    "'thick clean black outlines', 'white background', 'no color', 'no shading', 'no text', "
-                    "'no words', 'no letters', 'no title', 'printable line art', 'kid-friendly'. "
+                    f"{constraints} "
                     "Be specific about the animals/characters requested. Keep it under 80 words."
                 ),
             },

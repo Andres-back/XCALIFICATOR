@@ -17,6 +17,22 @@ from reportlab.lib import colors
 router = APIRouter(prefix="/asistencia", tags=["Asistencia"])
 
 
+async def _assert_materia_access(
+    db: AsyncSession,
+    materia_id: str,
+    current_user: User,
+) -> Materia:
+    mat_result = await db.execute(select(Materia).where(Materia.id == materia_id))
+    materia = mat_result.scalar_one_or_none()
+    if not materia:
+        raise HTTPException(status_code=404, detail="Materia no encontrada")
+
+    if current_user.rol == "profesor" and str(materia.profesor_id) != str(current_user.id):
+        raise HTTPException(status_code=403, detail="Sin permiso para esta materia")
+
+    return materia
+
+
 @router.get("/materia/{materia_id}")
 async def get_asistencia_by_materia(
     materia_id: str,
@@ -25,6 +41,8 @@ async def get_asistencia_by_materia(
     current_user: User = Depends(require_role("profesor", "admin")),
 ):
     """Get attendance records for a materia, optionally filtered by date."""
+    await _assert_materia_access(db, materia_id, current_user)
+
     query = select(Asistencia).where(Asistencia.materia_id == materia_id)
     if fecha:
         query = query.where(Asistencia.fecha == fecha)
@@ -52,6 +70,8 @@ async def get_attendance_dates(
     current_user: User = Depends(require_role("profesor", "admin")),
 ):
     """Get unique dates on which attendance was registered for a materia."""
+    await _assert_materia_access(db, materia_id, current_user)
+
     result = await db.execute(
         select(Asistencia.fecha)
         .where(Asistencia.materia_id == materia_id)
@@ -69,15 +89,19 @@ async def register_asistencia(
     current_user: User = Depends(require_role("profesor", "admin")),
 ):
     """Register attendance for a date. Upserts records."""
-    # Verify materia
-    mat_result = await db.execute(select(Materia).where(Materia.id == materia_id))
-    materia = mat_result.scalar_one_or_none()
-    if not materia:
-        raise HTTPException(status_code=404, detail="Materia no encontrada")
+    await _assert_materia_access(db, materia_id, current_user)
+
+    matriculas_result = await db.execute(
+        select(Matricula.estudiante_id).where(Matricula.materia_id == materia_id)
+    )
+    enrolled_ids = {str(sid) for sid in matriculas_result.scalars().all()}
 
     created = []
     for reg in data.registros:
         est_id = reg.get("estudiante_id")
+        if str(est_id) not in enrolled_ids:
+            raise HTTPException(status_code=400, detail=f"El estudiante {est_id} no está inscrito en esta materia")
+
         estado = reg.get("estado", "presente")
         obs = reg.get("observacion", "")
 
@@ -117,6 +141,17 @@ async def get_student_attendance(
     current_user: User = Depends(require_role("profesor", "admin")),
 ):
     """Get attendance history for a specific student in a materia."""
+    await _assert_materia_access(db, materia_id, current_user)
+
+    enrolled_result = await db.execute(
+        select(Matricula.id).where(
+            Matricula.materia_id == materia_id,
+            Matricula.estudiante_id == estudiante_id,
+        )
+    )
+    if not enrolled_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="El estudiante no está inscrito en esta materia")
+
     result = await db.execute(
         select(Asistencia)
         .where(
@@ -151,10 +186,7 @@ async def export_attendance_pdf(
     current_user: User = Depends(require_role("profesor", "admin")),
 ):
     """Export a printable attendance list as PDF."""
-    mat_result = await db.execute(select(Materia).where(Materia.id == materia_id))
-    materia = mat_result.scalar_one_or_none()
-    if not materia:
-        raise HTTPException(status_code=404, detail="Materia no encontrada")
+    materia = await _assert_materia_access(db, materia_id, current_user)
 
     # Get students
     est_result = await db.execute(

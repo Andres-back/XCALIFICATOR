@@ -324,7 +324,14 @@ GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxxxxxx
 # ─── Google OAuth (opcional) ──────────────────────────────────
 GOOGLE_CLIENT_ID=xxxxxxxxxxxx.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=GOCSPX-xxxxxxxxxxxxxx
-GOOGLE_REDIRECT_URI=http://localhost/api/auth/google/callback
+VITE_GOOGLE_CLIENT_ID=xxxxxxxxxxxx.apps.googleusercontent.com
+
+# En Google Cloud Console (OAuth 2.0 Client ID tipo "Web application")
+# agrega en "Authorized JavaScript origins":
+# - http://localhost
+# - http://localhost:3000
+# - http://127.0.0.1
+# - http://127.0.0.1:3000
 
 # ─── Frontend ─────────────────────────────────────────────────
 VITE_API_URL=http://localhost/api

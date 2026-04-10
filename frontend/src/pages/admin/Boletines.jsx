@@ -8,6 +8,16 @@ import {
 } from 'lucide-react';
 import EmptyState from '../../components/EmptyState';
 
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export default function AdminBoletines() {
   const [periodos, setPeriodos] = useState([]);
   const [selectedPeriodo, setSelectedPeriodo] = useState('');
@@ -116,7 +126,7 @@ export default function AdminBoletines() {
   };
 
   const printPages = (pagesHtml, title) => {
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${title}</title>
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${escapeHtml(title || '')}</title>
       <style>
         @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -406,7 +416,7 @@ export default function AdminBoletines() {
 // ── Print HTML builders ──
 
 function buildGlobalBoletinHtml(est, periodoNombre) {
-  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Boletín - ${est.nombre}</title>
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Boletín - ${escapeHtml(est.nombre || 'Estudiante')}</title>
     <style>
       @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
       * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -424,11 +434,17 @@ function buildGlobalBoletinPageHtml(est, periodoNombre) {
     return '#dc2626';
   };
 
+  const safePeriodoNombre = escapeHtml(periodoNombre || '');
+  const safeNombre = escapeHtml(est.nombre || 'N/A');
+  const safeDocumento = escapeHtml(est.documento || 'N/A');
+  const safeGrado = escapeHtml(est.grado || 'N/A');
+
   const materiasRows = est.materias.map(m => {
     const a = m.desglose_json?.asistencia;
+    const safeMateriaNombre = escapeHtml(m.materia_nombre || '');
     return `
     <tr>
-      <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-weight:500">${m.materia_nombre}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-weight:500">${safeMateriaNombre}</td>
       <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;text-align:center">
         <span style="font-weight:700;color:${getColor(m.nota_final)};font-size:16px">${m.nota_final.toFixed(2)}</span>
       </td>
@@ -452,22 +468,22 @@ function buildGlobalBoletinPageHtml(est, periodoNombre) {
       <div style="text-align:center;margin-bottom:25px;border-bottom:3px solid #6d28d9;padding-bottom:15px">
         <h1 style="font-size:24px;font-weight:700;color:#6d28d9;margin-bottom:4px">xCalificator</h1>
         <h2 style="font-size:16px;font-weight:600;color:#374151;margin-bottom:2px">Boletín de Calificaciones</h2>
-        <p style="font-size:13px;color:#6b7280">${periodoNombre}</p>
+        <p style="font-size:13px;color:#6b7280">${safePeriodoNombre}</p>
       </div>
 
       <!-- Student info -->
       <div style="display:flex;justify-content:space-between;margin-bottom:20px;padding:12px 16px;background:#f9fafb;border-radius:10px;border:1px solid #e5e7eb">
         <div>
           <p style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px">Estudiante</p>
-          <p style="font-size:16px;font-weight:600">${est.nombre}</p>
+          <p style="font-size:16px;font-weight:600">${safeNombre}</p>
         </div>
         <div style="text-align:center">
           <p style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px">Documento</p>
-          <p style="font-size:14px;font-weight:500">${est.documento}</p>
+          <p style="font-size:14px;font-weight:500">${safeDocumento}</p>
         </div>
         <div style="text-align:right">
           <p style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px">Grado</p>
-          <p style="font-size:14px;font-weight:500">${est.grado || 'N/A'}</p>
+          <p style="font-size:14px;font-weight:500">${safeGrado}</p>
         </div>
       </div>
 

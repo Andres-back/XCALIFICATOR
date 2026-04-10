@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import api from '../../api';
 import toast from 'react-hot-toast';
+import * as XLSX from 'xlsx';
 import {
-  BarChart3, Save, Loader2, Send, Settings2, Hand,
+  BarChart3, Save, Loader2, Send, Settings2, Hand, FileSpreadsheet,
 } from 'lucide-react';
 import EmptyState from '../../components/EmptyState';
 
@@ -19,6 +20,12 @@ const SPECIAL_ITEMS = [
   { key: '__asistencia__', label: 'Asistencia (5.0 − faltas×0.3)', icon: '📋' },
   { key: '__participacion__', label: 'Participación', icon: '🤚' },
 ];
+
+function toFixedSafe(value, decimals = 2) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return n.toFixed(decimals);
+}
 
 export default function MateriaReportes({ materiaId, materiaNombre }) {
   const [periodos, setPeriodos] = useState([]);
@@ -196,6 +203,61 @@ export default function MateriaReportes({ materiaId, materiaNombre }) {
     ));
   };
 
+  const hasAsistencia = reporte?.config_porcentajes?.['__asistencia__'];
+  const hasParticipacion = reporte?.config_porcentajes?.['__participacion__'];
+
+  const exportReporteExcel = () => {
+    if (!reporte || !Array.isArray(reporte.estudiantes) || reporte.estudiantes.length === 0) {
+      toast.error('Genera el reporte antes de exportar');
+      return;
+    }
+
+    const notasRows = reporte.estudiantes.map((est) => {
+      const row = {
+        Estudiante: est.nombre,
+      };
+
+      (est.actividades || []).forEach((act) => {
+        const colName = `${act.titulo} (${TIPO_LABELS[act.tipo] || act.tipo})`;
+        row[colName] = Number(toFixedSafe(act.nota, 2));
+      });
+
+      if (hasAsistencia) row[`Asistencia (${hasAsistencia}%)`] = Number(toFixedSafe(est.asistencia?.nota, 2));
+      if (hasParticipacion) row[`Participación (${hasParticipacion}%)`] = Number(toFixedSafe(est.nota_participacion, 2));
+
+      row['Nota Final'] = Number(toFixedSafe(est.nota_final, 2));
+      row.Presentes = est.asistencia?.presente || 0;
+      row.Ausentes = est.asistencia?.ausente || 0;
+      row.Tardanzas = est.asistencia?.tardanza || 0;
+
+      return row;
+    });
+
+    const resumenRows = [
+      {
+        Materia: materiaNombre,
+        Periodo: reporte.periodo?.nombre || 'Período',
+        Estudiantes: reporte.estudiantes.length,
+      },
+      ...Object.entries(reporte.config_porcentajes || {}).map(([key, pct]) => ({
+        Materia: materiaNombre,
+        Periodo: reporte.periodo?.nombre || 'Período',
+        Configuracion: getConfigLabel(key),
+        Porcentaje: pct,
+      })),
+    ];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(notasRows), 'Notas');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumenRows), 'Resumen');
+
+    const safeMateria = String(materiaNombre || 'materia').toLowerCase().replace(/\s+/g, '-');
+    const safePeriodo = String(reporte.periodo?.nombre || 'periodo').toLowerCase().replace(/\s+/g, '-');
+    const dateTag = new Date().toISOString().slice(0, 10);
+
+    XLSX.writeFile(wb, `reporte-notas-${safeMateria}-${safePeriodo}-${dateTag}.xlsx`);
+  };
+
   if (loading) return (
     <div className="flex justify-center py-10">
       <Loader2 className="w-6 h-6 text-primary-500 animate-spin" />
@@ -206,9 +268,6 @@ export default function MateriaReportes({ materiaId, materiaNombre }) {
     <EmptyState icon={BarChart3} title="No hay períodos configurados"
       description="Pide al administrador que configure los períodos académicos para habilitar reportes." />
   );
-
-  const hasAsistencia = reporte?.config_porcentajes?.['__asistencia__'];
-  const hasParticipacion = reporte?.config_porcentajes?.['__participacion__'];
 
   return (
     <div className="space-y-6">
@@ -237,6 +296,10 @@ export default function MateriaReportes({ materiaId, materiaNombre }) {
             className="btn-primary text-sm flex items-center gap-1">
             {publishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
             Publicar Boletines
+          </button>
+          <button onClick={exportReporteExcel} disabled={!reporte}
+            className="btn-secondary text-sm flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
+            <FileSpreadsheet className="w-4 h-4" /> Exportar Excel
           </button>
         </div>
       </div>

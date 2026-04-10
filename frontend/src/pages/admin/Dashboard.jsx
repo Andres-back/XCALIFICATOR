@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
+import toast from 'react-hot-toast';
 import {
   Users, Activity, FileCheck, UserCheck, UserX, BookOpen,
   ClipboardList, Award, TrendingUp, Globe, UserPlus, ShieldCheck,
   GraduationCap, Briefcase, Cpu, Zap, Clock, BarChart3,
-  Monitor, Wifi, WifiOff, Smartphone, RefreshCw,
+  Monitor, Wifi, WifiOff, Smartphone, RefreshCw, Wrench,
+  FileText, Grid3X3, Search, Link2, BookMarked, Palette,
 } from 'lucide-react';
 
 export default function AdminDashboard() {
@@ -16,6 +18,8 @@ export default function AdminDashboard() {
   const [activeSessions, setActiveSessions] = useState([]);
   const [sessionHistory, setSessionHistory] = useState([]);
   const [sessionTab, setSessionTab] = useState('activas');
+  const [toolFlags, setToolFlags] = useState([]);
+  const [savingToolFlag, setSavingToolFlag] = useState({});
 
   const fetchSessions = () => {
     Promise.all([
@@ -32,11 +36,13 @@ export default function AdminDashboard() {
       api.get('/admin/stats'),
       api.get('/admin/users'),
       api.get('/admin/api-usage').catch(() => ({ data: null })),
+      api.get('/admin/herramientas-flags').catch(() => ({ data: [] })),
     ])
-      .then(([statsRes, usersRes, usageRes]) => {
+      .then(([statsRes, usersRes, usageRes, flagsRes]) => {
         setStats(statsRes.data);
         setRecentUsers(usersRes.data.slice(0, 5));
         setApiUsage(usageRes.data);
+        setToolFlags(Array.isArray(flagsRes.data) ? flagsRes.data : []);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -74,6 +80,28 @@ export default function AdminDashboard() {
   ];
   const totalForBar = roleDistribution.reduce((s, r) => s + r.count, 0) || 1;
 
+  const toolMeta = {
+    examen: { icon: FileText, color: 'text-blue-600 bg-blue-50 border-blue-200' },
+    crucigrama: { icon: Grid3X3, color: 'text-purple-600 bg-purple-50 border-purple-200' },
+    sopa_letras: { icon: Search, color: 'text-emerald-600 bg-emerald-50 border-emerald-200' },
+    emparejar: { icon: Link2, color: 'text-amber-600 bg-amber-50 border-amber-200' },
+    cuento: { icon: BookMarked, color: 'text-rose-600 bg-rose-50 border-rose-200' },
+    para_colorear: { icon: Palette, color: 'text-teal-600 bg-teal-50 border-teal-200' },
+  };
+
+  const handleToggleTool = async (tipo, enabled) => {
+    setSavingToolFlag((prev) => ({ ...prev, [tipo]: true }));
+    try {
+      const res = await api.put(`/admin/herramientas-flags/${tipo}`, { enabled: !enabled });
+      setToolFlags((prev) => prev.map((f) => (f.tipo === tipo ? res.data : f)));
+      toast.success(`Herramienta ${res.data.enabled ? 'habilitada' : 'deshabilitada'}`);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'No se pudo actualizar la herramienta');
+    } finally {
+      setSavingToolFlag((prev) => ({ ...prev, [tipo]: false }));
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -87,6 +115,62 @@ export default function AdminDashboard() {
           </Link>
         </div>
       </div>
+
+      {toolFlags.length > 0 && (
+        <div className="card">
+          <div className="flex items-start justify-between gap-4 mb-4">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                <Wrench className="w-5 h-5 text-primary-600" /> Control de Herramientas IA
+              </h2>
+              <p className="text-xs text-gray-500 mt-1">
+                Habilita o bloquea tipos de herramientas para todos los profesores.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {toolFlags.map((flag) => {
+              const meta = toolMeta[flag.tipo] || {};
+              const Icon = meta.icon || Wrench;
+              const isSaving = !!savingToolFlag[flag.tipo];
+              return (
+                <div key={flag.tipo} className="border rounded-xl p-3 bg-white">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className={`w-8 h-8 rounded-lg border flex items-center justify-center ${meta.color || 'text-gray-600 bg-gray-50 border-gray-200'}`}>
+                        <Icon className="w-4 h-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-gray-900 truncate">{flag.label}</p>
+                        <p className={`text-[11px] ${flag.enabled ? 'text-emerald-600' : 'text-red-600'}`}>
+                          {flag.enabled ? 'Habilitada' : 'Deshabilitada'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleToggleTool(flag.tipo, flag.enabled)}
+                      disabled={isSaving}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                        flag.enabled ? 'bg-emerald-500' : 'bg-gray-300'
+                      } ${isSaving ? 'opacity-60 cursor-not-allowed' : ''}`}
+                      title={flag.enabled ? 'Deshabilitar herramienta' : 'Habilitar herramienta'}
+                    >
+                      <span
+                        className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${
+                          flag.enabled ? 'translate-x-5' : 'translate-x-0.5'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Main Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
