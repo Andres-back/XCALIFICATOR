@@ -3,7 +3,7 @@ import useAuthStore from '../store';
 import {
   LayoutDashboard, Users, BookOpen, FileText, Award,
   MessageCircle, Settings, LogOut, Menu, X,
-  Shield, ClipboardList, Wrench, BarChart3, Calendar, ScrollText,
+  Shield, ClipboardList, Wrench, BarChart3, Calendar, ScrollText, Cpu,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -14,6 +14,7 @@ const navItems = {
     { label: 'Materias', path: '/admin/materias', icon: BookOpen },
     { label: 'Períodos', path: '/admin/periodos', icon: Calendar },
     { label: 'Boletines', path: '/admin/boletines', icon: ScrollText },
+    { label: 'IA y OCR', path: '/admin/ai-config', icon: Cpu },
     { label: 'Impacto Tesis', path: '/admin/impacto', icon: ClipboardList },
     { label: 'Auditoría', path: '/admin/audit', icon: Shield },
   ],

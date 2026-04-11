@@ -1,14 +1,18 @@
 import io
-import json
+import base64
 import cv2
 import numpy as np
 import httpx
 import fitz  # PyMuPDF
 import pdfplumber
-from PIL import Image
+from groq import Groq
 from app.core.config import get_settings
 
 settings = get_settings()
+groq_client = Groq(api_key=settings.GROQ_API_KEY) if settings.GROQ_API_KEY else None
+
+OCR_PROVIDER_OPTIONS = {"paddleocr", "groq_vision", "ollama_vision"}
+DEFAULT_GROQ_OCR_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 
 
 def preprocess_image(image_bytes: bytes) -> np.ndarray:
@@ -57,6 +61,124 @@ async def ocr_with_paddle(image_bytes: bytes) -> str:
         response.raise_for_status()
         result = response.json()
         return result.get("text", "")
+
+
+async def ocr_with_groq_vision(image_bytes: bytes, model: str = DEFAULT_GROQ_OCR_MODEL) -> str:
+    """Extract text using a Groq vision-capable model."""
+    if groq_client is None:
+        raise RuntimeError("GROQ_API_KEY no configurada para OCR por visión")
+
+    encoded = base64.b64encode(image_bytes).decode("utf-8")
+    image_url = f"data:image/png;base64,{encoded}"
+    prompt = (
+        "Extrae TODO el texto visible de la imagen. "
+        "Devuelve solo texto plano, preservando el orden de lectura, "
+        "una línea por renglón y sin comentarios adicionales."
+    )
+
+    chat = groq_client.chat.completions.create(
+        model=model,
+        temperature=0,
+        max_tokens=4096,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": image_url}},
+                ],
+            }
+        ],
+    )
+    return (chat.choices[0].message.content or "").strip()
+
+
+async def ocr_with_ollama_vision(
+    image_bytes: bytes,
+    model: str | None = None,
+    ollama_url: str = "http://host.docker.internal:11434",
+) -> str:
+    """Extract text using an Ollama multimodal model."""
+    selected_model = str(model or "").strip()
+    if not selected_model:
+        raise ValueError("No hay modelo Ollama configurado para OCR")
+
+    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+    payload = {
+        "model": selected_model,
+        "stream": False,
+        "messages": [
+            {
+                "role": "user",
+                "content": (
+                    "Extrae TODO el texto visible de la imagen. "
+                    "Devuelve solo texto plano, preservando el orden de lectura, "
+                    "una línea por renglón y sin comentarios."
+                ),
+                "images": [image_b64],
+            }
+        ],
+    }
+
+    base_url = (ollama_url or "").strip().rstrip("/")
+    if not base_url:
+        base_url = "http://host.docker.internal:11434"
+
+    async with httpx.AsyncClient(timeout=90.0) as client:
+        response = await client.post(f"{base_url}/api/chat", json=payload)
+        response.raise_for_status()
+        result = response.json()
+
+    return (((result or {}).get("message") or {}).get("content") or "").strip()
+
+
+async def _ocr_with_provider(
+    image_bytes: bytes,
+    provider: str,
+    model: str,
+    ollama_url: str,
+) -> str:
+    if provider == "paddleocr":
+        return await ocr_with_paddle(image_bytes)
+    if provider == "groq_vision":
+        selected_model = model or DEFAULT_GROQ_OCR_MODEL
+        return await ocr_with_groq_vision(image_bytes, selected_model)
+    if provider == "ollama_vision":
+        return await ocr_with_ollama_vision(image_bytes, model, ollama_url)
+    raise ValueError(f"Proveedor OCR no soportado: {provider}")
+
+
+async def _ocr_with_fallback(image_bytes: bytes, provider_config: dict | None = None) -> str:
+    cfg = provider_config or {}
+    primary = str(cfg.get("ocr_provider") or "paddleocr").strip().lower()
+    if primary not in OCR_PROVIDER_OPTIONS:
+        primary = "paddleocr"
+
+    fallback = cfg.get("ocr_fallback_provider")
+    fallback = str(fallback).strip().lower() if fallback else None
+    if fallback and fallback not in OCR_PROVIDER_OPTIONS:
+        fallback = None
+
+    primary_model = str(cfg.get("ocr_model") or "").strip()
+    fallback_model = str(cfg.get("ocr_fallback_model") or "").strip()
+    ollama_url = str(cfg.get("ollama_url") or "http://host.docker.internal:11434").strip()
+
+    attempts: list[tuple[str, str]] = [(primary, primary_model)]
+    if fallback and fallback != "none":
+        if fallback != primary or fallback_model != primary_model:
+            attempts.append((fallback, fallback_model))
+
+    errors = []
+    for provider, model in attempts:
+        try:
+            text = await _ocr_with_provider(image_bytes, provider, model, ollama_url)
+            if isinstance(text, str) and text.strip():
+                return text
+            errors.append(f"{provider}({model or 'sin_modelo'}): texto vacío")
+        except Exception as exc:
+            errors.append(f"{provider}({model or 'sin_modelo'}): {str(exc)}")
+
+    raise RuntimeError("No fue posible extraer texto con OCR configurado. " + " | ".join(errors))
 
 
 def extract_text_from_pdf(pdf_bytes: bytes) -> str:
@@ -156,7 +278,7 @@ def parse_exam_text(raw_text: str) -> list[dict]:
     return [questions_map[num] for num in sorted(questions_map.keys())]
 
 
-async def process_exam_image(file_bytes: bytes, filename: str) -> dict:
+async def process_exam_image(file_bytes: bytes, filename: str, provider_config: dict | None = None) -> dict:
     """Full pipeline: preprocess → OCR → parse."""
     is_pdf = filename.lower().endswith(".pdf")
 
@@ -174,7 +296,7 @@ async def process_exam_image(file_bytes: bytes, filename: str) -> dict:
                 img_bytes = pix.tobytes("png")
                 processed = preprocess_image(img_bytes)
                 proc_bytes = image_to_bytes(processed)
-                page_text = await ocr_with_paddle(proc_bytes)
+                page_text = await _ocr_with_fallback(proc_bytes, provider_config)
                 all_text.append(page_text)
             doc.close()
             text = "\n".join(all_text)
@@ -183,7 +305,7 @@ async def process_exam_image(file_bytes: bytes, filename: str) -> dict:
         # Image processing
         processed = preprocess_image(file_bytes)
         proc_bytes = image_to_bytes(processed)
-        text = await ocr_with_paddle(proc_bytes)
+        text = await _ocr_with_fallback(proc_bytes, provider_config)
         writing_type = "manuscrito"
 
     questions = parse_exam_text(text)

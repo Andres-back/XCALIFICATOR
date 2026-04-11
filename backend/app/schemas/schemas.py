@@ -87,6 +87,43 @@ class UserUpdate(BaseModel):
     celular: Optional[str] = None
 
 
+class LocalAIConfigUpdate(BaseModel):
+    ollama_url: Optional[str] = None
+    grading_local_model: Optional[str] = None
+    ocr_local_model: Optional[str] = None
+
+    @field_validator("ollama_url", mode="before")
+    @classmethod
+    def validate_ollama_url(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        value = str(v).strip()
+        if not value:
+            return None
+        if not (value.startswith("http://") or value.startswith("https://")):
+            raise ValueError("La URL de Ollama debe iniciar con http:// o https://")
+        return value.rstrip("/")
+
+    @field_validator("grading_local_model", "ocr_local_model", mode="before")
+    @classmethod
+    def validate_local_model_name(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        value = str(v).strip()
+        return value or None
+
+
+class LocalAIConfigOut(BaseModel):
+    ollama_url: str
+    grading_local_model: Optional[str] = None
+    ocr_local_model: Optional[str] = None
+
+
+class LocalOllamaModelsOut(BaseModel):
+    ollama_url: str
+    models: list[str] = []
+
+
 class AdminUserCreate(BaseModel):
     nombre: str
     apellido: str
@@ -377,6 +414,141 @@ class HerramientaFlagOut(BaseModel):
     tipo: str
     label: str
     enabled: bool
+    updated_at: Optional[datetime] = None
+    updated_by: Optional[UUID] = None
+
+
+AI_GRADING_PROVIDER_VALUES = {"groq", "ollama"}
+AI_OCR_PROVIDER_VALUES = {"paddleocr", "groq_vision", "ollama_vision"}
+
+
+class ProfesorAIConfigUpdate(BaseModel):
+    grading_provider: Optional[str] = None
+    grading_model: Optional[str] = None
+    grading_fallback_provider: Optional[str] = None
+    grading_fallback_model: Optional[str] = None
+    ocr_provider: Optional[str] = None
+    ocr_model: Optional[str] = None
+    ocr_fallback_provider: Optional[str] = None
+    ocr_fallback_model: Optional[str] = None
+    chat_model: Optional[str] = None
+    ollama_url: Optional[str] = None
+
+    @field_validator("grading_provider", mode="before")
+    @classmethod
+    def validate_grading_provider(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        value = str(v).strip().lower()
+        if value not in AI_GRADING_PROVIDER_VALUES:
+            raise ValueError("Proveedor de calificación inválido")
+        return value
+
+    @field_validator("grading_fallback_provider", mode="before")
+    @classmethod
+    def validate_grading_fallback_provider(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        value = str(v).strip().lower()
+        if not value or value == "none":
+            return None
+        if value not in AI_GRADING_PROVIDER_VALUES:
+            raise ValueError("Proveedor fallback de calificación inválido")
+        return value
+
+    @field_validator("ocr_provider", mode="before")
+    @classmethod
+    def validate_ocr_provider(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        value = str(v).strip().lower()
+        if value not in AI_OCR_PROVIDER_VALUES:
+            raise ValueError("Proveedor OCR inválido")
+        return value
+
+    @field_validator("ocr_fallback_provider", mode="before")
+    @classmethod
+    def validate_ocr_fallback_provider(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        value = str(v).strip().lower()
+        if not value or value == "none":
+            return None
+        if value not in AI_OCR_PROVIDER_VALUES:
+            raise ValueError("Proveedor fallback OCR inválido")
+        return value
+
+    @field_validator(
+        "grading_model",
+        "grading_fallback_model",
+        "ocr_model",
+        "ocr_fallback_model",
+        "chat_model",
+        mode="before",
+    )
+    @classmethod
+    def validate_optional_model_name(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        value = str(v).strip()
+        return value or None
+
+    @field_validator("ollama_url", mode="before")
+    @classmethod
+    def validate_ollama_url(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        value = str(v).strip()
+        if not value:
+            return None
+        if not (value.startswith("http://") or value.startswith("https://")):
+            raise ValueError("La URL de Ollama debe iniciar con http:// o https://")
+        return value.rstrip("/")
+
+
+class ProfesorAIConfigOut(BaseModel):
+    profesor_id: UUID
+    profesor_nombre: str
+    profesor_correo: str
+    uses_global: bool = False
+    grading_provider: str
+    grading_model: Optional[str] = None
+    grading_fallback_provider: Optional[str] = None
+    grading_fallback_model: Optional[str] = None
+    ocr_provider: str
+    ocr_model: Optional[str] = None
+    ocr_fallback_provider: Optional[str] = None
+    ocr_fallback_model: Optional[str] = None
+    chat_model: Optional[str] = None
+    ollama_url: str
+    updated_at: Optional[datetime] = None
+    updated_by: Optional[UUID] = None
+
+
+class OllamaModelsOut(BaseModel):
+    profesor_id: Optional[UUID] = None
+    ollama_url: str
+    models: list[str] = []
+
+
+class GroqModelsOut(BaseModel):
+    all_models: list[str] = []
+    vision_models: list[str] = []
+    grading_models: list[str] = []
+    chatbot_models: list[str] = []
+
+
+class GlobalAIConfigOut(BaseModel):
+    grading_provider: str
+    grading_model: Optional[str] = None
+    grading_fallback_provider: Optional[str] = None
+    grading_fallback_model: Optional[str] = None
+    ocr_provider: str
+    ocr_model: Optional[str] = None
+    ocr_fallback_provider: Optional[str] = None
+    ocr_fallback_model: Optional[str] = None
+    chat_model: Optional[str] = None
+    ollama_url: str
     updated_at: Optional[datetime] = None
     updated_by: Optional[UUID] = None
 

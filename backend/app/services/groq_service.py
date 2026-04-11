@@ -1,4 +1,6 @@
 import json
+import re
+import httpx
 from groq import Groq
 from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal
@@ -15,6 +17,186 @@ MODELS = {
     "rag_chat": "meta-llama/llama-4-scout-17b-16e-instruct",
     "classification": "llama-3.1-8b-instant",
 }
+
+
+def _grade_system_prompt() -> str:
+    return """Eres un calificador académico experto y justo del sistema educativo colombiano.
+Califica cada respuesta del estudiante comparándola con la clave de respuestas.
+USA ESCALA DE CALIFICACIÓN COLOMBIANA: de 1.0 a 5.0 donde 5.0 es la nota máxima y 3.0 es el mínimo aprobatorio.
+Asigna notas proporcionales: si una pregunta vale X puntos, la nota parcial debe estar entre 0 y X.
+La nota_total y nota_maxima deben estar en escala de 1.0 a 5.0.
+Asigna una nota parcial si la respuesta es parcialmente correcta.
+Proporciona retroalimentación constructiva y específica para cada pregunta.
+
+Responde ÚNICAMENTE con JSON válido siguiendo este schema exacto:
+{
+  "nota_total": float (1.0-5.0),
+  "nota_maxima": 5.0,
+  "preguntas": [
+    {
+      "numero": int,
+      "respuesta_estudiante": "string",
+      "respuesta_correcta": "string",
+      "nota": float,
+      "nota_maxima": float,
+      "retroalimentacion": "string",
+      "correcto": boolean
+    }
+  ]
+}"""
+
+
+def _grade_user_message(
+    respuestas_estudiante: list[dict],
+    clave_respuestas: list[dict],
+    rubrica: str,
+) -> str:
+    return f"""Respuestas del estudiante:
+{json.dumps(respuestas_estudiante, ensure_ascii=False, indent=2)}
+
+Clave de respuestas:
+{json.dumps(clave_respuestas, ensure_ascii=False, indent=2)}
+
+Rúbrica adicional: {rubrica if rubrica else "Calificación estándar"}"""
+
+
+def _extract_json_from_text(raw_text: str) -> dict:
+    if not raw_text:
+        raise ValueError("Respuesta vacía del modelo")
+
+    try:
+        return json.loads(raw_text)
+    except Exception:
+        pass
+
+    match = re.search(r"\{[\s\S]*\}", raw_text)
+    if not match:
+        raise ValueError("El modelo no devolvió JSON válido")
+    return json.loads(match.group(0))
+
+
+async def _grade_exam_ollama(
+    respuestas_estudiante: list[dict],
+    clave_respuestas: list[dict],
+    rubrica: str = "",
+    model: str | None = None,
+    ollama_url: str = "http://host.docker.internal:11434",
+) -> dict:
+    selected_model = str(model or "").strip()
+    if not selected_model:
+        raise ValueError("No hay modelo Ollama configurado para calificación")
+
+    payload = {
+        "model": selected_model,
+        "stream": False,
+        "format": "json",
+        "messages": [
+            {"role": "system", "content": _grade_system_prompt()},
+            {
+                "role": "user",
+                "content": _grade_user_message(
+                    respuestas_estudiante=respuestas_estudiante,
+                    clave_respuestas=clave_respuestas,
+                    rubrica=rubrica,
+                ),
+            },
+        ],
+    }
+
+    base_url = (ollama_url or "").strip().rstrip("/")
+    if not base_url:
+        base_url = "http://host.docker.internal:11434"
+
+    async with httpx.AsyncClient(timeout=90.0) as http_client:
+        response = await http_client.post(f"{base_url}/api/chat", json=payload)
+        response.raise_for_status()
+        result = response.json()
+
+    content = (((result or {}).get("message") or {}).get("content") or "").strip()
+    parsed = _extract_json_from_text(content)
+    return parsed
+
+
+async def _grade_exam_groq(
+    respuestas_estudiante: list[dict],
+    clave_respuestas: list[dict],
+    rubrica: str = "",
+    model: str | None = None,
+) -> dict:
+    selected_model = (model or MODELS["grading"]).strip()
+    chat = client.chat.completions.create(
+        model=selected_model,
+        messages=[
+            {"role": "system", "content": _grade_system_prompt()},
+            {
+                "role": "user",
+                "content": _grade_user_message(
+                    respuestas_estudiante=respuestas_estudiante,
+                    clave_respuestas=clave_respuestas,
+                    rubrica=rubrica,
+                ),
+            },
+        ],
+        temperature=0.1,
+        max_tokens=4096,
+        response_format={"type": "json_object"},
+    )
+    await _log_usage("grading", selected_model, chat.usage)
+    response_text = chat.choices[0].message.content
+    return json.loads(response_text)
+
+
+async def grade_exam_with_fallback(
+    respuestas_estudiante: list[dict],
+    clave_respuestas: list[dict],
+    rubrica: str = "",
+    provider_config: dict | None = None,
+) -> dict:
+    cfg = provider_config or {}
+    primary_provider = str(cfg.get("grading_provider") or "groq").strip().lower()
+    fallback_provider = cfg.get("grading_fallback_provider")
+    fallback_provider = str(fallback_provider).strip().lower() if fallback_provider else None
+
+    primary_model = str(
+        cfg.get("grading_model")
+        or (MODELS["grading"] if primary_provider == "groq" else "")
+    ).strip()
+    fallback_model = str(
+        cfg.get("grading_fallback_model")
+        or (MODELS["grading"] if fallback_provider == "groq" else "")
+    ).strip()
+    ollama_url = str(cfg.get("ollama_url") or "http://host.docker.internal:11434").strip()
+
+    attempts: list[tuple[str, str]] = [(primary_provider, primary_model)]
+    if fallback_provider and fallback_provider != "none":
+        if fallback_provider != primary_provider or fallback_model != primary_model:
+            attempts.append((fallback_provider, fallback_model))
+
+    errors: list[str] = []
+    for provider, model in attempts:
+        try:
+            if provider == "groq":
+                return await _grade_exam_groq(
+                    respuestas_estudiante=respuestas_estudiante,
+                    clave_respuestas=clave_respuestas,
+                    rubrica=rubrica,
+                    model=model,
+                )
+
+            if provider == "ollama":
+                return await _grade_exam_ollama(
+                    respuestas_estudiante=respuestas_estudiante,
+                    clave_respuestas=clave_respuestas,
+                    rubrica=rubrica,
+                    model=model,
+                    ollama_url=ollama_url,
+                )
+
+            raise ValueError(f"Proveedor de grading no soportado: {provider}")
+        except Exception as exc:
+            errors.append(f"{provider}({model}): {str(exc)}")
+
+    raise RuntimeError("No fue posible calificar con proveedores configurados. " + " | ".join(errors))
 
 
 async def _log_usage(task: str, model: str, usage):
@@ -227,52 +409,11 @@ async def grade_exam(
     rubrica: str = "",
 ) -> dict:
     """Grade exam responses using Groq LLM."""
-    system_prompt = """Eres un calificador académico experto y justo del sistema educativo colombiano.
-Califica cada respuesta del estudiante comparándola con la clave de respuestas.
-USA ESCALA DE CALIFICACIÓN COLOMBIANA: de 1.0 a 5.0 donde 5.0 es la nota máxima y 3.0 es el mínimo aprobatorio.
-Asigna notas proporcionales: si una pregunta vale X puntos, la nota parcial debe estar entre 0 y X.
-La nota_total y nota_maxima deben estar en escala de 1.0 a 5.0.
-Asigna una nota parcial si la respuesta es parcialmente correcta.
-Proporciona retroalimentación constructiva y específica para cada pregunta.
-
-Responde ÚNICAMENTE con JSON válido siguiendo este schema exacto:
-{
-  "nota_total": float (1.0-5.0),
-  "nota_maxima": 5.0,
-  "preguntas": [
-    {
-      "numero": int,
-      "respuesta_estudiante": "string",
-      "respuesta_correcta": "string",
-      "nota": float,
-      "nota_maxima": float,
-      "retroalimentacion": "string",
-      "correcto": boolean
-    }
-  ]
-}"""
-
-    user_msg = f"""Respuestas del estudiante:
-{json.dumps(respuestas_estudiante, ensure_ascii=False, indent=2)}
-
-Clave de respuestas:
-{json.dumps(clave_respuestas, ensure_ascii=False, indent=2)}
-
-Rúbrica adicional: {rubrica if rubrica else "Calificación estándar"}"""
-
-    chat = client.chat.completions.create(
-        model=MODELS["grading"],
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_msg},
-        ],
-        temperature=0.1,
-        max_tokens=4096,
-        response_format={"type": "json_object"},
+    return await _grade_exam_groq(
+        respuestas_estudiante=respuestas_estudiante,
+        clave_respuestas=clave_respuestas,
+        rubrica=rubrica,
     )
-    await _log_usage("grading", MODELS["grading"], chat.usage)
-    response_text = chat.choices[0].message.content
-    return json.loads(response_text)
 
 
 async def rag_chat(
@@ -281,8 +422,11 @@ async def rag_chat(
     student_answers: str,
     feedback: str,
     conversation_history: list[dict] | None = None,
+    model: str | None = None,
 ) -> str:
     """RAG chatbot limited to student's exam context with full conversation history."""
+    selected_model = str(model or MODELS["rag_chat"]).strip() or MODELS["rag_chat"]
+
     system_prompt = f"""Eres un asistente pedagógico experto y amigable llamado "Xali".
 Tu ÚNICA fuente de información es el examen del estudiante y sus resultados.
 
@@ -317,12 +461,12 @@ TU ROL Y COMPORTAMIENTO:
     messages.append({"role": "user", "content": user_message})
 
     chat = client.chat.completions.create(
-        model=MODELS["rag_chat"],
+        model=selected_model,
         messages=messages,
         temperature=0.3,
         max_tokens=1024,
     )
-    await _log_usage("rag_chat", MODELS["rag_chat"], chat.usage)
+    await _log_usage("rag_chat", selected_model, chat.usage)
     return chat.choices[0].message.content
 
 

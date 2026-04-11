@@ -10,6 +10,12 @@ Cuando cambias codigo de backend/frontend y quieres reconstruir solo esos servic
 docker compose up -d --build backend frontend
 ```
 
+Si agregaste o cambiaste dependencias del frontend (por ejemplo en `package.json`) y aparece un error tipo "Failed to resolve import ...", renueva el volumen de `node_modules` del frontend:
+
+```bash
+docker compose up -d --build --force-recreate --renew-anon-volumes frontend
+```
+
 Validar estado:
 
 ```bash

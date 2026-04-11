@@ -9,6 +9,7 @@ import AdminMaterias from './pages/admin/Materias';
 import AdminAuditLog from './pages/admin/AuditLog';
 import AdminPeriodos from './pages/admin/Periodos';
 import AdminBoletines from './pages/admin/Boletines';
+import AdminAIConfig from './pages/admin/AIConfig';
 import ProfesorMaterias from './pages/profesor/Materias';
 import ProfesorExamenes from './pages/profesor/Examenes';
 import ProfesorGenerar from './pages/profesor/GenerarExamen';
@@ -87,6 +88,11 @@ export default function App() {
         <Route path="/admin/boletines" element={
           <ProtectedRoute roles={['admin']}>
             <Layout><AdminBoletines /></Layout>
+          </ProtectedRoute>
+        } />
+        <Route path="/admin/ai-config" element={
+          <ProtectedRoute roles={['admin']}>
+            <Layout><AdminAIConfig /></Layout>
           </ProtectedRoute>
         } />
         <Route path="/admin/impacto" element={

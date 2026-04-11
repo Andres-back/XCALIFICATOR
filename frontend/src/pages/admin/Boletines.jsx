@@ -1,10 +1,10 @@
-import { useState, useEffect, useMemo } from 'react';
+import { Fragment, useState, useEffect, useMemo } from 'react';
 import api from '../../api';
 import toast from 'react-hot-toast';
 import {
   ScrollText, Loader2, Calendar, ChevronDown, ChevronUp,
-  Printer, Search, Award, TrendingUp, Users, Filter,
-  BookOpen, GraduationCap, FileText,
+  Printer, Search, Award, TrendingUp, Users,
+  BookOpen, GraduationCap,
 } from 'lucide-react';
 import EmptyState from '../../components/EmptyState';
 
@@ -16,6 +16,11 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function formatNota(value) {
+  if (value == null || Number.isNaN(Number(value))) return '—';
+  return Number(value).toFixed(2);
 }
 
 export default function AdminBoletines() {
@@ -61,14 +66,19 @@ export default function AdminBoletines() {
   // Stats
   const stats = useMemo(() => {
     if (!data?.grados) return { totalEstudiantes: 0, totalGrados: 0, promedioGeneral: 0, aprobados: 0 };
-    let totalEst = 0, allPromedios = [], aprobados = 0;
+    let totalEst = 0;
+    const allPromedios = [];
+    let aprobados = 0;
+
     data.grados.forEach(g => {
       totalEst += g.total_estudiantes;
       g.estudiantes.forEach(e => {
-        allPromedios.push(e.promedio_general);
-        if (e.promedio_general >= 3.0) aprobados++;
+        const notaRef = e.promedio_definitivo ?? e.promedio_general;
+        allPromedios.push(notaRef);
+        if (notaRef >= 3.0) aprobados++;
       });
     });
+
     return {
       totalEstudiantes: totalEst,
       totalGrados: data.grados.length,
@@ -76,6 +86,16 @@ export default function AdminBoletines() {
       aprobados,
     };
   }, [data]);
+
+  const periodosConfig = useMemo(() => {
+    const source = Array.isArray(data?.periodos_configurados) && data.periodos_configurados.length > 0
+      ? data.periodos_configurados
+      : periodos;
+
+    return [...source]
+      .sort((a, b) => Number(a.numero || 0) - Number(b.numero || 0))
+      .slice(0, 4);
+  }, [data, periodos]);
 
   // Filter students by search within displayed grados
   const filteredGrados = useMemo(() => {
@@ -90,11 +110,11 @@ export default function AdminBoletines() {
     })).filter(g => g.estudiantes.length > 0);
   }, [data, search]);
 
-  const periodoNombre = periodos.find(p => p.id === selectedPeriodo)?.nombre || '';
+  const periodoNombre = periodos.find(p => p.id === selectedPeriodo)?.nombre || data?.periodo?.nombre || '';
 
   // ── Print single student global boletin ──
   const printStudent = (est) => {
-    const html = buildGlobalBoletinHtml(est, periodoNombre);
+    const html = buildGlobalBoletinHtml(est, periodoNombre, periodosConfig);
     const iframe = document.createElement('iframe');
     iframe.style.display = 'none';
     document.body.appendChild(iframe);
@@ -111,7 +131,7 @@ export default function AdminBoletines() {
   // ── Print all students in a grado ──
   const printGrado = (grado) => {
     const pages = grado.estudiantes
-      .map(e => buildGlobalBoletinPageHtml(e, periodoNombre))
+      .map(e => buildGlobalBoletinPageHtml(e, periodoNombre, periodosConfig))
       .join('<div style="page-break-after:always"></div>');
     printPages(pages, `Boletines ${grado.grado} - ${periodoNombre}`);
   };
@@ -120,7 +140,7 @@ export default function AdminBoletines() {
   const printAll = () => {
     if (!filteredGrados.length) return;
     const pages = filteredGrados.flatMap(g =>
-      g.estudiantes.map(e => buildGlobalBoletinPageHtml(e, periodoNombre))
+      g.estudiantes.map(e => buildGlobalBoletinPageHtml(e, periodoNombre, periodosConfig))
     ).join('<div style="page-break-after:always"></div>');
     printPages(pages, `Boletines Globales - ${periodoNombre}`);
   };
@@ -237,7 +257,7 @@ export default function AdminBoletines() {
               <TrendingUp className="w-5 h-5 text-amber-600" />
             </div>
             <div>
-              <p className="text-xs text-gray-500">Promedio General</p>
+              <p className="text-xs text-gray-500">Promedio Definitivo</p>
               <p className="text-xl font-bold text-gray-900">{stats.promedioGeneral}</p>
             </div>
           </div>
@@ -324,9 +344,14 @@ export default function AdminBoletines() {
                     </div>
                     <div className="flex items-center gap-3">
                       <div className="text-right">
-                        <p className="text-xs text-gray-500">Promedio</p>
-                        <p className="text-lg font-bold" style={{ color: getColorByNota(est.promedio_general) }}>
-                          {est.promedio_general}
+                        <p className="text-xs text-gray-500">Período actual</p>
+                        <p className="text-lg font-bold" style={{ color: getColorByNota(est.promedio_periodo_actual ?? est.promedio_general) }}>
+                          {formatNota(est.promedio_periodo_actual ?? est.promedio_general)}
+                        </p>
+                        <p className="text-[11px] text-gray-500">
+                          Definitiva: <span className="font-semibold" style={{ color: getColorByNota(est.promedio_definitivo ?? est.promedio_general) }}>
+                            {formatNota(est.promedio_definitivo ?? est.promedio_general)}
+                          </span>
                         </p>
                       </div>
                       <button
@@ -346,61 +371,122 @@ export default function AdminBoletines() {
                   {/* Student materias detail */}
                   {expandedStudent === est.estudiante_id && (
                     <div className="px-4 pb-4 bg-gray-50">
-                      <table className="w-full text-sm mt-2">
-                        <thead>
-                          <tr className="border-b border-gray-200">
-                            <th className="text-left py-2 px-2 text-xs font-medium text-gray-500">Materia</th>
-                            <th className="text-center py-2 px-2 text-xs font-medium text-gray-500">Nota Final</th>
-                            <th className="text-center py-2 px-2 text-xs font-medium text-gray-500">Estado</th>
-                            <th className="text-center py-2 px-2 text-xs font-medium text-gray-500" title="Presente">✓</th>
-                            <th className="text-center py-2 px-2 text-xs font-medium text-gray-500" title="Ausente">✗</th>
-                            <th className="text-center py-2 px-2 text-xs font-medium text-gray-500" title="Tardanza">⏱</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {est.materias.map(m => {
-                            const a = m.desglose_json?.asistencia;
-                            return (
-                            <tr key={m.materia_id} className="border-b border-gray-100">
-                              <td className="py-2 px-2 font-medium text-gray-800 flex items-center gap-2">
-                                <BookOpen className="w-4 h-4 text-gray-400 shrink-0" />
-                                {m.materia_nombre}
-                              </td>
+                      <div className="mt-3 mb-2 rounded-xl border border-indigo-200 bg-indigo-50 p-3">
+                        <p className="text-xs font-semibold text-indigo-700 uppercase tracking-wide">Nota general del estudiante</p>
+                        <p className="text-sm text-indigo-900 mt-1">
+                          {est.nota_general || 'Aun no hay suficientes calificaciones para generar una nota general.'}
+                        </p>
+                      </div>
+
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm mt-2 min-w-[980px]">
+                          <thead>
+                            <tr className="border-b border-gray-200">
+                              <th className="text-left py-2 px-2 text-xs font-medium text-gray-500">Materia</th>
+                              <th className="text-center py-2 px-2 text-xs font-medium text-gray-500">Período Actual</th>
+                              {periodosConfig.map(p => (
+                                <th key={`head-${est.estudiante_id}-${p.numero}`} className="text-center py-2 px-2 text-xs font-medium text-gray-500">
+                                  <div>P{p.numero}</div>
+                                  <div className="text-[10px] text-gray-400 font-normal">{p.porcentaje ? `${Number(p.porcentaje)}%` : ''}</div>
+                                </th>
+                              ))}
+                              <th className="text-center py-2 px-2 text-xs font-medium text-gray-500">Definitiva</th>
+                              <th className="text-center py-2 px-2 text-xs font-medium text-gray-500">Estado</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {est.materias.map(m => {
+                              const notasPeriodos = m.notas_periodos || {};
+                              const notaActual = m.nota_final ?? 0;
+                              const notaDefinitiva = m.nota_definitiva ?? m.nota_final ?? 0;
+                              const fortalezas = Array.isArray(m.fortalezas) ? m.fortalezas : [];
+                              const debilidades = Array.isArray(m.debilidades) ? m.debilidades : [];
+                              const totalCols = 4 + periodosConfig.length;
+
+                              return (
+                                <Fragment key={m.materia_id}>
+                                  <tr className="border-b border-gray-100 bg-white">
+                                    <td className="py-2 px-2 font-medium text-gray-800">
+                                      <div className="flex items-center gap-2">
+                                        <BookOpen className="w-4 h-4 text-gray-400 shrink-0" />
+                                        <span>{m.materia_nombre}</span>
+                                      </div>
+                                    </td>
+                                    <td className="py-2 px-2 text-center">
+                                      <span className="font-bold" style={{ color: getColorByNota(notaActual) }}>
+                                        {formatNota(notaActual)}
+                                      </span>
+                                    </td>
+                                    {periodosConfig.map(p => {
+                                      const notaPeriodo = notasPeriodos?.[String(p.numero)];
+                                      return (
+                                        <td key={`np-${m.materia_id}-${p.numero}`} className="py-2 px-2 text-center">
+                                          <span className="font-semibold" style={{ color: notaPeriodo == null ? '#9ca3af' : getColorByNota(notaPeriodo) }}>
+                                            {formatNota(notaPeriodo)}
+                                          </span>
+                                        </td>
+                                      );
+                                    })}
+                                    <td className="py-2 px-2 text-center">
+                                      <span className="font-bold" style={{ color: getColorByNota(notaDefinitiva) }}>
+                                        {formatNota(notaDefinitiva)}
+                                      </span>
+                                    </td>
+                                    <td className="py-2 px-2 text-center">
+                                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium
+                                        ${notaDefinitiva >= 3.0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                        {notaDefinitiva >= 3.0 ? 'Aprobado' : 'Reprobado'}
+                                      </span>
+                                    </td>
+                                  </tr>
+                                  <tr className="border-b border-gray-100 bg-gray-50">
+                                    <td colSpan={totalCols} className="py-2 px-3">
+                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                                        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-2">
+                                          <p className="font-semibold text-emerald-700 mb-1">Fortalezas por competencias</p>
+                                          <p className="text-emerald-900">
+                                            {fortalezas.length > 0 ? fortalezas.join(' · ') : 'Sin fortalezas registradas por competencias todavía.'}
+                                          </p>
+                                        </div>
+                                        <div className="rounded-lg border border-rose-200 bg-rose-50 p-2">
+                                          <p className="font-semibold text-rose-700 mb-1">Debilidades por competencias</p>
+                                          <p className="text-rose-900">
+                                            {debilidades.length > 0 ? debilidades.join(' · ') : 'Sin debilidades críticas por competencias registradas.'}
+                                          </p>
+                                        </div>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                </Fragment>
+                              );
+                            })}
+                          </tbody>
+                          <tfoot>
+                            <tr className="border-t-2 border-gray-300 bg-white">
+                              <td className="py-2 px-2 font-semibold text-gray-900">Promedio General</td>
                               <td className="py-2 px-2 text-center">
-                                <span className="font-bold" style={{ color: getColorByNota(m.nota_final) }}>
-                                  {m.nota_final.toFixed(2)}
+                                <span className="font-bold text-base" style={{ color: getColorByNota(est.promedio_periodo_actual ?? est.promedio_general) }}>
+                                  {formatNota(est.promedio_periodo_actual ?? est.promedio_general)}
+                                </span>
+                              </td>
+                              {periodosConfig.map(p => (
+                                <td key={`foot-${est.estudiante_id}-${p.numero}`} className="py-2 px-2 text-center text-gray-400">—</td>
+                              ))}
+                              <td className="py-2 px-2 text-center">
+                                <span className="font-bold text-lg" style={{ color: getColorByNota(est.promedio_definitivo ?? est.promedio_general) }}>
+                                  {formatNota(est.promedio_definitivo ?? est.promedio_general)}
                                 </span>
                               </td>
                               <td className="py-2 px-2 text-center">
                                 <span className={`px-2 py-0.5 rounded-full text-xs font-medium
-                                  ${m.nota_final >= 3.0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                                  {m.nota_final >= 3.0 ? 'Aprobado' : 'Reprobado'}
+                                  ${(est.promedio_definitivo ?? est.promedio_general) >= 3.0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                  {(est.promedio_definitivo ?? est.promedio_general) >= 3.0 ? 'Aprobado' : 'Reprobado'}
                                 </span>
                               </td>
-                              <td className="py-2 px-2 text-center text-green-600 font-medium text-xs">{a?.presente || 0}</td>
-                              <td className="py-2 px-2 text-center text-red-600 font-medium text-xs">{a?.ausente || 0}</td>
-                              <td className="py-2 px-2 text-center text-yellow-600 font-medium text-xs">{a?.tardanza || 0}</td>
                             </tr>
-                          );})}
-                        </tbody>
-                        <tfoot>
-                          <tr className="border-t-2 border-gray-300">
-                            <td className="py-2 px-2 font-semibold text-gray-900">Promedio General</td>
-                            <td className="py-2 px-2 text-center">
-                              <span className="font-bold text-lg" style={{ color: getColorByNota(est.promedio_general) }}>
-                                {est.promedio_general}
-                              </span>
-                            </td>
-                            <td className="py-2 px-2 text-center">
-                              <span className={`px-2 py-0.5 rounded-full text-xs font-medium
-                                ${est.promedio_general >= 3.0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                                {est.promedio_general >= 3.0 ? 'Aprobado' : 'Reprobado'}
-                              </span>
-                            </td>
-                            <td colSpan={3}></td>
-                          </tr>
-                        </tfoot>
-                      </table>
+                          </tfoot>
+                        </table>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -415,18 +501,18 @@ export default function AdminBoletines() {
 
 // ── Print HTML builders ──
 
-function buildGlobalBoletinHtml(est, periodoNombre) {
+function buildGlobalBoletinHtml(est, periodoNombre, periodosConfig = []) {
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Boletín - ${escapeHtml(est.nombre || 'Estudiante')}</title>
     <style>
       @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
       * { margin: 0; padding: 0; box-sizing: border-box; }
       body { font-family: 'Poppins', sans-serif; color: #1f2937; padding: 20mm; }
-      @media print { @page { margin: 15mm; } body { padding: 0; } }
-    </style></head><body>${buildGlobalBoletinPageHtml(est, periodoNombre)}</body></html>`;
+      @media print { @page { margin: 12mm; } body { padding: 0; } }
+    </style></head><body>${buildGlobalBoletinPageHtml(est, periodoNombre, periodosConfig)}</body></html>`;
   return html;
 }
 
-function buildGlobalBoletinPageHtml(est, periodoNombre) {
+function buildGlobalBoletinPageHtml(est, periodoNombre, periodosConfig = []) {
   const getColor = (n) => {
     if (n >= 4.5) return '#16a34a';
     if (n >= 3.5) return '#2563eb';
@@ -434,33 +520,82 @@ function buildGlobalBoletinPageHtml(est, periodoNombre) {
     return '#dc2626';
   };
 
+  const displayPeriodos = Array.isArray(periodosConfig)
+    ? [...periodosConfig].sort((a, b) => Number(a.numero || 0) - Number(b.numero || 0)).slice(0, 4)
+    : [];
+
+  const promedioPeriodo = Number(est.promedio_periodo_actual ?? est.promedio_general ?? 0);
+  const promedioDefinitivo = Number(est.promedio_definitivo ?? est.promedio_general ?? 0);
+
   const safePeriodoNombre = escapeHtml(periodoNombre || '');
   const safeNombre = escapeHtml(est.nombre || 'N/A');
   const safeDocumento = escapeHtml(est.documento || 'N/A');
   const safeGrado = escapeHtml(est.grado || 'N/A');
+  const safeNotaGeneral = escapeHtml(est.nota_general || 'Aun no hay suficientes calificaciones para generar una nota general.');
+  const periodHeaders = displayPeriodos
+    .map((p) => `<th style="padding:10px 8px;text-align:center;font-size:11px;color:#6b7280;font-weight:700">P${p.numero}${p.porcentaje ? `<br/><span style="font-size:9px;font-weight:400;color:#9ca3af">${Number(p.porcentaje)}%</span>` : ''}</th>`)
+    .join('');
+
+  const totalCols = 4 + displayPeriodos.length;
 
   const materiasRows = est.materias.map(m => {
-    const a = m.desglose_json?.asistencia;
+    const notaActual = Number(m.nota_final ?? 0);
+    const notaDefinitiva = Number(m.nota_definitiva ?? m.nota_final ?? 0);
+    const fortalezas = Array.isArray(m.fortalezas) ? m.fortalezas : [];
+    const debilidades = Array.isArray(m.debilidades) ? m.debilidades : [];
+    const notasPeriodos = m.notas_periodos || {};
     const safeMateriaNombre = escapeHtml(m.materia_nombre || '');
+    const periodCells = displayPeriodos.map((p) => {
+      const notaPeriodo = notasPeriodos[String(p.numero)];
+      const notaTexto = formatNota(notaPeriodo);
+      const color = notaPeriodo == null ? '#9ca3af' : getColor(Number(notaPeriodo));
+      return `<td style="padding:10px 8px;border-bottom:1px solid #e5e7eb;text-align:center;font-weight:600;color:${color}">${notaTexto}</td>`;
+    }).join('');
+
+    const fortalezasHtml = escapeHtml(
+      fortalezas.length > 0 ? fortalezas.join(' · ') : 'Sin fortalezas registradas por competencias todavía.'
+    );
+    const debilidadesHtml = escapeHtml(
+      debilidades.length > 0 ? debilidades.join(' · ') : 'Sin debilidades críticas por competencias registradas.'
+    );
+
     return `
     <tr>
       <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-weight:500">${safeMateriaNombre}</td>
       <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;text-align:center">
-        <span style="font-weight:700;color:${getColor(m.nota_final)};font-size:16px">${m.nota_final.toFixed(2)}</span>
+        <span style="font-weight:700;color:${getColor(notaActual)};font-size:15px">${formatNota(notaActual)}</span>
+      </td>
+      ${periodCells}
+      <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;text-align:center">
+        <span style="display:inline-block;padding:2px 10px;border-radius:20px;font-size:11px;font-weight:600;
+          background:${notaDefinitiva >= 3.0 ? '#dcfce7' : '#fee2e2'};color:${notaDefinitiva >= 3.0 ? '#15803d' : '#dc2626'}">
+          ${formatNota(notaDefinitiva)}
+        </span>
       </td>
       <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;text-align:center">
         <span style="display:inline-block;padding:2px 10px;border-radius:20px;font-size:11px;font-weight:600;
-          background:${m.nota_final >= 3.0 ? '#dcfce7' : '#fee2e2'};color:${m.nota_final >= 3.0 ? '#15803d' : '#dc2626'}">
-          ${m.nota_final >= 3.0 ? 'Aprobado' : 'Reprobado'}
+          background:${notaDefinitiva >= 3.0 ? '#dcfce7' : '#fee2e2'};color:${notaDefinitiva >= 3.0 ? '#15803d' : '#dc2626'}">
+          ${notaDefinitiva >= 3.0 ? 'Aprobado' : 'Reprobado'}
         </span>
       </td>
-      <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;text-align:center;color:#16a34a;font-weight:500">${a?.presente || 0}</td>
-      <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;text-align:center;color:#dc2626;font-weight:500">${a?.ausente || 0}</td>
-      <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;text-align:center;color:#ca8a04;font-weight:500">${a?.tardanza || 0}</td>
+    </tr>
+    <tr>
+      <td colspan="${totalCols}" style="padding:8px 10px;border-bottom:1px solid #e5e7eb;background:#fafafa">
+        <div style="display:flex;gap:8px">
+          <div style="width:50%;border:1px solid #a7f3d0;background:#ecfdf5;border-radius:8px;padding:6px 8px">
+            <p style="font-size:10px;font-weight:700;color:#047857;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.3px">Fortalezas por competencias</p>
+            <p style="font-size:11px;color:#065f46;line-height:1.4">${fortalezasHtml}</p>
+          </div>
+          <div style="width:50%;border:1px solid #fecaca;background:#fff1f2;border-radius:8px;padding:6px 8px">
+            <p style="font-size:10px;font-weight:700;color:#be123c;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.3px">Debilidades por competencias</p>
+            <p style="font-size:11px;color:#9f1239;line-height:1.4">${debilidadesHtml}</p>
+          </div>
+        </div>
+      </td>
     </tr>
   `;}).join('');
 
-  const barWidth = Math.min(100, (est.promedio_general / 5) * 100);
+  const barWidth = Math.min(100, (promedioPeriodo / 5) * 100);
 
   return `
     <div style="max-width:700px;margin:0 auto">
@@ -489,11 +624,19 @@ function buildGlobalBoletinPageHtml(est, periodoNombre) {
 
       <!-- Grade bar -->
       <div style="margin-bottom:20px;padding:16px;background:#f3f4f6;border-radius:10px;text-align:center">
-        <p style="font-size:12px;color:#6b7280;margin-bottom:8px">Promedio General</p>
-        <p style="font-size:32px;font-weight:700;color:${getColor(est.promedio_general)}">${est.promedio_general}</p>
+        <p style="font-size:12px;color:#6b7280;margin-bottom:8px">Promedio del período actual</p>
+        <p style="font-size:32px;font-weight:700;color:${getColor(promedioPeriodo)}">${formatNota(promedioPeriodo)}</p>
         <div style="width:100%;max-width:300px;margin:10px auto 0;background:#e5e7eb;border-radius:999px;height:8px;overflow:hidden">
-          <div style="height:100%;width:${barWidth}%;background:${getColor(est.promedio_general)};border-radius:999px"></div>
+          <div style="height:100%;width:${barWidth}%;background:${getColor(promedioPeriodo)};border-radius:999px"></div>
         </div>
+        <p style="font-size:12px;color:#6b7280;margin-top:10px">
+          Promedio definitivo acumulado: <strong style="color:${getColor(promedioDefinitivo)}">${formatNota(promedioDefinitivo)}</strong>
+        </p>
+      </div>
+
+      <div style="margin-bottom:16px;padding:12px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px">
+        <p style="font-size:11px;color:#4338ca;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:5px">Nota general del estudiante</p>
+        <p style="font-size:12px;line-height:1.5;color:#312e81">${safeNotaGeneral}</p>
       </div>
 
       <!-- Materias table -->
@@ -501,11 +644,10 @@ function buildGlobalBoletinPageHtml(est, periodoNombre) {
         <thead>
           <tr style="background:#f3f4f6">
             <th style="padding:10px 12px;text-align:left;font-size:12px;color:#6b7280;font-weight:600;text-transform:uppercase">Materia</th>
-            <th style="padding:10px 12px;text-align:center;font-size:12px;color:#6b7280;font-weight:600;text-transform:uppercase">Nota Final</th>
-            <th style="padding:10px 12px;text-align:center;font-size:12px;color:#6b7280;font-weight:600;text-transform:uppercase">Estado</th>
-            <th style="padding:10px 12px;text-align:center;font-size:12px;color:#16a34a;font-weight:600">✓</th>
-            <th style="padding:10px 12px;text-align:center;font-size:12px;color:#dc2626;font-weight:600">✗</th>
-            <th style="padding:10px 12px;text-align:center;font-size:12px;color:#ca8a04;font-weight:600">⏱</th>
+            <th style="padding:10px 8px;text-align:center;font-size:11px;color:#6b7280;font-weight:700;text-transform:uppercase">Actual</th>
+            ${periodHeaders}
+            <th style="padding:10px 8px;text-align:center;font-size:11px;color:#6b7280;font-weight:700;text-transform:uppercase">Definitiva</th>
+            <th style="padding:10px 8px;text-align:center;font-size:11px;color:#6b7280;font-weight:700;text-transform:uppercase">Estado</th>
           </tr>
         </thead>
         <tbody>
@@ -515,15 +657,21 @@ function buildGlobalBoletinPageHtml(est, periodoNombre) {
           <tr style="background:#f9fafb;border-top:2px solid #d1d5db">
             <td style="padding:12px;font-weight:700;font-size:14px">Promedio General</td>
             <td style="padding:12px;text-align:center">
-              <span style="font-weight:700;font-size:18px;color:${getColor(est.promedio_general)}">${est.promedio_general}</span>
+              <span style="font-weight:700;font-size:16px;color:${getColor(promedioPeriodo)}">${formatNota(promedioPeriodo)}</span>
+            </td>
+            ${displayPeriodos.map(() => '<td style="padding:12px;text-align:center;color:#9ca3af">—</td>').join('')}
+            <td style="padding:12px;text-align:center">
+              <span style="display:inline-block;padding:3px 12px;border-radius:20px;font-size:12px;font-weight:600;
+                background:${promedioDefinitivo >= 3.0 ? '#dcfce7' : '#fee2e2'};color:${promedioDefinitivo >= 3.0 ? '#15803d' : '#dc2626'}">
+                ${formatNota(promedioDefinitivo)}
+              </span>
             </td>
             <td style="padding:12px;text-align:center">
               <span style="display:inline-block;padding:3px 12px;border-radius:20px;font-size:12px;font-weight:600;
-                background:${est.promedio_general >= 3.0 ? '#dcfce7' : '#fee2e2'};color:${est.promedio_general >= 3.0 ? '#15803d' : '#dc2626'}">
-                ${est.promedio_general >= 3.0 ? 'Aprobado' : 'Reprobado'}
+                background:${promedioDefinitivo >= 3.0 ? '#dcfce7' : '#fee2e2'};color:${promedioDefinitivo >= 3.0 ? '#15803d' : '#dc2626'}">
+                ${promedioDefinitivo >= 3.0 ? 'Aprobado' : 'Reprobado'}
               </span>
             </td>
-            <td colspan="3" style="padding:12px"></td>
           </tr>
         </tfoot>
       </table>

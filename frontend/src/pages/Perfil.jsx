@@ -2,7 +2,17 @@ import { useState, useEffect } from 'react';
 import useAuthStore from '../store';
 import api from '../api';
 import toast from 'react-hot-toast';
-import { User, Bell, Pencil, Save, Lock, X } from 'lucide-react';
+import {
+  User,
+  Bell,
+  Pencil,
+  Save,
+  Lock,
+  X,
+  Cpu,
+  RefreshCw,
+  ScanText,
+} from 'lucide-react';
 
 export default function Perfil() {
   const { user, updateUser } = useAuthStore();
@@ -13,6 +23,15 @@ export default function Perfil() {
   const [showPwForm, setShowPwForm] = useState(false);
   const [pw, setPw] = useState('');
   const [pwLoading, setPwLoading] = useState(false);
+  const [localAI, setLocalAI] = useState({
+    ollama_url: 'http://host.docker.internal:11434',
+    grading_local_model: '',
+    ocr_local_model: '',
+  });
+  const [localModels, setLocalModels] = useState([]);
+  const [localLoading, setLocalLoading] = useState(false);
+  const [localSaving, setLocalSaving] = useState(false);
+  const [detectingModels, setDetectingModels] = useState(false);
 
   useEffect(() => {
     api.get('/notifications/preferences').then(res => setPrefs(res.data)).catch(() => {});
@@ -23,6 +42,67 @@ export default function Perfil() {
       setForm({ nombre: user.nombre || '', apellido: user.apellido || '', celular: user.celular || '' });
     }
   }, [user]);
+
+  const fetchLocalAIConfig = async () => {
+    if (user?.rol !== 'profesor') return;
+    setLocalLoading(true);
+    try {
+      const res = await api.get('/auth/me/local-ai-config');
+      setLocalAI({
+        ollama_url: res.data?.ollama_url || 'http://host.docker.internal:11434',
+        grading_local_model: res.data?.grading_local_model || '',
+        ocr_local_model: res.data?.ocr_local_model || '',
+      });
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'No se pudo cargar configuración local IA');
+    } finally {
+      setLocalLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchLocalAIConfig();
+  }, [user?.rol]);
+
+  const detectModels = async () => {
+    setDetectingModels(true);
+    try {
+      const res = await api.get('/auth/me/ollama-models');
+      const models = Array.isArray(res.data?.models) ? res.data.models : [];
+      setLocalModels(models);
+      if (models.length === 0) {
+        toast.error('No se detectaron modelos en Ollama');
+      } else {
+        toast.success(`Modelos detectados: ${models.length}`);
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'No se pudo consultar Ollama local');
+    } finally {
+      setDetectingModels(false);
+    }
+  };
+
+  const saveLocalAIConfig = async () => {
+    setLocalSaving(true);
+    try {
+      const payload = {
+        ollama_url: localAI.ollama_url || null,
+        grading_local_model: localAI.grading_local_model || null,
+        ocr_local_model: localAI.ocr_local_model || null,
+      };
+      const res = await api.put('/auth/me/local-ai-config', payload);
+      setLocalAI({
+        ollama_url: res.data?.ollama_url || 'http://host.docker.internal:11434',
+        grading_local_model: res.data?.grading_local_model || '',
+        ocr_local_model: res.data?.ocr_local_model || '',
+      });
+      toast.success('Configuración local guardada');
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'No se pudo guardar configuración local');
+    } finally {
+      setLocalSaving(false);
+    }
+  };
 
   const updatePrefs = async (field, value) => {
     try {
@@ -188,6 +268,94 @@ export default function Perfil() {
           )}
         </div>
       </div>
+
+      {user?.rol === 'profesor' && (
+        <div className="card space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <Cpu className="w-5 h-5 text-primary-600" />
+              <div>
+                <h2 className="text-lg font-semibold">IA local (Ollama)</h2>
+                <p className="text-xs text-gray-500">
+                  Selecciona tus modelos locales para usar cuando no tengas internet.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={fetchLocalAIConfig}
+              className="btn-secondary text-sm flex items-center gap-2"
+              disabled={localLoading}
+            >
+              <RefreshCw className={`w-4 h-4 ${localLoading ? 'animate-spin' : ''}`} /> Recargar
+            </button>
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">URL de Ollama</label>
+            <input
+              type="text"
+              className="input-field"
+              value={localAI.ollama_url}
+              onChange={(e) => setLocalAI((prev) => ({ ...prev, ollama_url: e.target.value }))}
+              placeholder="http://host.docker.internal:11434"
+            />
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={detectModels}
+              className="btn-secondary text-sm flex items-center gap-2"
+              disabled={detectingModels}
+            >
+              <ScanText className={`w-4 h-4 ${detectingModels ? 'animate-spin' : ''}`} />
+              Detectar modelos (ollama list)
+            </button>
+            <button
+              type="button"
+              onClick={saveLocalAIConfig}
+              className="btn-primary text-sm flex items-center gap-2"
+              disabled={localSaving}
+            >
+              {localSaving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Guardar IA local
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Modelo local para calificación</label>
+              <select
+                className="input-field"
+                value={localAI.grading_local_model}
+                onChange={(e) => setLocalAI((prev) => ({ ...prev, grading_local_model: e.target.value }))}
+              >
+                <option value="">Sin modelo seleccionado</option>
+                {localModels.map((model) => (
+                  <option key={`g-${model}`} value={model}>{model}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Modelo local para OCR</label>
+              <select
+                className="input-field"
+                value={localAI.ocr_local_model}
+                onChange={(e) => setLocalAI((prev) => ({ ...prev, ocr_local_model: e.target.value }))}
+              >
+                <option value="">Sin modelo seleccionado</option>
+                {localModels.map((model) => (
+                  <option key={`o-${model}`} value={model}>{model}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <p className="text-xs text-amber-700 bg-amber-50 rounded p-2">
+            La configuración de Groq Cloud la administra el equipo de administración. Esta sección solo controla el uso local con Ollama.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
