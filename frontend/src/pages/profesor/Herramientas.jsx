@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import katex from 'katex';
 import api from '../../api';
 import toast from 'react-hot-toast';
@@ -6,7 +7,7 @@ import {
   Wrench, Plus, Wand2, Loader2, Edit3, Trash2, Send,
   FileText, Grid3X3, Search, Eye, EyeOff, X, BookOpen,
   CheckCircle, Clock, AlertCircle, Link2, BookMarked,
-  Palette, Download, Printer, Save,
+  Palette, Download, Printer, Save, Presentation, Sparkles, ArrowRight,
 } from 'lucide-react';
 import Crucigrama from '../../components/Crucigrama';
 import SopaLetras from '../../components/SopaLetras';
@@ -618,6 +619,39 @@ export default function ProfesorHerramientas() {
           </p>
         </div>
       </div>
+
+      {/* CTA Presentaciones (NEW · Fase 1) */}
+      <Link
+        to="/profesor/presentacion"
+        className="
+          group relative overflow-hidden flex items-center justify-between gap-4
+          p-5 rounded-2xl border-2 border-transparent
+          bg-gradient-to-r from-profesor-50 via-white to-profesor-50/50
+          hover:border-profesor-300 hover:shadow-md transition-all duration-200
+        "
+      >
+        <div className="flex items-center gap-4 min-w-0">
+          <div className="shrink-0 inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-gradient-to-br from-profesor-500 to-profesor-700 shadow-md shadow-profesor-500/30">
+            <Presentation className="w-6 h-6 text-white" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-base font-bold text-gray-900">Crear Presentación</h3>
+              <span className="badge-profesor flex items-center gap-1">
+                <Sparkles className="w-3 h-3" />
+                Nuevo
+              </span>
+            </div>
+            <p className="text-sm text-gray-600 mt-0.5">
+              Te ayudamos a hacer las diapositivas de tu clase en 3 pasos.
+            </p>
+          </div>
+        </div>
+        <div className="shrink-0 flex items-center gap-1 text-profesor-700 font-semibold text-sm group-hover:gap-2 transition-all">
+          Empezar
+          <ArrowRight className="w-4 h-4" />
+        </div>
+      </Link>
 
       {disabledTools.length > 0 && (
         <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl">

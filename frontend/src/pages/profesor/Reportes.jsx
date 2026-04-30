@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx';
 import {
   BarChart3, Printer, Loader2, BookOpen, Users,
   Award, TrendingUp, TrendingDown, AlertTriangle, Filter, CalendarDays, FileSpreadsheet,
+  Presentation, Sparkles,
 } from 'lucide-react';
 
 
@@ -132,6 +133,7 @@ export default function ProfesorReportes() {
   const [generating, setGenerating] = useState(false);
   const [report, setReport] = useState(null);
   const [failedReports, setFailedReports] = useState([]);
+  const [creatingSlides, setCreatingSlides] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -209,6 +211,36 @@ export default function ProfesorReportes() {
       setGenerating(false);
     }
   }, [selected, materias, selectedPeriodo]);
+
+  const crearPresentacionBoletin = async () => {
+    if (creatingSlides) return;
+    if (selected.length !== 1) {
+      toast.error('Selecciona exactamente UNA materia para crear la presentación');
+      return;
+    }
+    if (!selectedPeriodo) {
+      toast.error('Selecciona un período');
+      return;
+    }
+    const materiaId = selected[0];
+    setCreatingSlides(true);
+    const tid = toast.loading('Creando presentación del período… ✨ (30-90s)');
+    try {
+      const { data } = await api.post(
+        `/presentaciones/boletin/${materiaId}/${selectedPeriodo}`,
+        null,
+        { params: { plantilla: 'modern', num_slides: 10 }, timeout: 240000 }
+      );
+      toast.dismiss(tid);
+      toast.success('¡Presentación lista! 🎉');
+      if (data?.pptx_url) window.open(data.pptx_url, '_blank', 'noopener');
+    } catch (err) {
+      toast.dismiss(tid);
+      toast.error(err?.response?.data?.detail || 'No pudimos crear la presentación');
+    } finally {
+      setCreatingSlides(false);
+    }
+  };
 
   const selectedPeriodoLabel = useMemo(() => {
     const p = periodos.find((x) => x.id === selectedPeriodo);
@@ -469,6 +501,26 @@ export default function ProfesorReportes() {
               ))}
             </select>
           </div>
+          {selected.length === 1 && selectedPeriodo && (
+            <button
+              onClick={crearPresentacionBoletin}
+              disabled={creatingSlides}
+              title="Slides del período listas para reunión de padres"
+              className="
+                inline-flex items-center gap-1.5 px-3 py-2 text-sm font-semibold
+                rounded-lg shadow-sm transition-all shrink-0
+                bg-gradient-to-r from-profesor-600 to-profesor-700 text-white
+                hover:from-profesor-700 hover:to-profesor-800
+                disabled:opacity-60 disabled:cursor-not-allowed
+              "
+            >
+              {creatingSlides
+                ? <Loader2 className="w-4 h-4 animate-spin" />
+                : <Sparkles className="w-4 h-4" />}
+              <Presentation className="w-4 h-4" />
+              {creatingSlides ? 'Creando…' : 'Slides del período'}
+            </button>
+          )}
           {report && (
             <>
               <button onClick={exportExcel}

@@ -15,6 +15,8 @@ import ProfesorGenerar from './pages/profesor/GenerarExamen';
 import ProfesorCalificar from './pages/profesor/Calificar';
 import ProfesorNotas from './pages/profesor/Notas';
 import ProfesorHerramientas from './pages/profesor/Herramientas';
+import ProfesorPresentacion from './pages/profesor/GenerarPresentacion';
+import ProfesorMisPresentaciones from './pages/profesor/MisPresentaciones';
 import ProfesorReportes from './pages/profesor/Reportes';
 import ImpactoTesis from './pages/profesor/ImpactoTesis';
 import MateriaDetail from './pages/profesor/MateriaDetail';
@@ -129,6 +131,21 @@ export default function App() {
         <Route path="/profesor/herramientas" element={
           <ProtectedRoute roles={['profesor', 'admin']}>
             <Layout><ProfesorHerramientas /></Layout>
+          </ProtectedRoute>
+        } />
+        <Route path="/profesor/presentaciones" element={
+          <ProtectedRoute roles={['profesor', 'admin']}>
+            <Layout><ProfesorMisPresentaciones /></Layout>
+          </ProtectedRoute>
+        } />
+        <Route path="/profesor/presentacion" element={
+          <ProtectedRoute roles={['profesor', 'admin']}>
+            <Layout><ProfesorPresentacion /></Layout>
+          </ProtectedRoute>
+        } />
+        <Route path="/profesor/presentacion/:materiaId" element={
+          <ProtectedRoute roles={['profesor', 'admin']}>
+            <Layout><ProfesorPresentacion /></Layout>
           </ProtectedRoute>
         } />
         <Route path="/profesor/reportes" element={

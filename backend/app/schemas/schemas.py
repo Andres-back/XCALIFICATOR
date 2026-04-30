@@ -485,7 +485,7 @@ class HerramientaGenerate(BaseModel):
 
 
 class HerramientaCreate(BaseModel):
-    tipo: str  # 'examen', 'crucigrama', 'sopa_letras', 'emparejar', 'cuento', 'para_colorear'
+    tipo: str  # 'examen', 'crucigrama', 'sopa_letras', 'emparejar', 'cuento', 'para_colorear', 'presentacion'
     titulo: str
     contenido_json: Optional[dict] = None
     clave_respuestas: Optional[dict] = None
@@ -494,7 +494,7 @@ class HerramientaCreate(BaseModel):
     @field_validator("tipo")
     @classmethod
     def validate_tipo(cls, v: str) -> str:
-        valid = ("examen", "crucigrama", "sopa_letras", "emparejar", "cuento", "para_colorear")
+        valid = ("examen", "crucigrama", "sopa_letras", "emparejar", "cuento", "para_colorear", "presentacion")
         if v not in valid:
             raise ValueError(f"Tipo debe ser: {', '.join(valid)}")
         return v

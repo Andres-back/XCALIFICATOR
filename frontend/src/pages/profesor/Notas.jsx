@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import {
   Award, Trash2, Edit3, X, Save, ChevronDown, ChevronUp,
   AlertTriangle, CheckCircle, XCircle, BarChart3, Users, TrendingUp, Target,
+  Presentation, Sparkles, Loader2,
 } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -283,6 +284,7 @@ export default function ProfesorNotas() {
   const [editValues, setEditValues] = useState({ nota: '', retroalimentacion: '' });
   const [expanded, setExpanded] = useState(null);
   const [showStats, setShowStats] = useState(true);
+  const [generandoRepaso, setGenerandoRepaso] = useState(false);
 
   const fetchNotas = () => {
     api.get(`/examenes/notas/examen/${examenId}`)
@@ -333,20 +335,66 @@ export default function ProfesorNotas() {
 
   const toggleExpand = (id) => setExpanded(expanded === id ? null : id);
 
+  const generarRepaso = async () => {
+    if (generandoRepaso) return;
+    if (!stats || !stats.total) {
+      toast.error('Necesitas calificar al menos un estudiante primero');
+      return;
+    }
+    setGenerandoRepaso(true);
+    const tid = toast.loading('Creando repaso… esto puede tardar 30-90 segundos ✨');
+    try {
+      const { data } = await api.post(`/presentaciones/repaso-examen/${examenId}`, null, {
+        params: { plantilla: 'general', num_slides: 8 },
+        timeout: 240000, // 4 min
+      });
+      toast.dismiss(tid);
+      toast.success('¡Presentación lista! 🎉');
+      if (data?.pptx_url) {
+        window.open(data.pptx_url, '_blank', 'noopener');
+      }
+    } catch (err) {
+      toast.dismiss(tid);
+      toast.error(err?.response?.data?.detail || 'No pudimos generar el repaso');
+    } finally {
+      setGenerandoRepaso(false);
+    }
+  };
+
   if (loading) return <div className="flex justify-center py-20"><div className="animate-spin h-8 w-8 border-4 border-primary-500 border-t-transparent rounded-full"></div></div>;
 
   const maxInDist = stats?.distribucion ? Math.max(...stats.distribucion.map(d => d.count), 1) : 1;
 
   return (
     <div className="max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
         <h1 className="text-2xl font-bold text-gray-900">Notas del Examen</h1>
         {stats && stats.total > 0 && (
-          <button onClick={() => setShowStats(!showStats)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-300 rounded-lg hover:bg-gray-50 transition">
-            <BarChart3 className="w-3.5 h-3.5" />
-            {showStats ? 'Ocultar métricas' : 'Ver métricas'}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={generarRepaso}
+              disabled={generandoRepaso}
+              title="Genera diapositivas con las preguntas más falladas"
+              className="
+                inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold
+                rounded-lg shadow-sm transition-all
+                bg-gradient-to-r from-profesor-600 to-profesor-700 text-white
+                hover:from-profesor-700 hover:to-profesor-800
+                disabled:opacity-60 disabled:cursor-not-allowed
+              "
+            >
+              {generandoRepaso
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : <Sparkles className="w-3.5 h-3.5" />}
+              <Presentation className="w-3.5 h-3.5" />
+              {generandoRepaso ? 'Creando…' : 'Crear repaso para clase'}
+            </button>
+            <button onClick={() => setShowStats(!showStats)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-300 rounded-lg hover:bg-gray-50 transition">
+              <BarChart3 className="w-3.5 h-3.5" />
+              {showStats ? 'Ocultar métricas' : 'Ver métricas'}
+            </button>
+          </div>
         )}
       </div>
 

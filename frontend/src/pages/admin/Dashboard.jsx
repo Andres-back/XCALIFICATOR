@@ -6,6 +6,7 @@ import {
   Users, Activity, FileCheck, UserCheck, UserX, BookOpen,
   ClipboardList, Award, TrendingUp, Globe, UserPlus, ShieldCheck,
   GraduationCap, Briefcase, Cpu, Zap, Clock, BarChart3,
+  Presentation, Sparkles, Calendar,
   Monitor, Wifi, WifiOff, Smartphone, RefreshCw, Wrench,
   FileText, Grid3X3, Search, Link2, BookMarked, Palette,
 } from 'lucide-react';
@@ -13,6 +14,7 @@ import {
 export default function AdminDashboard() {
   const [stats, setStats] = useState(null);
   const [apiUsage, setApiUsage] = useState(null);
+  const [presStats, setPresStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [recentUsers, setRecentUsers] = useState([]);
   const [activeSessions, setActiveSessions] = useState([]);
@@ -37,12 +39,14 @@ export default function AdminDashboard() {
       api.get('/admin/users'),
       api.get('/admin/api-usage').catch(() => ({ data: null })),
       api.get('/admin/herramientas-flags').catch(() => ({ data: [] })),
+      api.get('/admin/presentaciones-stats').catch(() => ({ data: null })),
     ])
-      .then(([statsRes, usersRes, usageRes, flagsRes]) => {
+      .then(([statsRes, usersRes, usageRes, flagsRes, presRes]) => {
         setStats(statsRes.data);
         setRecentUsers(usersRes.data.slice(0, 5));
         setApiUsage(usageRes.data);
         setToolFlags(Array.isArray(flagsRes.data) ? flagsRes.data : []);
+        setPresStats(presRes.data);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -409,6 +413,186 @@ export default function AdminDashboard() {
           )}
         </div>
       </div>
+
+      {/* Presentaciones IA — métricas para tesis */}
+      {presStats && (
+        <div className="space-y-4">
+          <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+            <Presentation className="w-6 h-6 text-violet-600" />
+            Presentaciones IA
+            <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 text-xs font-semibold rounded-full bg-violet-50 text-violet-700 border border-violet-200">
+              <Sparkles className="w-3 h-3" /> Tesis
+            </span>
+          </h2>
+
+          {/* Top-line metrics */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="card">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-violet-50 flex items-center justify-center">
+                  <Presentation className="w-5 h-5 text-violet-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-gray-900">{presStats.total}</p>
+                  <p className="text-xs text-gray-500">Generadas en total</p>
+                </div>
+              </div>
+            </div>
+            <div className="card">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center">
+                  <Clock className="w-5 h-5 text-amber-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-gray-900">
+                    {presStats.tiempo_promedio_seg ? `${presStats.tiempo_promedio_seg.toFixed(1)}s` : '—'}
+                  </p>
+                  <p className="text-xs text-gray-500">Tiempo promedio de generación</p>
+                </div>
+              </div>
+            </div>
+            <div className="card">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center">
+                  <Zap className="w-5 h-5 text-emerald-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-gray-900">
+                    {presStats.tiempo_total_minutos.toFixed(1)} min
+                  </p>
+                  <p className="text-xs text-gray-500">Tiempo invertido por el sistema</p>
+                </div>
+              </div>
+            </div>
+            <div className="card">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center">
+                  <Calendar className="w-5 h-5 text-blue-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-gray-900">
+                    {presStats.adopcion_diaria.length}
+                  </p>
+                  <p className="text-xs text-gray-500">Días con actividad (últ. 30)</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Distribución por subtipo */}
+            <div className="card">
+              <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                <BarChart3 className="w-4 h-4 text-violet-500" />
+                Distribución por tipo de presentación
+              </h3>
+              {presStats.por_subtipo.length === 0 ? (
+                <p className="text-xs text-gray-400">Aún no hay datos.</p>
+              ) : (
+                <ul className="space-y-3">
+                  {presStats.por_subtipo.map((s) => {
+                    const max = Math.max(...presStats.por_subtipo.map((x) => x.count), 1);
+                    const pct = (s.count / max) * 100;
+                    const colorMap = {
+                      clase:           'from-blue-400 to-indigo-500',
+                      repaso_examen:   'from-amber-400 to-orange-500',
+                      boletin_periodo: 'from-emerald-400 to-teal-500',
+                    };
+                    const grad = colorMap[s.subtipo] || 'from-gray-300 to-gray-400';
+                    return (
+                      <li key={s.subtipo}>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs font-medium text-gray-700">{s.label}</span>
+                          <span className="text-xs font-bold text-gray-900">{s.count}</span>
+                        </div>
+                        <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full bg-gradient-to-r ${grad} transition-all duration-500`}
+                            style={{ width: `${Math.max(pct, s.count > 0 ? 4 : 0)}%` }}
+                          />
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+
+            {/* Top 5 docentes */}
+            <div className="card">
+              <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                <GraduationCap className="w-4 h-4 text-violet-500" />
+                Docentes más activos
+              </h3>
+              {presStats.top_profesores.length === 0 ? (
+                <p className="text-xs text-gray-400">Aún no hay datos.</p>
+              ) : (
+                <ul className="space-y-2.5">
+                  {presStats.top_profesores.map((p, i) => (
+                    <li key={p.profesor_id} className="flex items-center gap-3">
+                      <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-violet-100 text-violet-700 text-xs font-bold">
+                        {i + 1}
+                      </span>
+                      <span className="flex-1 text-sm text-gray-700 truncate">{p.nombre}</span>
+                      <span className="text-sm font-semibold text-gray-900">{p.count}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+
+          {/* Últimas 5 generadas */}
+          {presStats.ultimas.length > 0 && (
+            <div className="card">
+              <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-violet-500" />
+                Últimas presentaciones generadas
+              </h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                      <th className="py-2 px-3">Título</th>
+                      <th className="py-2 px-3">Tipo</th>
+                      <th className="py-2 px-3">Docente</th>
+                      <th className="py-2 px-3">Fecha</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {presStats.ultimas.map((u, i) => {
+                      const tipoLabels = {
+                        clase: 'Clase',
+                        repaso_examen: 'Repaso',
+                        boletin_periodo: 'Boletín',
+                      };
+                      const badgeColors = {
+                        clase: 'bg-blue-50 text-blue-700 border-blue-200',
+                        repaso_examen: 'bg-amber-50 text-amber-700 border-amber-200',
+                        boletin_periodo: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+                      };
+                      return (
+                        <tr key={i} className="hover:bg-gray-50 transition-colors">
+                          <td className="py-2.5 px-3 text-gray-900 font-medium truncate max-w-xs">{u.titulo}</td>
+                          <td className="py-2.5 px-3">
+                            <span className={`inline-flex px-2 py-0.5 text-xs font-medium rounded-full border ${badgeColors[u.subtipo] || 'bg-gray-50 text-gray-700 border-gray-200'}`}>
+                              {tipoLabels[u.subtipo] || u.subtipo}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 text-gray-600">{u.profesor}</td>
+                          <td className="py-2.5 px-3 text-xs text-gray-500">
+                            {u.created_at ? new Date(u.created_at).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' }) : '—'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* API Usage Section */}
       {apiUsage && (

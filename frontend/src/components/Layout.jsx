@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, BookOpen, Award,
   LogOut, Menu, X,
   Shield, ClipboardList, Wrench, BarChart3, Calendar, ScrollText,
-  Settings, ChevronRight,
+  Settings, ChevronRight, Presentation,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -20,10 +20,11 @@ const NAV_ITEMS = {
     { label: 'Auditoría',     path: '/admin/audit',    icon: Shield },
   ],
   profesor: [
-    { label: 'Materias',      path: '/profesor/materias',     icon: BookOpen, prefix: '/profesor/materia' },
-    { label: 'Herramientas',  path: '/profesor/herramientas', icon: Wrench },
-    { label: 'Reportes',      path: '/profesor/reportes',     icon: BarChart3 },
-    { label: 'Impacto Tesis', path: '/profesor/impacto',      icon: ClipboardList },
+    { label: 'Materias',       path: '/profesor/materias',       icon: BookOpen,     prefix: '/profesor/materia' },
+    { label: 'Herramientas',   path: '/profesor/herramientas',   icon: Wrench },
+    { label: 'Presentaciones', path: '/profesor/presentaciones', icon: Presentation, prefix: '/profesor/presentacion' },
+    { label: 'Reportes',       path: '/profesor/reportes',       icon: BarChart3 },
+    { label: 'Impacto Tesis',  path: '/profesor/impacto',        icon: ClipboardList },
   ],
   estudiante: [
     { label: 'Inicio',          path: '/estudiante',        icon: LayoutDashboard, exact: true },

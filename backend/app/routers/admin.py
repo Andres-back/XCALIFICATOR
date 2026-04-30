@@ -7,7 +7,7 @@ from app.core.database import get_db
 from app.core.dependencies import require_role
 from app.core.security import hash_password
 from app.core.tool_flags import SUPPORTED_TOOL_TYPES, list_tool_flags, set_tool_flag
-from app.models.models import User, Sesion, Nota, AuditLog, Materia, Matricula, Examen, RespuestaOnline, APIUsageLog, Boletin, PeriodoAcademico
+from app.models.models import User, Sesion, Nota, AuditLog, Materia, Matricula, Examen, RespuestaOnline, APIUsageLog, Boletin, PeriodoAcademico, Herramienta, TiempoEvaluacion
 from app.schemas.schemas import (
     UserOut, AdminUserCreate, AdminUserUpdate, ChangePasswordRequest, ChangeRoleRequest,
     SesionOut, AdminStats, AuditLogOut, AdminMateriaOut, APIUsageStats, APIUsageByModel,
@@ -457,6 +457,167 @@ async def get_api_usage(
         usage_by_task=usage_by_task,
         daily_history=daily_history,
     )
+
+
+# ──────────────── PRESENTACIONES STATS (TESIS) ────────────────
+
+@router.get("/presentaciones-stats")
+async def get_presentaciones_stats(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin")),
+):
+    """
+    Métricas de uso de presentaciones para la tesis.
+    Cubre adopción, distribución por tipo, top docentes y tiempo invertido.
+
+    Devuelve:
+        {
+          "total": int,
+          "por_subtipo": [{ subtipo, label, count }],
+          "top_profesores": [{ profesor_id, nombre, count }],
+          "tiempo_promedio_seg": float,
+          "tiempo_total_minutos": float,    # de TiempoEvaluacion
+          "adopcion_diaria": [{ date, count }],   # últimos 30 días
+          "ultimas": [{ titulo, profesor, subtipo, created_at }],
+        }
+    """
+    now = datetime.now(timezone.utc)
+    thirty_ago = now - timedelta(days=30)
+
+    # ── Total ─────────────────────────────────────────────────────
+    total = (await db.execute(
+        select(func.count(Herramienta.id))
+        .where(Herramienta.tipo == "presentacion")
+    )).scalar_one()
+
+    # ── Por subtipo (clase / repaso_examen / boletin_periodo) ─────
+    # Postgres JSONB → contenido_json->>'subtipo'
+    subtipo_expr = Herramienta.contenido_json["subtipo"].astext.label("subtipo")
+    subtipo_rows = (await db.execute(
+        select(subtipo_expr, func.count(Herramienta.id))
+        .where(Herramienta.tipo == "presentacion")
+        .group_by(subtipo_expr)
+    )).all()
+    SUBTIPO_LABELS = {
+        "clase":           "Clases",
+        "repaso_examen":   "Repasos",
+        "boletin_periodo": "Boletines",
+    }
+    por_subtipo = [
+        {
+            "subtipo": (r[0] or "clase"),
+            "label":   SUBTIPO_LABELS.get(r[0] or "clase", "Otra"),
+            "count":   int(r[1]),
+        }
+        for r in subtipo_rows
+    ]
+    # Asegurar que aparecen los 3 tipos aunque tengan 0
+    seen = {x["subtipo"] for x in por_subtipo}
+    for k, lbl in SUBTIPO_LABELS.items():
+        if k not in seen:
+            por_subtipo.append({"subtipo": k, "label": lbl, "count": 0})
+    por_subtipo.sort(key=lambda x: -x["count"])
+
+    # ── Top 5 profesores por uso ──────────────────────────────────
+    top_rows = (await db.execute(
+        select(
+            User.id,
+            User.nombre,
+            User.apellido,
+            func.count(Herramienta.id).label("count"),
+        )
+        .join(Herramienta, Herramienta.profesor_id == User.id)
+        .where(Herramienta.tipo == "presentacion")
+        .group_by(User.id, User.nombre, User.apellido)
+        .order_by(func.count(Herramienta.id).desc())
+        .limit(5)
+    )).all()
+    top_profesores = [
+        {
+            "profesor_id": str(r[0]),
+            "nombre": f"{r[1]} {r[2]}".strip(),
+            "count": int(r[3]),
+        }
+        for r in top_rows
+    ]
+
+    # ── Tiempo promedio de generación (segundos) ──────────────────
+    # Lo guardamos en config_json.duracion_generacion_seg.
+    # Traemos los valores y promediamos en Python (más portable que cast SQL).
+    dur_rows = (await db.execute(
+        select(Herramienta.config_json)
+        .where(Herramienta.tipo == "presentacion")
+    )).all()
+    duraciones = []
+    for (cfg,) in dur_rows:
+        if cfg and isinstance(cfg, dict):
+            v = cfg.get("duracion_generacion_seg")
+            if v is not None:
+                try:
+                    duraciones.append(float(v))
+                except (ValueError, TypeError):
+                    pass
+    tiempo_promedio_seg = round(sum(duraciones) / len(duraciones), 2) if duraciones else 0.0
+
+    # ── Tiempo total invertido (minutos) según TiempoEvaluacion ──
+    tiempo_total = (await db.execute(
+        select(func.coalesce(func.sum(TiempoEvaluacion.duracion_minutos), 0))
+        .where(TiempoEvaluacion.actividad_tipo.in_([
+            "presentacion", "presentacion_repaso", "presentacion_boletin",
+        ]))
+    )).scalar_one()
+    tiempo_total_minutos = float(tiempo_total or 0)
+
+    # ── Adopción diaria (últimos 30 días) ─────────────────────────
+    daily_rows = (await db.execute(
+        select(
+            cast(Herramienta.created_at, Date).label("day"),
+            func.count(Herramienta.id),
+        )
+        .where(
+            Herramienta.tipo == "presentacion",
+            Herramienta.created_at >= thirty_ago,
+        )
+        .group_by(cast(Herramienta.created_at, Date))
+        .order_by(cast(Herramienta.created_at, Date))
+    )).all()
+    adopcion_diaria = [
+        {"date": str(r[0]), "count": int(r[1])} for r in daily_rows
+    ]
+
+    # ── Últimas 5 presentaciones ──────────────────────────────────
+    ult_rows = (await db.execute(
+        select(
+            Herramienta.titulo,
+            Herramienta.contenido_json,
+            Herramienta.created_at,
+            User.nombre,
+            User.apellido,
+        )
+        .join(User, User.id == Herramienta.profesor_id)
+        .where(Herramienta.tipo == "presentacion")
+        .order_by(Herramienta.created_at.desc())
+        .limit(5)
+    )).all()
+    ultimas = []
+    for r in ult_rows:
+        contenido = r[1] or {}
+        ultimas.append({
+            "titulo": r[0],
+            "subtipo": contenido.get("subtipo", "clase") if isinstance(contenido, dict) else "clase",
+            "profesor": f"{r[3]} {r[4]}".strip(),
+            "created_at": r[2].isoformat() if r[2] else None,
+        })
+
+    return {
+        "total":                int(total or 0),
+        "por_subtipo":          por_subtipo,
+        "top_profesores":       top_profesores,
+        "tiempo_promedio_seg":  tiempo_promedio_seg,
+        "tiempo_total_minutos": round(tiempo_total_minutos, 2),
+        "adopcion_diaria":      adopcion_diaria,
+        "ultimas":              ultimas,
+    }
 
 
 # ──────────────── TOOL FLAGS ────────────────

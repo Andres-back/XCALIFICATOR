@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     # OCR
     OCR_SERVICE_URL: str = "http://paddleocr:8001"
 
+    # Presenton (AI presentation generator)
+    PRESENTON_URL: str = "http://presenton:80"
+    PRESENTON_TIMEOUT: int = 240  # seconds
+
     # Upload
     UPLOAD_DIR: str = "/app/uploads"
     MAX_UPLOAD_SIZE: int = 10_485_760  # 10MB
