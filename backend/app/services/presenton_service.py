@@ -321,3 +321,89 @@ async def generate_lesson_presentation(
     return await _generate_with_prompt(
         titulo=titulo, prompt=prompt, num_slides=num_slides, plantilla=plantilla,
     )
+
+
+# ── Clase PresentonService (interfaz usada por herramientas.py y presentation_service.py) ──
+
+class PresentonService:
+    """
+    Clase-fachada compatible con el código legacy de herramientas.py y
+    presentation_service.py que espera una API basada en clases.
+
+    Delega en las funciones asíncronas standalone del mismo módulo.
+    """
+
+    @property
+    def public_base_url(self) -> str:
+        """URL pública de Presenton (accesible desde el navegador del usuario)."""
+        # En desarrollo: puerto 5000 mapeado en docker-compose.
+        # En producción: cambiar PRESENTON_PUBLIC_URL en .env.
+        return getattr(settings, "PRESENTON_PUBLIC_URL", None) or "http://localhost:5000"
+
+    async def get_session_token(self) -> Optional[str]:
+        """
+        Retorna un token de sesión para el editor embebido de Presenton.
+        Presenton OSS no requiere autenticación, devolvemos None y el frontend
+        abre la URL de edición directamente.
+        """
+        return None
+
+    async def generateSlides(self, payload: dict) -> dict:
+        """
+        Genera diapositivas a partir de un payload estructurado y devuelve
+        un dict con las claves que esperan herramientas.py / presentation_service.py:
+            presentation_id, path, download_url, edit_path, edit_url, thumbnails
+        """
+        # Construir prompt desde el payload
+        title   = str(payload.get("title") or payload.get("topic") or "Presentación").strip()
+        content = str(payload.get("content") or "").strip()
+        language = str(payload.get("language") or "Spanish").strip()
+        n_slides = int(payload.get("n_slides") or payload.get("slides") or 8)
+        template = str(payload.get("template") or "general").strip()
+        slides_md: list = payload.get("slides_markdown") or []
+
+        # Si nos pasan slides_markdown ya construido, lo usamos como contenido base
+        if slides_md:
+            content = "\n\n".join(str(s) for s in slides_md) + (f"\n\n{content}" if content else "")
+
+        prompt = (
+            f"Crea una presentación educativa en {language} sobre: {title}.\n"
+            + (f"\nContenido base:\n{content}" if content else "")
+        )
+
+        timeout_cfg = httpx.Timeout(settings.PRESENTON_TIMEOUT, connect=10.0)
+        async with httpx.AsyncClient(timeout=timeout_cfg) as client:
+            outline_resp = await _post(client, "/api/v1/ppt/outlines/generate", {
+                "prompt":   prompt,
+                "n_slides": max(3, min(n_slides, 20)),
+                "language": language,
+            })
+            outlines = outline_resp.get("outlines") or outline_resp.get("data") or []
+            if not outlines:
+                raise RuntimeError("Presenton no devolvió outline")
+
+            pres_resp = await _post(client, "/api/v1/ppt/presentation/generate", {
+                "outlines": outlines,
+                "title":    title,
+                "template": template if template in TEMPLATES else "general",
+                "language": language,
+            })
+
+        pptx_path = pres_resp.get("pptx_path") or pres_resp.get("path") or ""
+        pptx_url  = pres_resp.get("pptx_url") or pres_resp.get("download_url") or ""
+        if pptx_path and not pptx_url:
+            pptx_url = f"{settings.PRESENTON_URL.rstrip('/')}{pptx_path}"
+
+        presentation_id = pres_resp.get("presentation_id") or pres_resp.get("id") or ""
+        edit_url = pres_resp.get("edit_url") or (
+            f"{self.public_base_url}/presentation/{presentation_id}" if presentation_id else ""
+        )
+
+        return {
+            "presentation_id": presentation_id,
+            "path":            pptx_path,
+            "download_url":    pptx_url,
+            "edit_path":       "",
+            "edit_url":        edit_url,
+            "thumbnails":      pres_resp.get("thumbnails") or [],
+        }
