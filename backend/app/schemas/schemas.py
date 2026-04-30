@@ -144,6 +144,98 @@ class ChangeRoleRequest(BaseModel):
         return v
 
 
+class LocalAIConfigOut(BaseModel):
+    ollama_url: str = "http://host.docker.internal:11434"
+    ollama_api_key: Optional[str] = None
+    grading_local_model: Optional[str] = None
+    ocr_local_model: Optional[str] = None
+
+
+class LocalAIConfigUpdate(BaseModel):
+    ollama_url: Optional[str] = None
+    ollama_api_key: Optional[str] = None
+    grading_local_model: Optional[str] = None
+    ocr_local_model: Optional[str] = None
+
+
+class LocalOllamaModelsOut(BaseModel):
+    ollama_url: str
+    models: list[str] = []
+
+
+# ── MateriaEncuentro schemas ──────────────────────────────────────────────
+class MateriaEncuentroItem(BaseModel):
+    dia_semana: str
+    hora_inicio: str
+    hora_fin: str
+
+
+class MateriaEncuentroOut(BaseModel):
+    id: UUID
+    materia_id: UUID
+    dia_semana: str
+    hora_inicio: str
+    hora_fin: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class MateriaEncuentrosUpdate(BaseModel):
+    encuentros: list[MateriaEncuentroItem]
+
+
+# ── Presentacion (herramienta) advanced schemas ───────────────────────────
+class PresentacionSlideItem(BaseModel):
+    title: Optional[str] = None
+    body: Optional[str] = None
+    bullets: Optional[list[str]] = None
+    image_url: Optional[str] = None
+
+
+class PresentacionEditRequest(BaseModel):
+    titulo: Optional[str] = None
+    slides: list[PresentacionSlideItem] = []
+    rerender: bool = False
+    template_presenton: Optional[str] = None
+    idioma_presentacion: Optional[str] = None
+    tono_presentacion: Optional[str] = None
+    verbosidad_presentacion: Optional[str] = None
+    incluir_tabla_contenido: bool = False
+    incluir_portada: bool = True
+    busqueda_web: bool = False
+    formato_exportacion: Optional[str] = None
+
+
+class PresentacionRegenerateRequest(BaseModel):
+    topic: Optional[str] = None
+    grade: Optional[str] = None
+    level: Optional[str] = None
+    slides: Optional[int] = None
+    mode: Optional[str] = None
+    language: Optional[str] = None
+    tone: Optional[str] = None
+    verbosity: Optional[str] = None
+    template: Optional[str] = None
+    include_table_of_contents: bool = False
+    include_title_slide: bool = True
+    web_search: bool = False
+    export_as: Optional[str] = None
+    instructions: Optional[str] = None
+    use_pexels_images: bool = False
+    pexels_images_per_slide: Optional[int] = None
+    export_google_slides: bool = False
+    ollama_url: Optional[str] = None
+    ollama_model: Optional[str] = None
+
+
+class PresentacionGoogleExportOut(BaseModel):
+    presentation_id: Optional[str] = None
+    url: Optional[str] = None
+    embed_url: Optional[str] = None
+
+
 class AdminMateriaOut(BaseModel):
     id: UUID
     nombre: str
