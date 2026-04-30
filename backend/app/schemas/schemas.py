@@ -117,6 +117,22 @@ class ChangePasswordRequest(BaseModel):
         return v
 
 
+class ChangeOwnPasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_password(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Mínimo 8 caracteres")
+        if not re.search(r"[A-Z]", v):
+            raise ValueError("Debe contener al menos una mayúscula")
+        if not re.search(r"\d", v):
+            raise ValueError("Debe contener al menos un número")
+        return v
+
+
 class ChangeRoleRequest(BaseModel):
     rol: str
 
