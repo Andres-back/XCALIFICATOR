@@ -197,7 +197,39 @@ export default function ProfesorExamenes({ materiaId: propMateriaId, embedded = 
     }
   };
 
-  if (loading) return <div className="flex justify-center py-20"><div className="animate-spin h-8 w-8 border-4 border-primary-500 border-t-transparent rounded-full"></div></div>;
+  if (loading) return (
+    <div className={embedded ? '' : 'max-w-5xl mx-auto'}>
+      {!embedded && (
+        <div className="flex items-center justify-between mb-6">
+          <div className="skeleton h-7 w-32 rounded-lg" />
+          <div className="skeleton h-9 w-36 rounded-lg" />
+        </div>
+      )}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="card space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex-1 space-y-1.5">
+                <div className="skeleton h-5 w-48 rounded" />
+                <div className="skeleton h-3 w-32 rounded" />
+              </div>
+              <div className="skeleton h-5 w-16 rounded-full" />
+            </div>
+            <div className="skeleton h-px w-full" />
+            <div className="flex gap-2">
+              <div className="skeleton h-3 w-20 rounded" />
+              <div className="skeleton h-3 w-20 rounded" />
+            </div>
+            <div className="flex gap-2">
+              <div className="skeleton h-8 w-20 rounded-lg" />
+              <div className="skeleton h-8 w-20 rounded-lg" />
+              <div className="skeleton h-8 w-20 rounded-lg" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 
   return (
     <div className={embedded ? '' : 'max-w-5xl mx-auto'}>

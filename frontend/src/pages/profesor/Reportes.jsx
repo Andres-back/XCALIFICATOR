@@ -473,8 +473,18 @@ export default function ProfesorReportes() {
   };
 
   if (loading) return (
-    <div className="flex justify-center py-20">
-      <div className="animate-spin h-8 w-8 border-4 border-primary-500 border-t-transparent rounded-full" />
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div><div className="skeleton h-7 w-36 rounded-lg" /><div className="skeleton h-4 w-80 rounded mt-2" /></div>
+        <div className="skeleton h-10 w-60 rounded-lg" />
+      </div>
+      <div className="bg-white rounded-xl border border-gray-200 p-5">
+        <div className="skeleton h-4 w-48 rounded mb-4" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {Array.from({ length: 3 }).map((_, i) => <div key={i} className="skeleton h-14 rounded-xl" />)}
+        </div>
+      </div>
+      <div className="skeleton h-10 w-full rounded-lg" />
     </div>
   );
 

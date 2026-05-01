@@ -42,8 +42,28 @@ export default function AdminMaterias() {
   });
 
   if (loading) return (
-    <div className="flex justify-center py-20">
-      <div className="animate-spin h-8 w-8 border-4 border-primary-500 border-t-transparent rounded-full"></div>
+    <div>
+      <div className="flex items-center justify-between mb-6">
+        <div><div className="skeleton h-7 w-56 rounded-lg" /><div className="skeleton h-4 w-32 rounded mt-2" /></div>
+        <div className="skeleton h-9 w-28 rounded-lg" />
+      </div>
+      <div className="skeleton h-11 w-full rounded-xl mb-4" />
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} className="card space-y-3">
+            <div className="flex items-center gap-3">
+              <div className="skeleton w-10 h-10 rounded-xl" />
+              <div className="space-y-1.5"><div className="skeleton h-4 w-32 rounded" /><div className="skeleton h-3 w-20 rounded" /></div>
+            </div>
+            <div className="skeleton h-px w-full" />
+            <div className="skeleton h-3 w-40 rounded" />
+            <div className="flex gap-3">
+              <div className="skeleton h-14 flex-1 rounded-lg" />
+              <div className="skeleton h-14 flex-1 rounded-lg" />
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 

@@ -154,8 +154,26 @@ export default function AdminBoletines() {
   };
 
   if (loading) return (
-    <div className="flex justify-center py-20">
-      <Loader2 className="w-8 h-8 text-primary-500 animate-spin" />
+    <div>
+      <div className="flex items-center justify-between mb-6">
+        <div><div className="skeleton h-7 w-48 rounded-lg" /><div className="skeleton h-4 w-72 rounded mt-2" /></div>
+      </div>
+      <div className="card mb-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="skeleton h-10 w-52 rounded-lg" />
+          <div className="skeleton h-10 w-44 rounded-lg" />
+          <div className="skeleton h-10 flex-1 min-w-[200px] rounded-lg" />
+          <div className="skeleton h-9 w-24 rounded-lg" />
+        </div>
+      </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3">
+            <div className="skeleton w-10 h-10 rounded-xl" />
+            <div className="space-y-1.5"><div className="skeleton h-3 w-20 rounded" /><div className="skeleton h-6 w-12 rounded" /></div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 
