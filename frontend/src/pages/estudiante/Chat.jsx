@@ -104,8 +104,15 @@ export default function EstudianteChat() {
   const inputDisabled = loading || sessionExpired;
 
   if (!historyLoaded) return (
-    <div className="flex justify-center py-20">
-      <div className="animate-spin h-8 w-8 border-4 border-primary-500 border-t-transparent rounded-full"></div>
+    <div className="max-w-2xl mx-auto space-y-4 pt-6">
+      <div className="skeleton h-12 w-full rounded-xl" />
+      <div className="flex-1 space-y-3">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div key={i} className={`flex ${i % 2 === 0 ? 'justify-start' : 'justify-end'}`}>
+            <div className={`skeleton rounded-2xl h-12 ${i % 2 === 0 ? 'w-64' : 'w-48'}`} />
+          </div>
+        ))}
+      </div>
     </div>
   );
 
@@ -124,9 +131,9 @@ export default function EstudianteChat() {
       {/* Session status bar */}
       {session && (
         <div className={`flex items-center justify-between px-4 py-2 rounded-xl text-sm mb-3 ${
-          sessionExpired 
-            ? 'bg-red-50 text-red-700 border border-red-200' 
-            : 'bg-blue-50 text-blue-700 border border-blue-200'
+          sessionExpired
+            ? 'bg-red-50 text-red-700 border border-red-200'
+            : 'bg-estudiante-50 text-estudiante-700 border border-estudiante-200'
         }`}>
           <div className="flex items-center gap-2">
             {sessionExpired ? <AlertCircle className="w-4 h-4" /> : <Clock className="w-4 h-4" />}
@@ -158,7 +165,7 @@ export default function EstudianteChat() {
             </div>
             <div className={`max-w-[80%] px-4 py-3 rounded-2xl text-sm whitespace-pre-line
               ${msg.role === 'user'
-                ? 'bg-primary-600 text-white rounded-br-md'
+                ? 'bg-estudiante-600 text-white rounded-br-md'
                 : 'bg-gray-100 text-gray-800 rounded-bl-md'
               }`}>
               <MathText text={msg.content} />

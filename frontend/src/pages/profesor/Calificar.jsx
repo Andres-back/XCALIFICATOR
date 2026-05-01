@@ -15,7 +15,7 @@ function Tab({ active, icon: Icon, label, onClick }) {
     <button onClick={onClick}
       className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold rounded-t-xl border-b-2 transition-all
         ${active
-          ? 'border-indigo-600 text-indigo-700 bg-white shadow-sm'
+          ? 'border-profesor-600 text-profesor-700 bg-white shadow-sm'
           : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}>
       <Icon className="w-4 h-4" /> {label}
     </button>
@@ -29,7 +29,7 @@ function ResultCard({ result }) {
     <div className="card mt-6 animate-fadeIn">
       <h2 className="font-semibold text-gray-900 mb-4">Resultado</h2>
       <div className="flex items-center gap-4 mb-4">
-        <div className="text-4xl font-extrabold text-indigo-600">{result.nota}</div>
+        <div className="text-4xl font-extrabold text-profesor-600">{result.nota}</div>
         <div className="text-sm text-gray-400">/ {result.detalle_json?.nota_maxima || 5.0}</div>
       </div>
 
@@ -206,7 +206,7 @@ export default function Calificar() {
               </button>
               {submissions.some(s => !s.ya_calificado) && (<>
                 <button onClick={handleGradeAll} disabled={!!gradingId}
-                  className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition disabled:opacity-60">
+                  className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-profesor-600 rounded-lg hover:bg-profesor-700 transition disabled:opacity-60">
                   <Award className="w-3.5 h-3.5" /> Calificar Todas
                 </button>
                 <span className="text-[10px] text-gray-400 hidden md:inline self-center">Obj. automáticas · Abiertas con IA</span>
@@ -268,7 +268,7 @@ export default function Calificar() {
                     ) : (
                       <button onClick={() => handleGradeOnline(sub.estudiante_id)}
                         disabled={!!gradingId}
-                        className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-violet-600 rounded-lg hover:bg-violet-700 transition disabled:opacity-60">
+                        className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-profesor-600 rounded-lg hover:bg-profesor-700 transition disabled:opacity-60">
                         {gradingId === sub.estudiante_id ? (
                           <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Calificando...</>
                         ) : (
@@ -310,7 +310,7 @@ export default function Calificar() {
                 <input {...getInputProps()} />
                 <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2" />
                 {file ? (
-                  <p className="text-sm text-indigo-600 font-medium">{file.name}</p>
+                  <p className="text-sm text-profesor-600 font-medium">{file.name}</p>
                 ) : (
                   <p className="text-sm text-gray-500">
                     Arrastra una imagen o haz clic para seleccionar

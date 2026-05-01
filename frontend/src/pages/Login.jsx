@@ -177,10 +177,7 @@ export default function Login() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-primary-600 to-indigo-600 
-                           text-white px-4 py-3 rounded-xl font-semibold hover:from-primary-700 hover:to-indigo-700 
-                           transition-all duration-200 shadow-lg shadow-primary-500/25 
-                           disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-[1.02] active:scale-[0.98]"
+                className="btn-gradient w-full justify-center py-3 text-base disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {loading ? (
                   <>

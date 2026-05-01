@@ -8,6 +8,7 @@ import {
   Presentation, Sparkles, Loader2,
 } from 'lucide-react';
 import { format } from 'date-fns';
+import StatCard from '../../components/StatCard';
 
 /* ─── Simple Bar for distribution ─── */
 function DistBar({ label, count, max }) {
@@ -375,13 +376,7 @@ export default function ProfesorNotas() {
               onClick={generarRepaso}
               disabled={generandoRepaso}
               title="Genera diapositivas con las preguntas más falladas"
-              className="
-                inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold
-                rounded-lg shadow-sm transition-all
-                bg-gradient-to-r from-profesor-600 to-profesor-700 text-white
-                hover:from-profesor-700 hover:to-profesor-800
-                disabled:opacity-60 disabled:cursor-not-allowed
-              "
+              className="btn-sm bg-profesor-600 text-white hover:bg-profesor-700 disabled:opacity-60 disabled:cursor-not-allowed shadow-sm"
             >
               {generandoRepaso
                 ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -403,38 +398,10 @@ export default function ProfesorNotas() {
         <div className="space-y-4 mb-8 animate-fadeIn">
           {/* Top Stats Cards */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div className="bg-gradient-to-br from-indigo-50 to-indigo-100 rounded-xl p-4 border border-indigo-200">
-              <div className="flex items-center gap-2 mb-1">
-                <Users className="w-4 h-4 text-indigo-500" />
-                <p className="text-xs text-indigo-600 font-medium">Calificados</p>
-              </div>
-              <p className="text-2xl font-bold text-indigo-700">{stats.total}</p>
-            </div>
-            <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-4 border border-blue-200">
-              <div className="flex items-center gap-2 mb-1">
-                <TrendingUp className="w-4 h-4 text-blue-500" />
-                <p className="text-xs text-blue-600 font-medium">Promedio</p>
-              </div>
-              <p className="text-2xl font-bold text-blue-700">{stats.promedio} <span className="text-sm font-normal text-blue-400">/ {stats.nota_maxima}</span></p>
-            </div>
-            <div className="bg-gradient-to-br from-emerald-50 to-emerald-100 rounded-xl p-4 border border-emerald-200">
-              <div className="flex items-center gap-2 mb-1">
-                <CheckCircle className="w-4 h-4 text-emerald-500" />
-                <p className="text-xs text-emerald-600 font-medium">Aprobados</p>
-              </div>
-              <p className="text-2xl font-bold text-emerald-700">{stats.tasa_aprobacion}%
-                <span className="text-sm font-normal text-emerald-400 ml-1">({stats.aprobados})</span>
-              </p>
-            </div>
-            <div className="bg-gradient-to-br from-red-50 to-red-100 rounded-xl p-4 border border-red-200">
-              <div className="flex items-center gap-2 mb-1">
-                <XCircle className="w-4 h-4 text-red-500" />
-                <p className="text-xs text-red-600 font-medium">Reprobados</p>
-              </div>
-              <p className="text-2xl font-bold text-red-700">{stats.reprobados}
-                <span className="text-sm font-normal text-red-400 ml-1">({(100 - stats.tasa_aprobacion).toFixed(1)}%)</span>
-              </p>
-            </div>
+            <StatCard icon={Users}       color="indigo"  label="Calificados"  value={stats.total}                                          delay={0}  />
+            <StatCard icon={TrendingUp}  color="blue"    label="Promedio"     value={`${stats.promedio} / ${stats.nota_maxima}`}           delay={60} />
+            <StatCard icon={CheckCircle} color="emerald" label="Aprobados"    value={`${stats.tasa_aprobacion}% (${stats.aprobados})`}     delay={120}/>
+            <StatCard icon={XCircle}     color="red"     label="Reprobados"   value={`${stats.reprobados} (${(100 - stats.tasa_aprobacion).toFixed(1)}%)`} delay={180}/>
           </div>
 
           {/* Second row: min/max/median */}

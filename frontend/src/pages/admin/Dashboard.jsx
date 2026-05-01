@@ -54,8 +54,20 @@ export default function AdminDashboard() {
   }, []);
 
   if (loading) return (
-    <div className="flex justify-center py-20">
-      <div className="animate-spin h-8 w-8 border-4 border-primary-500 border-t-transparent rounded-full"></div>
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="bg-white rounded-2xl border border-surface-border p-5">
+            <div className="skeleton h-10 w-10 rounded-xl mb-4" />
+            <div className="skeleton h-7 w-20 mb-2" />
+            <div className="skeleton h-4 w-28" />
+          </div>
+        ))}
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="card"><div className="skeleton h-48 w-full rounded-xl" /></div>
+        <div className="card"><div className="skeleton h-48 w-full rounded-xl" /></div>
+      </div>
     </div>
   );
 
@@ -287,10 +299,10 @@ export default function AdminDashboard() {
                       <p className="text-xs text-gray-400">{u.correo}</p>
                     </div>
                   </div>
-                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium
-                    ${u.rol === 'admin' ? 'bg-purple-100 text-purple-700' :
-                      u.rol === 'profesor' ? 'bg-blue-100 text-blue-700' :
-                      'bg-green-100 text-green-700'}`}>
+                  <span className={
+                    u.rol === 'admin' ? 'badge-admin' :
+                    u.rol === 'profesor' ? 'badge-profesor' : 'badge-estudiante'
+                  }>
                     {u.rol}
                   </span>
                 </div>
@@ -320,7 +332,7 @@ export default function AdminDashboard() {
           </button>
           <button onClick={() => setSessionTab('historial')}
             className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
-              sessionTab === 'historial' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              sessionTab === 'historial' ? 'bg-admin-100 text-admin-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
             }`}>
             <Clock className="w-3.5 h-3.5" /> Historial
           </button>
@@ -372,11 +384,10 @@ export default function AdminDashboard() {
                           </div>
                         </td>
                         <td className="py-2.5 px-3">
-                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                            s.usuario_rol === 'admin' ? 'bg-purple-100 text-purple-700' :
-                            s.usuario_rol === 'profesor' ? 'bg-blue-100 text-blue-700' :
-                            'bg-green-100 text-green-700'
-                          }`}>{s.usuario_rol}</span>
+                          <span className={
+                            s.usuario_rol === 'admin' ? 'badge-admin' :
+                            s.usuario_rol === 'profesor' ? 'badge-profesor' : 'badge-estudiante'
+                          }>{s.usuario_rol}</span>
                         </td>
                         <td className="py-2.5 px-3">
                           <span className="flex items-center gap-1 text-xs text-gray-600">

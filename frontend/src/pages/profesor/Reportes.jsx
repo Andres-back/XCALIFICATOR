@@ -506,13 +506,7 @@ export default function ProfesorReportes() {
               onClick={crearPresentacionBoletin}
               disabled={creatingSlides}
               title="Slides del período listas para reunión de padres"
-              className="
-                inline-flex items-center gap-1.5 px-3 py-2 text-sm font-semibold
-                rounded-lg shadow-sm transition-all shrink-0
-                bg-gradient-to-r from-profesor-600 to-profesor-700 text-white
-                hover:from-profesor-700 hover:to-profesor-800
-                disabled:opacity-60 disabled:cursor-not-allowed
-              "
+              className="btn-md bg-profesor-600 text-white hover:bg-profesor-700 disabled:opacity-60 disabled:cursor-not-allowed shadow-sm shrink-0"
             >
               {creatingSlides
                 ? <Loader2 className="w-4 h-4 animate-spin" />
@@ -540,11 +534,11 @@ export default function ProfesorReportes() {
       <div className="bg-white rounded-xl border border-gray-200 p-5">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
-            <Filter className="w-4 h-4 text-indigo-500" />
+            <Filter className="w-4 h-4 text-profesor-500" />
             <h3 className="text-sm font-semibold text-gray-800">Selecciona las materias para el reporte</h3>
           </div>
           <button onClick={selectAll}
-            className="text-xs text-indigo-600 font-medium hover:text-indigo-800 transition">
+            className="text-xs text-profesor-600 font-medium hover:text-profesor-800 transition">
             {selected.length === materias.length ? 'Deseleccionar todas' : 'Seleccionar todas'}
           </button>
         </div>
@@ -557,13 +551,13 @@ export default function ProfesorReportes() {
               <label key={m.id}
                 className={`flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer transition-colors ${
                   selected.includes(m.id)
-                    ? 'bg-indigo-50 border-indigo-300'
+                    ? 'bg-profesor-50 border-profesor-300'
                     : 'bg-gray-50 border-gray-200 hover:bg-gray-100'
                 }`}>
                 <input type="checkbox"
                   checked={selected.includes(m.id)}
                   onChange={() => toggleMateria(m.id)}
-                  className="rounded border-gray-300 text-indigo-600 w-4 h-4" />
+                  className="rounded border-gray-300 text-profesor-600 w-4 h-4" />
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-gray-800 truncate">{m.nombre}</p>
                   {m.grado && <p className="text-xs text-gray-400">{m.grado}</p>}
@@ -583,9 +577,9 @@ export default function ProfesorReportes() {
         </div>
       </div>
 
-      <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4">
-        <p className="text-sm text-indigo-900 font-medium">Este reporte del menú lateral es consolidado (multi-materia).</p>
-        <p className="text-xs text-indigo-700 mt-1">
+      <div className="rounded-xl border border-profesor-200 bg-profesor-50 p-4">
+        <p className="text-sm text-profesor-900 font-medium">Este reporte del menú lateral es consolidado (multi-materia).</p>
+        <p className="text-xs text-profesor-700 mt-1">
           Si necesitas un reporte individual de una sola materia con configuración y publicación de boletines,
           entra por Materias {'>'} Materia {'>'} pestaña Reportes.
         </p>
@@ -610,14 +604,14 @@ export default function ProfesorReportes() {
           {globalStats && (
             <div className="bg-white rounded-xl border border-gray-200 p-5">
               <div className="flex items-center gap-2 mb-4">
-                <BarChart3 className="w-5 h-5 text-indigo-600" />
+                <BarChart3 className="w-5 h-5 text-profesor-600" />
                 <h3 className="font-bold text-gray-900">Resumen Global ({selectedPeriodoLabel})</h3>
               </div>
 
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-                <div className="bg-indigo-50 rounded-xl p-3 text-center">
-                  <p className="text-xl font-bold text-indigo-700">{globalStats.materias}</p>
-                  <p className="text-[10px] text-indigo-500">Materias evaluadas</p>
+                <div className="bg-profesor-50 rounded-xl p-3 text-center">
+                  <p className="text-xl font-bold text-profesor-700">{globalStats.materias}</p>
+                  <p className="text-[10px] text-profesor-500">Materias evaluadas</p>
                 </div>
                 <div className="bg-blue-50 rounded-xl p-3 text-center">
                   <p className="text-xl font-bold text-blue-700">{globalStats.totalEstudiantes}</p>
@@ -656,12 +650,12 @@ export default function ProfesorReportes() {
           {report.map((r, idx) => (
             <div key={idx} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
               {/* Materia header */}
-              <div className="bg-indigo-50 px-5 py-3 border-b border-indigo-100">
+              <div className="bg-profesor-50 px-5 py-3 border-b border-profesor-100">
                 <div className="flex items-center gap-2">
-                  <BookOpen className="w-5 h-5 text-indigo-600" />
-                  <h3 className="font-bold text-indigo-800">{r.materia?.nombre || 'Materia'}</h3>
+                  <BookOpen className="w-5 h-5 text-profesor-600" />
+                  <h3 className="font-bold text-profesor-800">{r.materia?.nombre || 'Materia'}</h3>
                 </div>
-                <p className="text-xs text-indigo-600 mt-1">Período: {selectedPeriodoLabel}</p>
+                <p className="text-xs text-profesor-600 mt-1">Período: {selectedPeriodoLabel}</p>
               </div>
 
               {/* Summary cards */}
@@ -672,10 +666,10 @@ export default function ProfesorReportes() {
                     <p className="text-xl font-bold text-blue-700">{r.estudiantesTotal}</p>
                     <p className="text-[10px] text-blue-500">Estudiantes</p>
                   </div>
-                  <div className="bg-indigo-50 rounded-xl p-3 text-center">
-                    <Award className="w-5 h-5 text-indigo-600 mx-auto mb-1" />
+                  <div className="bg-profesor-50 rounded-xl p-3 text-center">
+                    <Award className="w-5 h-5 text-profesor-600 mx-auto mb-1" />
                     <p className={`text-xl font-bold ${scoreClass(r.promedioGrupo)}`}>{formatScore(r.promedioGrupo)}</p>
-                    <p className="text-[10px] text-indigo-500">Promedio</p>
+                    <p className="text-[10px] text-profesor-500">Promedio</p>
                   </div>
                   <div className="bg-emerald-50 rounded-xl p-3 text-center">
                     <TrendingUp className="w-5 h-5 text-emerald-600 mx-auto mb-1" />

@@ -8,9 +8,9 @@ import {
 import { format } from 'date-fns';
 
 const ROLES = [
-  { value: 'estudiante', label: 'Estudiante', color: 'bg-green-100 text-green-700' },
-  { value: 'profesor', label: 'Profesor', color: 'bg-blue-100 text-blue-700' },
-  { value: 'admin', label: 'Administrador', color: 'bg-purple-100 text-purple-700' },
+  { value: 'estudiante', label: 'Estudiante', badge: 'badge-estudiante' },
+  { value: 'profesor',   label: 'Profesor',   badge: 'badge-profesor'   },
+  { value: 'admin',      label: 'Administrador', badge: 'badge-admin'   },
 ];
 
 const GRADOS = [
@@ -18,7 +18,7 @@ const GRADOS = [
   '6°', '7°', '8°', '9°', '10°', '11°',
 ];
 
-const getRoleColor = (rol) => ROLES.find(r => r.value === rol)?.color || 'bg-gray-100 text-gray-700';
+const getRoleBadge = (rol) => ROLES.find(r => r.value === rol)?.badge || 'badge-gray';
 
 export default function AdminUsers() {
   const [users, setUsers] = useState([]);
@@ -142,8 +142,24 @@ export default function AdminUsers() {
   };
 
   if (loading) return (
-    <div className="flex justify-center py-20">
-      <div className="animate-spin h-8 w-8 border-4 border-primary-500 border-t-transparent rounded-full"></div>
+    <div className="space-y-4">
+      <div className="flex justify-between mb-2">
+        <div className="skeleton h-8 w-48 rounded-lg" />
+        <div className="skeleton h-9 w-36 rounded-lg" />
+      </div>
+      <div className="card overflow-hidden">
+        <div className="space-y-3">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-4 py-2 border-b border-gray-50">
+              <div className="skeleton h-8 w-8 rounded-full shrink-0" />
+              <div className="skeleton h-4 w-40" />
+              <div className="skeleton h-4 flex-1" />
+              <div className="skeleton h-5 w-20 rounded-full" />
+              <div className="skeleton h-5 w-14 rounded-full" />
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 
@@ -224,9 +240,9 @@ export default function AdminUsers() {
                 <td className="py-3 px-2 relative">
                   <button
                     onClick={() => setRoleDropdown(roleDropdown === u.id ? null : u.id)}
-                    className={`px-2 py-1 rounded-full text-xs font-medium flex items-center gap-1 cursor-pointer hover:opacity-80 ${getRoleColor(u.rol)}`}
+                    className={`${getRoleBadge(u.rol)} cursor-pointer hover:opacity-80`}
                   >
-                    {u.rol}
+                    {ROLES.find(r => r.value === u.rol)?.label || u.rol}
                     <ChevronDown className="w-3 h-3" />
                   </button>
                   {roleDropdown === u.id && (
@@ -277,8 +293,7 @@ export default function AdminUsers() {
                   )}
                 </td>
                 <td className="py-3 px-2">
-                  <span className={`px-2 py-1 rounded-full text-xs font-medium
-                    ${u.activo ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                    <span className={u.activo ? 'badge-emerald' : 'badge-red'}>
                     {u.activo ? 'Activo' : 'Inactivo'}
                   </span>
                 </td>

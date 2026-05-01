@@ -525,7 +525,7 @@ export default function ProfesorExamenes({ materiaId: propMateriaId, embedded = 
                 Cancelar
               </button>
               <button onClick={saveEdit} disabled={editModal.saving}
-                className="px-5 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition disabled:opacity-50 flex items-center gap-2">
+                className="btn-md bg-profesor-600 text-white hover:bg-profesor-700 disabled:opacity-50">
                 {editModal.saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                 Guardar Cambios
               </button>
