@@ -129,8 +129,24 @@ export default function AdminPeriodos() {
   };
 
   if (loading) return (
-    <div className="flex justify-center py-20">
-      <div className="animate-spin h-8 w-8 border-4 border-primary-500 border-t-transparent rounded-full"></div>
+    <div className="space-y-6 max-w-4xl mx-auto">
+      <div className="flex items-center justify-between">
+        <div><div className="skeleton h-7 w-56 rounded-lg" /><div className="skeleton h-4 w-72 rounded mt-2" /></div>
+        <div className="skeleton h-9 w-36 rounded-lg" />
+      </div>
+      <div className="skeleton h-16 w-full rounded-xl" />
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="bg-white rounded-xl border border-gray-200 p-5 space-y-3">
+            <div className="flex items-center gap-3">
+              <div className="skeleton w-10 h-10 rounded-xl" />
+              <div className="space-y-1.5"><div className="skeleton h-4 w-32 rounded" /><div className="skeleton h-4 w-12 rounded-full" /></div>
+            </div>
+            <div className="space-y-1"><div className="skeleton h-3 w-40 rounded" /><div className="skeleton h-3 w-36 rounded" /></div>
+            <div className="skeleton h-2 w-full rounded-full" />
+          </div>
+        ))}
+      </div>
     </div>
   );
 

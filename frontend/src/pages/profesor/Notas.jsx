@@ -5,8 +5,10 @@ import toast from 'react-hot-toast';
 import {
   Award, Trash2, Edit3, X, Save, ChevronDown, ChevronUp,
   AlertTriangle, CheckCircle, XCircle, BarChart3, Users, TrendingUp, Target,
+  Presentation, Sparkles, Loader2,
 } from 'lucide-react';
 import { format } from 'date-fns';
+import StatCard from '../../components/StatCard';
 
 /* ─── Simple Bar for distribution ─── */
 function DistBar({ label, count, max }) {
@@ -283,6 +285,7 @@ export default function ProfesorNotas() {
   const [editValues, setEditValues] = useState({ nota: '', retroalimentacion: '' });
   const [expanded, setExpanded] = useState(null);
   const [showStats, setShowStats] = useState(true);
+  const [generandoRepaso, setGenerandoRepaso] = useState(false);
 
   const fetchNotas = () => {
     api.get(`/examenes/notas/examen/${examenId}`)
@@ -333,20 +336,82 @@ export default function ProfesorNotas() {
 
   const toggleExpand = (id) => setExpanded(expanded === id ? null : id);
 
-  if (loading) return <div className="flex justify-center py-20"><div className="animate-spin h-8 w-8 border-4 border-primary-500 border-t-transparent rounded-full"></div></div>;
+  const generarRepaso = async () => {
+    if (generandoRepaso) return;
+    if (!stats || !stats.total) {
+      toast.error('Necesitas calificar al menos un estudiante primero');
+      return;
+    }
+    setGenerandoRepaso(true);
+    const tid = toast.loading('Creando repaso… esto puede tardar 30-90 segundos ✨');
+    try {
+      const { data } = await api.post(`/presentaciones/repaso-examen/${examenId}`, null, {
+        params: { plantilla: 'general', num_slides: 8 },
+        timeout: 240000, // 4 min
+      });
+      toast.dismiss(tid);
+      toast.success('¡Presentación lista! 🎉');
+      if (data?.pptx_url) {
+        window.open(data.pptx_url, '_blank', 'noopener');
+      }
+    } catch (err) {
+      toast.dismiss(tid);
+      toast.error(err?.response?.data?.detail || 'No pudimos generar el repaso');
+    } finally {
+      setGenerandoRepaso(false);
+    }
+  };
+
+  if (loading) return (
+    <div className="max-w-4xl mx-auto space-y-4">
+      <div className="flex items-center justify-between mb-4">
+        <div className="skeleton h-7 w-52 rounded-lg" />
+        <div className="skeleton h-8 w-36 rounded-lg" />
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {Array.from({ length: 4 }).map((_, i) => <div key={i} className="skeleton h-24 rounded-xl" />)}
+      </div>
+      <div className="space-y-2">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} className="flex items-center gap-3 p-4 bg-white rounded-xl border border-gray-200">
+            <div className="skeleton w-10 h-10 rounded-full shrink-0" />
+            <div className="flex-1 space-y-1.5">
+              <div className="skeleton h-4 w-40 rounded" />
+              <div className="skeleton h-3 w-24 rounded" />
+            </div>
+            <div className="skeleton h-8 w-16 rounded-lg" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 
   const maxInDist = stats?.distribucion ? Math.max(...stats.distribucion.map(d => d.count), 1) : 1;
 
   return (
     <div className="max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
         <h1 className="text-2xl font-bold text-gray-900">Notas del Examen</h1>
         {stats && stats.total > 0 && (
-          <button onClick={() => setShowStats(!showStats)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-300 rounded-lg hover:bg-gray-50 transition">
-            <BarChart3 className="w-3.5 h-3.5" />
-            {showStats ? 'Ocultar métricas' : 'Ver métricas'}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={generarRepaso}
+              disabled={generandoRepaso}
+              title="Genera diapositivas con las preguntas más falladas"
+              className="btn-sm bg-profesor-600 text-white hover:bg-profesor-700 disabled:opacity-60 disabled:cursor-not-allowed shadow-sm"
+            >
+              {generandoRepaso
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : <Sparkles className="w-3.5 h-3.5" />}
+              <Presentation className="w-3.5 h-3.5" />
+              {generandoRepaso ? 'Creando…' : 'Crear repaso para clase'}
+            </button>
+            <button onClick={() => setShowStats(!showStats)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-300 rounded-lg hover:bg-gray-50 transition">
+              <BarChart3 className="w-3.5 h-3.5" />
+              {showStats ? 'Ocultar métricas' : 'Ver métricas'}
+            </button>
+          </div>
         )}
       </div>
 
@@ -355,38 +420,10 @@ export default function ProfesorNotas() {
         <div className="space-y-4 mb-8 animate-fadeIn">
           {/* Top Stats Cards */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div className="bg-gradient-to-br from-indigo-50 to-indigo-100 rounded-xl p-4 border border-indigo-200">
-              <div className="flex items-center gap-2 mb-1">
-                <Users className="w-4 h-4 text-indigo-500" />
-                <p className="text-xs text-indigo-600 font-medium">Calificados</p>
-              </div>
-              <p className="text-2xl font-bold text-indigo-700">{stats.total}</p>
-            </div>
-            <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-4 border border-blue-200">
-              <div className="flex items-center gap-2 mb-1">
-                <TrendingUp className="w-4 h-4 text-blue-500" />
-                <p className="text-xs text-blue-600 font-medium">Promedio</p>
-              </div>
-              <p className="text-2xl font-bold text-blue-700">{stats.promedio} <span className="text-sm font-normal text-blue-400">/ {stats.nota_maxima}</span></p>
-            </div>
-            <div className="bg-gradient-to-br from-emerald-50 to-emerald-100 rounded-xl p-4 border border-emerald-200">
-              <div className="flex items-center gap-2 mb-1">
-                <CheckCircle className="w-4 h-4 text-emerald-500" />
-                <p className="text-xs text-emerald-600 font-medium">Aprobados</p>
-              </div>
-              <p className="text-2xl font-bold text-emerald-700">{stats.tasa_aprobacion}%
-                <span className="text-sm font-normal text-emerald-400 ml-1">({stats.aprobados})</span>
-              </p>
-            </div>
-            <div className="bg-gradient-to-br from-red-50 to-red-100 rounded-xl p-4 border border-red-200">
-              <div className="flex items-center gap-2 mb-1">
-                <XCircle className="w-4 h-4 text-red-500" />
-                <p className="text-xs text-red-600 font-medium">Reprobados</p>
-              </div>
-              <p className="text-2xl font-bold text-red-700">{stats.reprobados}
-                <span className="text-sm font-normal text-red-400 ml-1">({(100 - stats.tasa_aprobacion).toFixed(1)}%)</span>
-              </p>
-            </div>
+            <StatCard icon={Users}       color="indigo"  label="Calificados"  value={stats.total}                                          delay={0}  />
+            <StatCard icon={TrendingUp}  color="blue"    label="Promedio"     value={`${stats.promedio} / ${stats.nota_maxima}`}           delay={60} />
+            <StatCard icon={CheckCircle} color="emerald" label="Aprobados"    value={`${stats.tasa_aprobacion}% (${stats.aprobados})`}     delay={120}/>
+            <StatCard icon={XCircle}     color="red"     label="Reprobados"   value={`${stats.reprobados} (${(100 - stats.tasa_aprobacion).toFixed(1)}%)`} delay={180}/>
           </div>
 
           {/* Second row: min/max/median */}

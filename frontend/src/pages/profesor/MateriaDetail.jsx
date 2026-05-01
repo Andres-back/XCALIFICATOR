@@ -67,8 +67,24 @@ export default function MateriaDetail() {
 
   if (loading) {
     return (
-      <div className="flex justify-center py-20">
-        <Loader2 className="w-8 h-8 text-primary-500 animate-spin" />
+      <div className="space-y-4">
+        <div className="skeleton h-5 w-48 rounded" />
+        <div className="bg-white rounded-2xl border border-gray-200 p-6">
+          <div className="flex items-center gap-4">
+            <div className="skeleton w-14 h-14 rounded-2xl" />
+            <div className="flex-1 space-y-2">
+              <div className="skeleton h-6 w-56 rounded" />
+              <div className="skeleton h-4 w-32 rounded" />
+            </div>
+            <div className="skeleton h-8 w-24 rounded-lg" />
+          </div>
+        </div>
+        <div className="flex gap-1 border-b border-gray-200 pb-0">
+          {Array.from({ length: 6 }).map((_, i) => <div key={i} className="skeleton h-11 w-24 rounded-t-xl" />)}
+        </div>
+        <div className="space-y-3">
+          {Array.from({ length: 4 }).map((_, i) => <div key={i} className="skeleton h-16 w-full rounded-xl" />)}
+        </div>
       </div>
     );
   }
