@@ -173,7 +173,13 @@ export default function GenerarPresentacion() {
       setProgress(100);
       toast.success('¡Presentación lista! 🎉');
     } catch (err) {
-      const msg = err?.response?.data?.detail || 'No pudimos generar la presentación.';
+      const detail = err?.response?.data?.detail;
+      const msg =
+        (typeof detail === 'string' && detail.trim())
+          ? detail
+          : err?.response?.status === 502
+            ? 'No hay conexión con el servicio de presentaciones (Presenton). Verifica backend y contenedor Presenton.'
+            : 'No pudimos generar la presentación.';
       toast.error(msg);
       setStep(2); // volver al paso anterior para reintentar
     } finally {
@@ -185,6 +191,20 @@ export default function GenerarPresentacion() {
   const handleRetry = () => {
     setResult(null);
     setStep(2);
+  };
+
+  // Abre el editor de Presenton inyectando primero el token de sesión como
+  // cookie de dominio (los navegadores no distinguen puertos en localhost)
+  const handleOpenEditor = async () => {
+    if (!result?.edit_url) return;
+    try {
+      const res = await api.get('/presentaciones/presenton-token');
+      const token = res.data.token;
+      document.cookie = `presenton_session=${token}; path=/; SameSite=Lax; max-age=86400`;
+    } catch {
+      // si falla la obtención del token, el usuario verá el login de Presenton
+    }
+    window.open(result.edit_url, '_blank', 'noopener,noreferrer');
   };
 
   // ── Avance al paso 3 dispara la generación ──
@@ -496,15 +516,14 @@ export default function GenerarPresentacion() {
                   </a>
                 )}
                 {result.edit_url && (
-                  <a
-                    href={result.edit_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                  <button
+                    type="button"
+                    onClick={handleOpenEditor}
                     className="btn-md bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"
                   >
                     <GraduationCap className="w-4 h-4" />
                     Abrir editor
-                  </a>
+                  </button>
                 )}
                 <button
                   type="button"

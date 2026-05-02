@@ -42,7 +42,10 @@ class Settings(BaseSettings):
 
     # Presenton (AI presentation generator)
     PRESENTON_URL: str = "http://presenton:80"
+    PRESENTON_PUBLIC_URL: str = "http://localhost:5001"
     PRESENTON_TIMEOUT: int = 240  # seconds
+    PRESENTON_AUTH_USERNAME: str = "xcalificator"
+    PRESENTON_AUTH_PASSWORD: str = "XCalif2024Pres!"
 
     # Upload
     UPLOAD_DIR: str = "/app/uploads"

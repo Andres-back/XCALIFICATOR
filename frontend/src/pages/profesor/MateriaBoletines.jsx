@@ -108,8 +108,22 @@ export default function MateriaBoletines({ materiaId, materiaNombre }) {
   };
 
   if (loading) return (
-    <div className="flex justify-center py-10">
-      <Loader2 className="w-6 h-6 text-primary-500 animate-spin" />
+    <div className="space-y-5">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+        <div className="skeleton h-9 w-48 rounded-lg" />
+        <div className="skeleton h-9 w-28 rounded-lg" />
+      </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="skeleton h-20 rounded-xl" />
+        ))}
+      </div>
+      <div className="skeleton h-10 w-72 rounded-xl" />
+      <div className="space-y-3">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div key={i} className="skeleton h-16 w-full rounded-xl" />
+        ))}
+      </div>
     </div>
   );
 

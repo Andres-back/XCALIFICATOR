@@ -133,8 +133,20 @@ export default function MateriaAsistencia({ materiaId, materiaNombre }) {
   };
 
   if (loading) return (
-    <div className="flex justify-center py-10">
-      <Loader2 className="w-6 h-6 text-primary-500 animate-spin" />
+    <div className="space-y-5">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+        <div className="skeleton h-9 w-48 rounded-lg" />
+        <div className="flex gap-2">
+          <div className="skeleton h-9 w-28 rounded-lg" />
+          <div className="skeleton h-9 w-28 rounded-lg" />
+        </div>
+      </div>
+      <div className="skeleton h-10 w-full rounded-xl" />
+      <div className="space-y-2">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} className="skeleton h-12 w-full rounded-xl" />
+        ))}
+      </div>
     </div>
   );
 

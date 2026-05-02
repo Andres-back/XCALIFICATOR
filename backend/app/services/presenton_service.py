@@ -2,15 +2,21 @@
 Servicio para integración con Presenton (generador de presentaciones IA).
 
 Presenton corre como contenedor Docker (xcalificator_presenton) y reutiliza
-la GROQ_API_KEY del proyecto. Expone una API HTTP que recibe un prompt + outline
-y devuelve un archivo .pptx más metadatos.
+la GROQ_API_KEY del proyecto. Expone una API HTTP que recibe un prompt
+y devuelve un archivo .pptx guardado en /app_data/exports/ dentro del
+contenedor. El servicio descarga el archivo y lo reexpone en /uploads/
+del backend para que el navegador pueda descargarlo sin necesitar
+credenciales de Presenton.
 
 Documentación: https://github.com/presenton/presenton
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
+import time
 from typing import Optional
 
 import httpx
@@ -21,14 +27,54 @@ settings = get_settings()
 logger = logging.getLogger(__name__)
 
 
+# ── Session token cache ────────────────────────────────────────────────
+_session: dict = {"token": None, "expires": 0.0}
+_session_lock: Optional[asyncio.Lock] = None
+
+
+def _get_lock() -> asyncio.Lock:
+    global _session_lock
+    if _session_lock is None:
+        _session_lock = asyncio.Lock()
+    return _session_lock
+
+
+async def _fetch_presenton_token() -> str:
+    url = f"{settings.PRESENTON_URL.rstrip('/')}/api/v1/auth/login"
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(url, json={
+            "username": settings.PRESENTON_AUTH_USERNAME,
+            "password": settings.PRESENTON_AUTH_PASSWORD,
+        })
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"Presenton auth falló ({resp.status_code}): {resp.text[:200]}"
+        )
+    token = resp.cookies.get("presenton_session")
+    if not token:
+        raise RuntimeError("Presenton login no devolvió cookie de sesión")
+    return token
+
+
+async def _ensure_token() -> str:
+    async with _get_lock():
+        if _session["token"] and time.time() < _session["expires"]:
+            return _session["token"]
+        token = await _fetch_presenton_token()
+        _session["token"] = token
+        _session["expires"] = time.time() + 20 * 24 * 3600  # 20-day cache
+        return token
+
+
 # ── Plantillas soportadas ──────────────────────────────────────────────
 TEMPLATES = {
     "general":  "general",
-    "classic":  "classic",
+    "classic":  "standard",  # renamed in Presenton — map to "standard"
     "modern":   "modern",
+    "standard": "standard",
+    "swift":    "swift",
 }
 
-# Niveles de slides que el wizard ofrece al docente
 SLIDE_PRESETS = {
     "corta":    5,
     "media":    8,
@@ -36,16 +82,14 @@ SLIDE_PRESETS = {
 }
 
 
+# ── Prompt builders ────────────────────────────────────────────────────
+
 def _build_lesson_prompt(
     titulo: str,
     contenido: str,
     grado: Optional[str] = None,
     objetivos: Optional[list[str]] = None,
 ) -> str:
-    """
-    Arma el prompt en español que Presenton usará para crear el outline.
-    Diseñado para producir slides de CLASE (no de examen ni de retroalimentación).
-    """
     bloques: list[str] = [
         f"Crea una presentación educativa en ESPAÑOL para una clase sobre: {titulo}.",
     ]
@@ -81,13 +125,6 @@ def _build_review_prompt(
     nota_maxima: float,
     grado: Optional[str] = None,
 ) -> str:
-    """
-    Prompt para presentación de RETROALIMENTACIÓN de un examen.
-    Se centra en explicar las preguntas con menor tasa de acierto.
-
-    `preguntas_falladas` es una lista de dicts con:
-        {numero, enunciado, tipo, respuesta_correcta, tasa_acierto, explicacion?}
-    """
     bloques: list[str] = [
         f"Crea una presentación de RETROALIMENTACIÓN en ESPAÑOL para repasar el examen "
         f"\"{titulo_examen}\" de la materia {materia}.",
@@ -98,7 +135,6 @@ def _build_review_prompt(
             f"Audiencia: estudiantes de {grado} del sistema educativo colombiano. "
             f"Usa lenguaje cercano y motivador (no acusatorio)."
         )
-
     if preguntas_falladas:
         lineas = []
         for q in preguntas_falladas:
@@ -113,7 +149,7 @@ def _build_review_prompt(
         "1. Portada con el título 'Repaso del examen' y la materia.\n"
         "2. Slide de panorama: cuántos estudiantes, promedio, qué salió bien.\n"
         "3. Una slide por cada pregunta a repasar: enunciado + respuesta correcta + "
-        "explicación clara del concepto (no de la pregunta literal).\n"
+        "explicación clara del concepto.\n"
         "4. Slide de errores comunes / tips para no caer en ellos.\n"
         "5. Slide final motivacional y de próximos pasos.\n"
         "Tono: empático, sin culpar al estudiante. Enfocado en el aprendizaje."
@@ -132,9 +168,6 @@ def _build_period_summary_prompt(
     debilidades: list[str] = None,
     grado: Optional[str] = None,
 ) -> str:
-    """
-    Prompt para presentación de RESUMEN DE PERÍODO (reuniones de padres / dirección).
-    """
     bloques: list[str] = [
         f"Crea una presentación de RESUMEN DEL PERÍODO en ESPAÑOL para la materia "
         f"{materia}, período {periodo}.",
@@ -142,7 +175,6 @@ def _build_period_summary_prompt(
     ]
     if grado:
         bloques.append(f"Grado: {grado}.")
-
     bloques.append(
         f"Datos clave del período:\n"
         f"- Promedio del grupo: {promedio_grupo:.2f}\n"
@@ -158,7 +190,6 @@ def _build_period_summary_prompt(
         bloques.append("Fortalezas observadas:\n- " + "\n- ".join(fortalezas))
     if debilidades:
         bloques.append("Áreas a reforzar:\n- " + "\n- ".join(debilidades))
-
     bloques.append(
         "Estructura obligatoria:\n"
         "1. Portada con materia y período.\n"
@@ -173,51 +204,128 @@ def _build_period_summary_prompt(
     return "\n\n".join(bloques)
 
 
-# ── Generadores especializados ─────────────────────────────────────────
+# ── PPTX download + local cache ────────────────────────────────────────
+
+async def _download_and_store_pptx(
+    client: httpx.AsyncClient,
+    pptx_path: str,
+    token: str,
+    presentation_id: str,
+) -> str:
+    """
+    Downloads the PPTX from Presenton's nginx (cookie-gated) and saves it to
+    the backend's /uploads/presentations/ directory so the browser can fetch
+    it without needing a Presenton session cookie.
+
+    Returns the relative URL /uploads/presentations/<id>.pptx, or "" on failure.
+    """
+    if not pptx_path:
+        return ""
+    download_url = f"{settings.PRESENTON_URL.rstrip('/')}{pptx_path}"
+    # Nginx auth_request passes Cookie header (not Authorization) to the verify endpoint
+    resp = await client.get(download_url, cookies={"presenton_session": token})
+    if resp.status_code != 200:
+        logger.warning("No se pudo descargar PPTX de Presenton (%s): %s", resp.status_code, pptx_path)
+        return ""
+
+    pres_dir = os.path.join(settings.UPLOAD_DIR, "presentations")
+    os.makedirs(pres_dir, exist_ok=True)
+    filename = f"{presentation_id}.pptx"
+    filepath = os.path.join(pres_dir, filename)
+    with open(filepath, "wb") as fh:
+        fh.write(resp.content)
+
+    return f"/uploads/presentations/{filename}"
+
+
+# ── Core generator (new Presenton API) ────────────────────────────────
 
 async def _generate_with_prompt(
     titulo: str, prompt: str, num_slides: int, plantilla: str
 ) -> dict:
-    """Núcleo común: outline + presentation. Reutilizable por todos los flujos."""
+    """Single-call presentation generation using POST /api/v1/ppt/presentation/generate."""
     if plantilla not in TEMPLATES:
         plantilla = "general"
     num_slides = max(3, min(int(num_slides or 8), 20))
 
+    token = await _ensure_token()
     timeout = httpx.Timeout(settings.PRESENTON_TIMEOUT, connect=10.0)
+
     async with httpx.AsyncClient(timeout=timeout) as client:
-        outline_resp = await _post(client, "/api/v1/ppt/outlines/generate", {
-            "prompt":   prompt,
+        payload = {
+            "content": prompt,
             "n_slides": num_slides,
             "language": "Spanish",
-        })
-        outlines = outline_resp.get("outlines") or outline_resp.get("data") or []
-        if not outlines:
-            raise RuntimeError("Presenton no devolvió outline (verifica GROQ_API_KEY)")
-
-        pres_resp = await _post(client, "/api/v1/ppt/presentation/generate", {
-            "outlines": outlines,
-            "title":    titulo,
             "template": TEMPLATES[plantilla],
-            "language": "Spanish",
-        })
+            "export_as": "pptx",
+            "include_title_slide": True,
+            "instructions": (
+                "FORMATO OBLIGATORIO: "
+                "1. Usa SOLO texto plano. PROHIBIDO usar LaTeX, comandos como \\frac, \\times, \\sum, $...$ o cualquier marcado matemático especial. "
+                "2. Para fracciones escribe '3/4' o símbolos Unicode: ½ ⅓ ¼ ¾. "
+                "3. Para operaciones usa: × ÷ ± √ ² ³ π ∑ en lugar de comandos LaTeX. "
+                "4. PROHIBIDO subrayar texto con guiones bajos (_palabra_) ni usar HTML. "
+                "5. Cada diapositiva: título corto + máximo 4 líneas de cuerpo + 1 imagen relevante al tema. "
+                "6. Las palabras clave para buscar imágenes deben ser del tema principal, en español, simples y concretas."
+            ),
+        }
 
-    presentation_id = pres_resp.get("presentation_id") or pres_resp.get("id") or ""
-    pptx_path       = pres_resp.get("pptx_path") or pres_resp.get("path") or ""
-    pptx_url        = pres_resp.get("pptx_url")  or pres_resp.get("download_url") or ""
-    thumbnails      = pres_resp.get("thumbnails") or pres_resp.get("previews") or []
-    edit_url        = pres_resp.get("edit_url")
+        resp = await client.post(
+            f"{settings.PRESENTON_URL.rstrip('/')}/api/v1/ppt/presentation/generate",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        if resp.status_code == 401:
+            # Token was invalidated — clear and retry once
+            _session["token"] = None
+            _session["expires"] = 0.0
+            token = await _ensure_token()
+            resp = await client.post(
+                f"{settings.PRESENTON_URL.rstrip('/')}/api/v1/ppt/presentation/generate",
+                json=payload,
+                headers={"Authorization": f"Bearer {token}"},
+            )
 
-    if pptx_path and not pptx_url:
-        pptx_url = f"{settings.PRESENTON_URL.rstrip('/')}{pptx_path}"
+        if resp.status_code >= 400:
+            raise RuntimeError(
+                f"Presenton respondió {resp.status_code}: {resp.text[:300]}"
+            )
+
+        data = resp.json()
+        presentation_id = str(data.get("presentation_id", ""))
+        pptx_path       = data.get("path", "")
+        edit_path       = data.get("edit_path", "")
+
+        pptx_url = await _download_and_store_pptx(client, pptx_path, token, presentation_id)
+        edit_url = (
+            f"{settings.PRESENTON_PUBLIC_URL.rstrip('/')}{edit_path}" if edit_path else ""
+        )
 
     return {
         "presentation_id": presentation_id,
         "pptx_path":       pptx_path,
         "pptx_url":        pptx_url,
-        "thumbnails":      thumbnails,
+        "thumbnails":      [],
         "edit_url":        edit_url,
-        "outline":         outlines,
+        "outline":         [],
     }
+
+
+# ── Public generators ──────────────────────────────────────────────────
+
+async def generate_lesson_presentation(
+    titulo: str,
+    contenido: str = "",
+    *,
+    grado: Optional[str] = None,
+    objetivos: Optional[list[str]] = None,
+    num_slides: int = 8,
+    plantilla: str = "general",
+) -> dict:
+    prompt = _build_lesson_prompt(titulo, contenido, grado=grado, objetivos=objetivos)
+    return await _generate_with_prompt(
+        titulo=titulo, prompt=prompt, num_slides=num_slides, plantilla=plantilla,
+    )
 
 
 async def generate_review_presentation(
@@ -231,7 +339,6 @@ async def generate_review_presentation(
     num_slides: int = 8,
     plantilla: str = "general",
 ) -> dict:
-    """Presentación de retroalimentación (las 3 preguntas más falladas + tips)."""
     prompt = _build_review_prompt(
         titulo_examen=titulo_examen,
         materia=materia,
@@ -262,7 +369,6 @@ async def generate_period_presentation(
     num_slides: int = 10,
     plantilla: str = "modern",
 ) -> dict:
-    """Presentación de cierre de período (reuniones de padres / dirección)."""
     prompt = _build_period_summary_prompt(
         materia=materia,
         periodo=periodo,
@@ -282,20 +388,9 @@ async def generate_period_presentation(
     )
 
 
-# ── Cliente HTTP ───────────────────────────────────────────────────────
-
-async def _post(client: httpx.AsyncClient, path: str, payload: dict) -> dict:
-    url = f"{settings.PRESENTON_URL.rstrip('/')}{path}"
-    resp = await client.post(url, json=payload)
-    if resp.status_code >= 400:
-        raise RuntimeError(
-            f"Presenton respondió {resp.status_code} en {path}: {resp.text[:300]}"
-        )
-    return resp.json()
-
+# ── Health check ───────────────────────────────────────────────────────
 
 async def health_check() -> bool:
-    """Verifica que Presenton esté arriba (para smoke test del admin)."""
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             resp = await client.get(f"{settings.PRESENTON_URL.rstrip('/')}/")
@@ -305,64 +400,29 @@ async def health_check() -> bool:
         return False
 
 
-# ── Generación de presentación de clase ────────────────────────────────
-
-async def generate_lesson_presentation(
-    titulo: str,
-    contenido: str = "",
-    *,
-    grado: Optional[str] = None,
-    objetivos: Optional[list[str]] = None,
-    num_slides: int = 8,
-    plantilla: str = "general",
-) -> dict:
-    """Genera una presentación de CLASE."""
-    prompt = _build_lesson_prompt(titulo, contenido, grado=grado, objetivos=objetivos)
-    return await _generate_with_prompt(
-        titulo=titulo, prompt=prompt, num_slides=num_slides, plantilla=plantilla,
-    )
-
-
-# ── Clase PresentonService (interfaz usada por herramientas.py y presentation_service.py) ──
+# ── PresentonService class (legacy interface) ──────────────────────────
 
 class PresentonService:
     """
-    Clase-fachada compatible con el código legacy de herramientas.py y
-    presentation_service.py que espera una API basada en clases.
-
+    Clase-fachada compatible con herramientas.py y presentation_service.py.
     Delega en las funciones asíncronas standalone del mismo módulo.
     """
 
     @property
     def public_base_url(self) -> str:
-        """URL pública de Presenton (accesible desde el navegador del usuario)."""
-        # En desarrollo: puerto 5000 mapeado en docker-compose.
-        # En producción: cambiar PRESENTON_PUBLIC_URL en .env.
-        return getattr(settings, "PRESENTON_PUBLIC_URL", None) or "http://localhost:5000"
+        return settings.PRESENTON_PUBLIC_URL
 
     async def get_session_token(self) -> Optional[str]:
-        """
-        Retorna un token de sesión para el editor embebido de Presenton.
-        Presenton OSS no requiere autenticación, devolvemos None y el frontend
-        abre la URL de edición directamente.
-        """
         return None
 
     async def generateSlides(self, payload: dict) -> dict:
-        """
-        Genera diapositivas a partir de un payload estructurado y devuelve
-        un dict con las claves que esperan herramientas.py / presentation_service.py:
-            presentation_id, path, download_url, edit_path, edit_url, thumbnails
-        """
-        # Construir prompt desde el payload
-        title   = str(payload.get("title") or payload.get("topic") or "Presentación").strip()
-        content = str(payload.get("content") or "").strip()
+        title    = str(payload.get("title") or payload.get("topic") or "Presentación").strip()
+        content  = str(payload.get("content") or "").strip()
         language = str(payload.get("language") or "Spanish").strip()
         n_slides = int(payload.get("n_slides") or payload.get("slides") or 8)
         template = str(payload.get("template") or "general").strip()
         slides_md: list = payload.get("slides_markdown") or []
 
-        # Si nos pasan slides_markdown ya construido, lo usamos como contenido base
         if slides_md:
             content = "\n\n".join(str(s) for s in slides_md) + (f"\n\n{content}" if content else "")
 
@@ -371,39 +431,15 @@ class PresentonService:
             + (f"\nContenido base:\n{content}" if content else "")
         )
 
-        timeout_cfg = httpx.Timeout(settings.PRESENTON_TIMEOUT, connect=10.0)
-        async with httpx.AsyncClient(timeout=timeout_cfg) as client:
-            outline_resp = await _post(client, "/api/v1/ppt/outlines/generate", {
-                "prompt":   prompt,
-                "n_slides": max(3, min(n_slides, 20)),
-                "language": language,
-            })
-            outlines = outline_resp.get("outlines") or outline_resp.get("data") or []
-            if not outlines:
-                raise RuntimeError("Presenton no devolvió outline")
-
-            pres_resp = await _post(client, "/api/v1/ppt/presentation/generate", {
-                "outlines": outlines,
-                "title":    title,
-                "template": template if template in TEMPLATES else "general",
-                "language": language,
-            })
-
-        pptx_path = pres_resp.get("pptx_path") or pres_resp.get("path") or ""
-        pptx_url  = pres_resp.get("pptx_url") or pres_resp.get("download_url") or ""
-        if pptx_path and not pptx_url:
-            pptx_url = f"{settings.PRESENTON_URL.rstrip('/')}{pptx_path}"
-
-        presentation_id = pres_resp.get("presentation_id") or pres_resp.get("id") or ""
-        edit_url = pres_resp.get("edit_url") or (
-            f"{self.public_base_url}/presentation/{presentation_id}" if presentation_id else ""
+        result = await _generate_with_prompt(
+            titulo=title, prompt=prompt, num_slides=n_slides, plantilla=template,
         )
 
         return {
-            "presentation_id": presentation_id,
-            "path":            pptx_path,
-            "download_url":    pptx_url,
+            "presentation_id": result["presentation_id"],
+            "path":            result["pptx_path"],
+            "download_url":    result["pptx_url"],
             "edit_path":       "",
-            "edit_url":        edit_url,
-            "thumbnails":      pres_resp.get("thumbnails") or [],
+            "edit_url":        result["edit_url"],
+            "thumbnails":      [],
         }

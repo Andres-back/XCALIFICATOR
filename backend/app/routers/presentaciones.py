@@ -109,6 +109,23 @@ async def presenton_health():
     return {"ok": ok}
 
 
+@router.get("/presenton-token")
+async def get_presenton_editor_token(
+    current_user: User = Depends(require_role("profesor", "admin")),
+):
+    """
+    Devuelve el token de sesión de Presenton para que el frontend pueda
+    abrirle el editor sin pedir login nuevamente.
+    Solo accesible para usuarios autenticados en xCalificator.
+    """
+    try:
+        token = await presenton_service._ensure_token()
+        return {"token": token}
+    except Exception as exc:
+        logger.warning("No se pudo obtener token Presenton: %s", exc)
+        raise HTTPException(status_code=503, detail="Servicio Presenton no disponible")
+
+
 @router.post("/clase", response_model=PresentacionOut, status_code=201)
 async def generar_presentacion_clase(
     payload: PresentacionClaseRequest,
@@ -184,7 +201,7 @@ async def generar_presentacion_clase(
         fase="con_sistema",
         actividad_tipo="presentacion",
         duracion_minutos=round(duracion_seg / 60, 2),
-        estudiantes_evaluados=0,
+        estudiantes_evaluados=1,
         observacion=f"Generación automática vía Presenton ({payload.num_slides} slides)",
     )
     db.add(tiempo)
