@@ -306,6 +306,8 @@ class ExamenOut(BaseModel):
     activo_online: bool
     fecha_limite: Optional[datetime] = None
     fecha_activacion: Optional[datetime] = None
+    modo_grupal: bool = False
+    max_integrantes: int = 3
     created_at: datetime
 
     class Config:

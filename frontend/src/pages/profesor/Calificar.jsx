@@ -155,14 +155,25 @@ export default function Calificar() {
   const handleGradeAll = async () => {
     const pending = submissions.filter(s => !s.ya_calificado);
     if (!pending.length) { toast.error('Todas las respuestas ya están calificadas'); return; }
+    let ok = 0;
+    const failed = [];
     for (const sub of pending) {
       setGradingId(sub.estudiante_id);
       try {
         await api.post(`/grading/grade-online/${examenId}/${sub.estudiante_id}`);
-      } catch { /* continue */ }
+        ok++;
+      } catch (err) {
+        failed.push(sub.estudiante_nombre || sub.estudiante_id);
+      }
     }
     setGradingId(null);
-    toast.success(`${pending.length} respuestas calificadas`);
+    if (failed.length === 0) {
+      toast.success(`${ok} ${ok === 1 ? 'respuesta calificada' : 'respuestas calificadas'} ✓`);
+    } else if (ok > 0) {
+      toast(`${ok} calificadas, ${failed.length} con error: ${failed.join(', ')}`, { icon: '⚠️' });
+    } else {
+      toast.error(`No se pudo calificar ninguna respuesta`);
+    }
     loadSubmissions();
   };
 
