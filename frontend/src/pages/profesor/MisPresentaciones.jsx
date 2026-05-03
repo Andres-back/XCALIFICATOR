@@ -16,9 +16,9 @@ import { Link } from 'react-router-dom';
 import api from '../../api';
 import toast from 'react-hot-toast';
 import {
-  Download, Plus, Presentation, RefreshCw, Trash2,
-  Sparkles, Calendar, GraduationCap, Loader2, Image,
-  ExternalLink, ArrowRight,
+  Download, Edit2, Plus, Presentation, RefreshCw, Trash2,
+  Sparkles, Calendar, Loader2, Image,
+  ArrowRight,
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -39,12 +39,32 @@ const COLOR_CLASSES = {
   emerald:  { bg: 'bg-emerald-50',  text: 'text-emerald-700',  border: 'border-emerald-200'  },
 };
 
+// ── Cookie injection para abrir el editor de Presenton sin re-login ──
+async function openPresentonEditor(editUrl) {
+  if (!editUrl) return;
+  try {
+    const res = await api.get('/presentaciones/presenton-token');
+    const token = res.data.token;
+    document.cookie = `presenton_session=${token}; path=/; SameSite=Lax; max-age=86400`;
+  } catch {
+    // si falla, el usuario verá el login de Presenton
+  }
+  window.open(editUrl, '_blank', 'noopener,noreferrer');
+}
+
 // ── Card de una presentación ──────────────────────────────────────────
 function PresentationCard({ pres, onDelete }) {
+  const [openingEditor, setOpeningEditor] = useState(false);
   const meta = SUBTYPE_META[pres.subtipo] || SUBTYPE_META.default;
   const colors = COLOR_CLASSES[meta.color] || COLOR_CLASSES.profesor;
   const thumb = pres.thumbnails?.[0];
   const created = pres.created_at ? new Date(pres.created_at) : null;
+
+  const handleOpenEditor = async () => {
+    setOpeningEditor(true);
+    await openPresentonEditor(pres.edit_url);
+    setOpeningEditor(false);
+  };
 
   return (
     <article className="
@@ -117,15 +137,17 @@ function PresentationCard({ pres, onDelete }) {
             </a>
           )}
           {pres.edit_url && (
-            <a
-              href={pres.edit_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              title="Abrir editor de Presenton"
-              className="inline-flex items-center justify-center gap-1.5 border border-gray-300 hover:bg-gray-50 text-gray-600 rounded-lg p-2 transition-colors"
+            <button
+              type="button"
+              onClick={handleOpenEditor}
+              disabled={openingEditor}
+              title="Editar en Presenton"
+              className="inline-flex items-center justify-center gap-1.5 border border-gray-300 hover:bg-gray-50 text-gray-600 rounded-lg p-2 transition-colors disabled:opacity-60"
             >
-              <ExternalLink className="w-3.5 h-3.5" />
-            </a>
+              {openingEditor
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : <Edit2 className="w-3.5 h-3.5" />}
+            </button>
           )}
           <button
             type="button"

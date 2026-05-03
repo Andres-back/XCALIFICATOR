@@ -85,12 +85,15 @@ async def _assert_materia_owned(
 def _herramienta_to_out(h: Herramienta) -> PresentacionOut:
     cfg = h.config_json or {}
     contenido = h.contenido_json or {}
+    # Normalize empty strings to None so frontend checks work reliably
+    pptx_url = contenido.get("pptx_url") or None
+    edit_url  = contenido.get("edit_url") or None
     return PresentacionOut(
         id=h.id,
         titulo=h.titulo,
-        pptx_url=contenido.get("pptx_url"),
+        pptx_url=pptx_url,
         thumbnails=contenido.get("thumbnails", []),
-        edit_url=contenido.get("edit_url"),
+        edit_url=edit_url,
         num_slides=int(cfg.get("num_slides", 0)),
         plantilla=cfg.get("plantilla", "general"),
         subtipo=contenido.get("subtipo", "clase"),
@@ -103,8 +106,10 @@ def _herramienta_to_out(h: Herramienta) -> PresentacionOut:
 # ── Endpoints ──────────────────────────────────────────────────────────
 
 @router.get("/health")
-async def presenton_health():
-    """Smoke test: ¿Presenton está respondiendo?"""
+async def presenton_health(
+    _: User = Depends(require_role("profesor", "admin")),
+):
+    """Smoke test: ¿Presenton está respondiendo? Solo para usuarios autenticados."""
     ok = await presenton_service.health_check()
     return {"ok": ok}
 

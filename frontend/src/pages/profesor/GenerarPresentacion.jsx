@@ -14,12 +14,12 @@
  *  - Botón persistente "Necesito ayuda"
  */
 import { useState } from 'react';
-import { useNavigate, useParams, Link } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import api from '../../api';
 import toast from 'react-hot-toast';
 import {
-  ArrowLeft, ArrowRight, BookOpen, Check, Download,
-  GraduationCap, HelpCircle, Loader2, Palette, Presentation,
+  ArrowLeft, ArrowRight, BookOpen, Check, Download, Edit2,
+  HelpCircle, Loader2, Palette, Presentation,
   RefreshCw, Sparkles, Wand2,
 } from 'lucide-react';
 
@@ -37,9 +37,10 @@ const TAMANOS = [
 ];
 
 const PLANTILLAS = [
-  { id: 'general', label: 'Sencilla',  desc: 'Limpia y clara',         emoji: '📘' },
-  { id: 'classic', label: 'Clásica',   desc: 'Formal, blanco y negro',  emoji: '📜' },
-  { id: 'modern',  label: 'Moderna',   desc: 'Colorida, con imágenes',  emoji: '🎨' },
+  { id: 'general',  label: 'Sencilla',   desc: 'Limpia y clara',           emoji: '📘' },
+  { id: 'standard', label: 'Clásica',    desc: 'Formal, blanco y negro',   emoji: '📜' },
+  { id: 'modern',   label: 'Moderna',    desc: 'Colorida, con imágenes',   emoji: '🎨' },
+  { id: 'swift',    label: 'Dinámica',   desc: 'Ágil, con iconos y color', emoji: '⚡' },
 ];
 
 /* ════════════════════ STEP INDICATOR ════════════════════ */
@@ -128,7 +129,6 @@ function BigCard({ icon: Icon, emoji, label, desc, hint, selected, onClick }) {
 /* ════════════════════ MAIN COMPONENT ════════════════════ */
 
 export default function GenerarPresentacion() {
-  const navigate = useNavigate();
   const { materiaId } = useParams();
 
   const [step, setStep] = useState(1);
@@ -143,9 +143,10 @@ export default function GenerarPresentacion() {
   const [plantilla, setPlantilla] = useState('general');
 
   // Paso 3 (resultado)
-  const [loading, setLoading] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [result, setResult] = useState(null);
+  const [loading, setLoading]           = useState(false);
+  const [progress, setProgress]         = useState(0);
+  const [result, setResult]             = useState(null);
+  const [openingEditor, setOpeningEditor] = useState(false);
 
   const canAdvanceStep1 = titulo.trim().length >= 3;
 
@@ -195,16 +196,19 @@ export default function GenerarPresentacion() {
 
   // Abre el editor de Presenton inyectando primero el token de sesión como
   // cookie de dominio (los navegadores no distinguen puertos en localhost)
-  const handleOpenEditor = async () => {
-    if (!result?.edit_url) return;
+  const handleOpenEditor = async (editUrl) => {
+    if (!editUrl) return;
+    setOpeningEditor(true);
     try {
       const res = await api.get('/presentaciones/presenton-token');
       const token = res.data.token;
       document.cookie = `presenton_session=${token}; path=/; SameSite=Lax; max-age=86400`;
     } catch {
       // si falla la obtención del token, el usuario verá el login de Presenton
+    } finally {
+      setOpeningEditor(false);
     }
-    window.open(result.edit_url, '_blank', 'noopener,noreferrer');
+    window.open(editUrl, '_blank', 'noopener,noreferrer');
   };
 
   // ── Avance al paso 3 dispara la generación ──
@@ -221,7 +225,9 @@ export default function GenerarPresentacion() {
       <div className="flex items-center justify-between mb-6">
         <Link
           to={materiaId ? `/profesor/materia/${materiaId}` : '/profesor/herramientas'}
-          className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 transition-colors"
+          className={`inline-flex items-center gap-2 text-sm transition-colors ${loading ? 'pointer-events-none text-gray-300' : 'text-gray-500 hover:text-gray-700'}`}
+          aria-disabled={loading}
+          tabIndex={loading ? -1 : 0}
         >
           <ArrowLeft className="w-4 h-4" />
           Volver
@@ -243,7 +249,7 @@ export default function GenerarPresentacion() {
         </div>
         <h1 className="page-title">Crear Presentación</h1>
         <p className="page-subtitle mt-2">
-          Te ayudamos a hacer las diapositivas en {step < 3 ? `${step}/3 pasos` : '3 pasos'}
+          {step < 3 ? `Paso ${step} de 3` : 'Generando tu presentación'}
         </p>
       </div>
 
@@ -386,7 +392,7 @@ export default function GenerarPresentacion() {
               <Palette className="w-4 h-4 text-gray-400" />
               ¿Qué estilo prefieres?
             </h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {PLANTILLAS.map((p) => (
                 <BigCard
                   key={p.id}
@@ -438,17 +444,26 @@ export default function GenerarPresentacion() {
               </p>
 
               <div className="max-w-md mx-auto">
-                <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
+                <div
+                  className="h-3 bg-gray-100 rounded-full overflow-hidden"
+                  role="progressbar"
+                  aria-valuenow={progress}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-label="Progreso de generación"
+                >
                   <div
                     className="h-full bg-gradient-to-r from-profesor-500 to-profesor-700 transition-all duration-500 ease-out"
                     style={{ width: `${progress}%` }}
                   />
                 </div>
-                <p className="text-xs text-gray-400 mt-2">{progress}%</p>
+                <p className="text-xs text-gray-400 mt-2">
+                  {progress >= 90 ? 'Casi listo… procesando diapositivas finales' : `${progress}%`}
+                </p>
               </div>
 
               <p className="text-xs text-gray-400 mt-6 italic">
-                💡 Tip: mientras tanto, prepara un café ☕
+                💡 Tip: la IA está escribiendo el contenido y buscando imágenes para cada slide ☕
               </p>
             </div>
           )}
@@ -467,8 +482,8 @@ export default function GenerarPresentacion() {
                 </div>
               </div>
 
-              {/* Thumbnails */}
-              {result.thumbnails && result.thumbnails.length > 0 && (
+              {/* Vista previa si Presenton retorna thumbnails */}
+              {result.thumbnails?.length > 0 && (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
                   {result.thumbnails.slice(0, 8).map((thumb, i) => (
                     <div
@@ -480,24 +495,30 @@ export default function GenerarPresentacion() {
                         alt={`Diapositiva ${i + 1}`}
                         className="w-full h-full object-cover"
                         loading="lazy"
+                        onError={(e) => { e.currentTarget.style.display = 'none'; }}
                       />
                     </div>
                   ))}
                 </div>
               )}
 
-              {!result.thumbnails?.length && (
-                <div className="bg-gray-50 border border-gray-200 rounded-xl p-6 text-center mb-6">
-                  <Presentation className="w-12 h-12 text-gray-400 mx-auto mb-2" />
-                  <p className="text-sm text-gray-600">
-                    Tu presentación está lista para descargar.
+              {/* Resumen visual de la presentación generada */}
+              <div className="bg-gray-50 border border-gray-200 rounded-xl p-5 mb-6 flex items-center gap-4">
+                <div className="flex-shrink-0 w-12 h-12 rounded-xl bg-profesor-100 flex items-center justify-center">
+                  <Presentation className="w-6 h-6 text-profesor-600" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-gray-900 text-sm truncate">{titulo}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {result.num_slides} diapositivas · plantilla <span className="capitalize">{result.plantilla}</span>
+                    {grado && ` · ${grado}`}
                   </p>
                 </div>
-              )}
+              </div>
 
-              {/* Action buttons */}
+              {/* Botones de acción */}
               <div className="flex flex-col sm:flex-row gap-3">
-                {result.pptx_url && (
+                {result.pptx_url ? (
                   <a
                     href={result.pptx_url}
                     target="_blank"
@@ -512,17 +533,25 @@ export default function GenerarPresentacion() {
                     "
                   >
                     <Download className="w-5 h-5" />
-                    Descargar Presentación
+                    Descargar .pptx
                   </a>
+                ) : (
+                  <div className="flex-1 inline-flex items-center justify-center gap-2 bg-gray-100 text-gray-400 font-semibold text-base rounded-xl py-4">
+                    <Download className="w-5 h-5" />
+                    Descarga no disponible
+                  </div>
                 )}
                 {result.edit_url && (
                   <button
                     type="button"
-                    onClick={handleOpenEditor}
-                    className="btn-md bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"
+                    onClick={() => handleOpenEditor(result.edit_url)}
+                    disabled={openingEditor}
+                    className="btn-md bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 disabled:opacity-60"
                   >
-                    <GraduationCap className="w-4 h-4" />
-                    Abrir editor
+                    {openingEditor
+                      ? <Loader2 className="w-4 h-4 animate-spin" />
+                      : <Edit2 className="w-4 h-4" />}
+                    {openingEditor ? 'Abriendo…' : 'Editar en Presenton'}
                   </button>
                 )}
                 <button
@@ -531,13 +560,19 @@ export default function GenerarPresentacion() {
                   className="btn-md bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"
                 >
                   <RefreshCw className="w-4 h-4" />
-                  Hazla otra vez
+                  Volver a intentar
                 </button>
               </div>
 
-              <p className="text-xs text-gray-400 text-center mt-6">
-                💾 Tu presentación quedó guardada en <strong>Mis Herramientas</strong>.
-              </p>
+              {/* Acceso rápido a la galería */}
+              <div className="flex items-center justify-center mt-6">
+                <Link
+                  to="/profesor/presentaciones"
+                  className="inline-flex items-center gap-2 text-sm font-medium text-profesor-600 hover:text-profesor-700 underline underline-offset-2"
+                >
+                  Ver todas mis presentaciones
+                </Link>
+              </div>
             </div>
           )}
         </div>

@@ -260,13 +260,14 @@ async def _generate_with_prompt(
             "export_as": "pptx",
             "include_title_slide": True,
             "instructions": (
-                "FORMATO OBLIGATORIO: "
-                "1. Usa SOLO texto plano. PROHIBIDO usar LaTeX, comandos como \\frac, \\times, \\sum, $...$ o cualquier marcado matemático especial. "
-                "2. Para fracciones escribe '3/4' o símbolos Unicode: ½ ⅓ ¼ ¾. "
-                "3. Para operaciones usa: × ÷ ± √ ² ³ π ∑ en lugar de comandos LaTeX. "
-                "4. PROHIBIDO subrayar texto con guiones bajos (_palabra_) ni usar HTML. "
-                "5. Cada diapositiva: título corto + máximo 4 líneas de cuerpo + 1 imagen relevante al tema. "
-                "6. Las palabras clave para buscar imágenes deben ser del tema principal, en español, simples y concretas."
+                "CRITICAL FORMATTING RULES — follow every rule exactly:\n"
+                "1. Plain text ONLY. NEVER use LaTeX: no \\frac, \\times, \\sum, $...$, \\begin, \\end or any math markup.\n"
+                "2. Write fractions as '3/4' or Unicode: ½ ⅓ ¼ ¾. Write operators as × ÷ ± √ ² ³ π ∑.\n"
+                "3. NEVER underline words with underscores (_word_) and NEVER use HTML tags.\n"
+                "4. Each slide: one short title (max 8 words) + max 4 bullet points + 1 image.\n"
+                "5. Image search keywords MUST be in ENGLISH, simple, concrete nouns directly related to the slide topic "
+                "(e.g. 'photosynthesis leaf', 'mathematics classroom', 'fraction pie chart'). "
+                "Avoid abstract words like 'education' or 'learning' as standalone keywords."
             ),
         }
 
