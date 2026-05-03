@@ -77,7 +77,8 @@ export default function EstudianteHome() {
   // Compute dashboard stats
   const allExamenes = Object.values(examenesPorMateria).flat();
   const pendientes = allExamenes.filter(ex => !respondidos.has(ex.id) && !(ex.fecha_limite && new Date(ex.fecha_limite) < new Date()));
-  const promedio = notas.length > 0 ? (notas.reduce((a, n) => a + (n.nota || 0), 0) / notas.length) : 0;
+  const gradedNotas = notas.filter(n => n.nota != null);
+  const promedio = gradedNotas.length > 0 ? (gradedNotas.reduce((a, n) => a + n.nota, 0) / gradedNotas.length) : 0;
 
   // Next exam (closest deadline)
   const proximoExamen = pendientes

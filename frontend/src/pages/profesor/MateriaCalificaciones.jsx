@@ -55,18 +55,20 @@ export default function MateriaCalificaciones({ materiaId }) {
 
   if (loading) return <SkeletonLoader type="stats" count={4} />;
 
-  // Compute overall stats
+  // Compute overall stats — only count notas with an actual grade (null = pending review)
   const allNotas = Object.values(notas).flat();
-  const totalCalificados = allNotas.length;
-  const promedio = totalCalificados > 0 ? (allNotas.reduce((a, n) => a + (n.nota || 0), 0) / totalCalificados) : 0;
-  const aprobados = allNotas.filter(n => n.nota >= 3.0).length;
+  const gradedNotas = allNotas.filter(n => n.nota != null);
+  const pendingNotas = allNotas.filter(n => n.nota == null);
+  const totalCalificados = gradedNotas.length;
+  const promedio = totalCalificados > 0 ? (gradedNotas.reduce((a, n) => a + n.nota, 0) / totalCalificados) : 0;
+  const aprobados = gradedNotas.filter(n => n.nota >= 3.0).length;
   const porcentajeAprobados = totalCalificados > 0 ? Math.round((aprobados / totalCalificados) * 100) : 0;
-  const notaMasAlta = totalCalificados > 0 ? Math.max(...allNotas.map(n => n.nota || 0)) : 0;
+  const notaMasAlta = totalCalificados > 0 ? Math.max(...gradedNotas.map(n => n.nota)) : 0;
 
-  // Grade distribution
+  // Grade distribution (only graded)
   const distribucion = { '1.0 - 1.9': 0, '2.0 - 2.9': 0, '3.0 - 3.4': 0, '3.5 - 3.9': 0, '4.0 - 4.5': 0, '4.6 - 5.0': 0 };
-  allNotas.forEach(n => {
-    const nota = n.nota || 0;
+  gradedNotas.forEach(n => {
+    const nota = n.nota;
     if (nota < 2) distribucion['1.0 - 1.9']++;
     else if (nota < 3) distribucion['2.0 - 2.9']++;
     else if (nota < 3.5) distribucion['3.0 - 3.4']++;
@@ -81,6 +83,14 @@ export default function MateriaCalificaciones({ materiaId }) {
 
   return (
     <div className="space-y-6">
+      {/* Pending-review alert */}
+      {pendingNotas.length > 0 && (
+        <div className="flex items-center gap-3 p-3 bg-amber-50 border border-amber-200 rounded-xl text-sm">
+          <span className="text-amber-600 font-semibold">⚠ {pendingNotas.length} {pendingNotas.length === 1 ? 'calificación pendiente' : 'calificaciones pendientes'} de revisión manual (OCR)</span>
+          <span className="text-amber-500 text-xs">Visible en la pestaña Exámenes → Calificar</span>
+        </div>
+      )}
+
       {/* Stats Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard icon={Award} label="Calificados" value={totalCalificados} color="blue" />
