@@ -609,38 +609,48 @@ export default function ProfesorNotas() {
       ) : (
         <div className="space-y-3">
           {notas.map(n => {
-            const hasDetail = n.detalle_json?.preguntas?.length > 0;
+            const hasDetail    = n.detalle_json?.preguntas?.length > 0;
             const isAutoGraded = n.detalle_json?.calificacion_automatica;
-            const hasPending = n.detalle_json?.tiene_preguntas_abiertas;
-            const examContent = n.examen_contenido_json || {};
+            const hasPending   = n.detalle_json?.tiene_preguntas_abiertas;
+            const needsReview  = n.detalle_json?.requiere_revision_profesor;
+            const examContent  = n.examen_contenido_json || {};
             const respuestasMap = parseRespuestaMap(n.respuestas_json);
-            const examType = n.examen_tipo || n.detalle_json?.tipo || '';
+            const examType     = n.examen_tipo || n.detalle_json?.tipo || '';
+            const notaNum      = n.nota != null ? parseFloat(n.nota) : null;
 
             return (
-              <div key={n.id} className="card">
+              <div key={n.id} className={`card ${needsReview ? 'border-amber-200 bg-amber-50/30' : ''}`}>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-lg font-extrabold
-                      ${parseFloat(n.nota) >= 3.0 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
-                      {n.nota}
+                      ${needsReview   ? 'bg-amber-100 text-amber-700'
+                        : notaNum == null  ? 'bg-gray-100 text-gray-400'
+                        : notaNum >= 3.0   ? 'bg-emerald-100 text-emerald-700'
+                                          : 'bg-red-100 text-red-700'}`}>
+                      {needsReview ? <AlertTriangle className="w-5 h-5" /> : (n.nota ?? '—')}
                     </div>
                     <div>
                       <p className="font-semibold text-gray-900 text-sm">
                         {n.estudiante_nombre ? `${n.estudiante_nombre} ${n.estudiante_apellido || ''}`.trim() : n.estudiante_id}
                       </p>
-                      <div className="flex items-center gap-2 mt-0.5">
+                      <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
                         <span className="text-xs text-gray-400">
                           {format(new Date(n.created_at), 'dd/MM/yyyy HH:mm')}
                         </span>
-                        {n.detalle_json?.nota_maxima && (
+                        {!needsReview && n.detalle_json?.nota_maxima && (
                           <span className="text-xs text-gray-400">/ {n.detalle_json.nota_maxima}</span>
+                        )}
+                        {needsReview && (
+                          <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-amber-100 text-amber-700 rounded border border-amber-200 flex items-center gap-0.5">
+                            <AlertTriangle className="w-2.5 h-2.5" /> Revisar OCR
+                          </span>
                         )}
                         {examType && (
                           <span className="px-1.5 py-0.5 text-[10px] font-medium bg-violet-100 text-violet-700 rounded uppercase">
                             {String(examType).replaceAll('_', ' ')}
                           </span>
                         )}
-                        {isAutoGraded && (
+                        {isAutoGraded && !needsReview && (
                           <span className="px-1.5 py-0.5 text-[10px] font-medium bg-blue-100 text-blue-700 rounded">Auto</span>
                         )}
                         {hasPending && (
@@ -657,7 +667,7 @@ export default function ProfesorNotas() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1">
-                    {hasDetail && (
+                    {(hasDetail || needsReview) && (
                       <button onClick={() => toggleExpand(n.id)}
                         className="p-2 rounded text-gray-500 hover:bg-gray-100" title="Ver detalle">
                         {expanded === n.id ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
@@ -707,6 +717,31 @@ export default function ProfesorNotas() {
                       value={editValues.retroalimentacion}
                       onChange={e => setEditValues(p => ({ ...p, retroalimentacion: e.target.value }))}
                       placeholder="Retroalimentación..." />
+                  </div>
+                )}
+
+                {/* OCR review — show extracted text so professor can grade manually */}
+                {expanded === n.id && needsReview && (
+                  <div className="mt-3 border-t border-amber-100 pt-3">
+                    <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 mb-3">
+                      <p className="text-xs font-semibold text-amber-800 mb-1 flex items-center gap-1.5">
+                        <AlertTriangle className="w-3.5 h-3.5" /> Segunda valoración requerida
+                      </p>
+                      <p className="text-xs text-amber-700">
+                        {n.detalle_json?.motivo_revision || 'OCR con baja confianza'}
+                      </p>
+                      <p className="text-xs text-amber-600 mt-1">
+                        Usa el botón <strong>Editar</strong> (lápiz) para ingresar la nota manualmente después de revisar el texto.
+                      </p>
+                    </div>
+                    {(n.texto_extraido || n.detalle_json?.texto_extraido_preview) && (
+                      <div>
+                        <p className="text-[10px] font-semibold text-gray-500 uppercase mb-1">Texto extraído por OCR</p>
+                        <pre className="text-xs text-gray-700 bg-gray-50 rounded-lg px-3 py-2.5 whitespace-pre-wrap border border-gray-200 max-h-56 overflow-y-auto">
+                          {n.texto_extraido || n.detalle_json?.texto_extraido_preview}
+                        </pre>
+                      </div>
+                    )}
                   </div>
                 )}
 

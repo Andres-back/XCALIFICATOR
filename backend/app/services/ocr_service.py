@@ -156,8 +156,53 @@ def parse_exam_text(raw_text: str) -> list[dict]:
     return [questions_map[num] for num in sorted(questions_map.keys())]
 
 
+def _assess_ocr_quality(text: str, preguntas: list[dict]) -> tuple[str, str]:
+    """
+    Evaluate OCR extraction quality.
+    Returns (quality: 'alta'|'media'|'baja', motivo: str)
+
+    Heuristics:
+    - Very little text extracted → baja
+    - No numbered questions found → baja
+    - Most answers are blank → baja (can't read handwriting)
+    - Many answers blank → media (image partially unreadable)
+    - Otherwise → alta
+    """
+    texto_len = len(text.strip())
+    n_preguntas = len(preguntas)
+
+    if texto_len < 50:
+        return "baja", "Texto insuficiente extraído de la imagen (imagen borrosa o ilegible)"
+
+    if n_preguntas == 0:
+        return "baja", "No se detectaron preguntas numeradas — verifique que la imagen sea legible"
+
+    blank_answers = sum(1 for p in preguntas if not (p.get("respuesta") or "").strip())
+    blank_ratio = blank_answers / n_preguntas
+
+    if blank_ratio >= 0.8:
+        pct = int(blank_ratio * 100)
+        return "baja", (
+            f"{pct}% de las respuestas no pudieron leerse — "
+            "imagen posiblemente borrosa, mal enfocada o escritura poco legible"
+        )
+
+    if blank_ratio >= 0.5:
+        pct = int(blank_ratio * 100)
+        return "media", (
+            f"{pct}% de las respuestas son difíciles de leer — "
+            "se recomienda verificar la calificación manualmente"
+        )
+
+    avg_chars = texto_len / n_preguntas
+    if avg_chars < 8:
+        return "media", "Texto muy corto por pregunta — posible imagen borrosa o escritura fragmentada"
+
+    return "alta", ""
+
+
 async def process_exam_image(file_bytes: bytes, filename: str) -> dict:
-    """Full pipeline: preprocess → OCR → parse."""
+    """Full pipeline: preprocess → OCR → parse → quality assessment."""
     is_pdf = filename.lower().endswith(".pdf")
 
     if is_pdf:
@@ -187,9 +232,12 @@ async def process_exam_image(file_bytes: bytes, filename: str) -> dict:
         writing_type = "manuscrito"
 
     questions = parse_exam_text(text)
+    ocr_quality, ocr_motivo = _assess_ocr_quality(text, questions)
 
     return {
         "texto_extraido": text,
         "preguntas": questions,
         "tipo_escritura": writing_type,
+        "ocr_quality": ocr_quality,   # 'alta' | 'media' | 'baja'
+        "ocr_motivo": ocr_motivo,     # human-readable reason (empty string when alta)
     }

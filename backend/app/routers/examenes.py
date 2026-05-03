@@ -751,6 +751,7 @@ async def get_respuestas_online(
             "ya_calificado": str(r.estudiante_id) in graded_ids,
             "nota": float(nota_obj.nota) if nota_obj and nota_obj.nota else None,
             "tiene_preguntas_abiertas": (nota_obj.detalle_json or {}).get("tiene_preguntas_abiertas", False) if nota_obj else False,
+            "requiere_revision": (nota_obj.detalle_json or {}).get("requiere_revision_profesor", False) if nota_obj else False,
         })
     return out
 

@@ -208,6 +208,37 @@ async def grade_uploaded_exam(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en OCR: {str(e)}")
 
+    # ── OCR Quality Gate ──────────────────────────────────────────────
+    ocr_quality: str = ocr_result.get("ocr_quality", "alta")
+    ocr_motivo: str = ocr_result.get("ocr_motivo", "")
+
+    if ocr_quality == "baja":
+        logger.warning(
+            "OCR quality LOW for exam %s / student %s: %s",
+            examen_id, estudiante_id, ocr_motivo,
+        )
+        nota_revision = Nota(
+            estudiante_id=estudiante_id,
+            examen_id=examen_id,
+            nota=None,   # Pending — professor must review and grade manually
+            detalle_json={
+                "requiere_revision_profesor": True,
+                "motivo_revision": ocr_motivo,
+                "ocr_quality": "baja",
+                "texto_extraido_preview": ocr_result["texto_extraido"][:600],
+            },
+            retroalimentacion=(
+                "Calificación pendiente de revisión manual — "
+                "el OCR no pudo leer el examen con suficiente confianza."
+            ),
+            imagen_procesada_url=f"/uploads/{file_id}{ext}",
+            texto_extraido=ocr_result["texto_extraido"],
+        )
+        db.add(nota_revision)
+        await db.commit()
+        await db.refresh(nota_revision)
+        return NotaOut.model_validate(nota_revision)
+
     # ── Smart Grading: auto-grade objective, LLM only for open-ended ──
     try:
         clave = examen.clave_respuestas
@@ -268,6 +299,11 @@ async def grade_uploaded_exam(
             )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en calificación: {str(e)}")
+
+    # Annotate grading result with OCR quality metadata
+    grading_result["ocr_quality"] = ocr_quality
+    if ocr_quality == "media":
+        grading_result["ocr_motivo"] = ocr_motivo
 
     # Save nota
     nota = Nota(
