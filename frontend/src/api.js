@@ -52,6 +52,17 @@ api.interceptors.response.use(
       error.response.data.detail = normalizeApiDetail(error.response.data.detail);
     }
 
+    if (error?.response?.status === 429 && error?.response?.data) {
+      const retryAfterHeader = error.response?.headers?.['retry-after'];
+      const retryAfter = Number.parseInt(retryAfterHeader, 10);
+      if (Number.isFinite(retryAfter) && retryAfter > 0) {
+        const currentDetail = String(error.response.data.detail || 'Límite de solicitudes alcanzado').trim();
+        if (!currentDetail.toLowerCase().includes('intenta de nuevo en')) {
+          error.response.data.detail = `${currentDetail} Intenta de nuevo en ${retryAfter}s.`;
+        }
+      }
+    }
+
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
       const refreshToken = localStorage.getItem('refresh_token');

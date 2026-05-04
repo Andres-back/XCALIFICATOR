@@ -289,7 +289,7 @@ export default function ProfesorNotas() {
   const [repasoResult, setRepasoResult] = useState(null);
 
   // Nota manual
-  const [allStudents, setAllStudents]       = useState([]);
+  const [allStudents, setAllStudents]         = useState([]);
   const [showManualModal, setShowManualModal] = useState(false);
   const [manualForm, setManualForm]           = useState({ estudianteId: '', nota: '', retroalimentacion: '' });
   const [savingManual, setSavingManual]       = useState(false);
@@ -423,6 +423,9 @@ export default function ProfesorNotas() {
       toast.dismiss(tid);
       toast.success('¡Presentación lista! 🎉');
       setRepasoResult(data);
+      if (data?.pptx_url) {
+        window.open(data.pptx_url, '_blank', 'noopener');
+      }
     } catch (err) {
       toast.dismiss(tid);
       toast.error(err?.response?.data?.detail || 'No pudimos generar el repaso');

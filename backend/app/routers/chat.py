@@ -4,8 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.database import get_db
+from app.core.ai_provider_config import get_profesor_ai_config
 from app.core.dependencies import require_role
-from app.models.models import User, Nota, Examen, ChatHistory, ChatSession
+from app.models.models import User, Nota, Examen, Materia, ChatHistory, ChatSession
 from app.schemas.schemas import ChatMessage, ChatResponse, ChatHistoryOut, ChatSessionOut
 from app.services.groq_service import rag_chat
 from uuid import UUID
@@ -58,7 +59,8 @@ async def student_chat(
     if session.cerrada:
         raise HTTPException(
             status_code=429,
-            detail="Sesión cerrada. Debes iniciar una nueva sesión para continuar."
+            detail="Sesión cerrada. Debes iniciar una nueva sesión para continuar.",
+            headers={"X-RateLimit-Reason": "chat-session"},
         )
 
     now = datetime.now(timezone.utc)
@@ -68,7 +70,8 @@ async def student_chat(
         await db.commit()
         raise HTTPException(
             status_code=429,
-            detail=f"Tu sesión de {SESSION_DURATION_MINUTES} minutos ha expirado. Inicia una nueva sesión."
+            detail=f"Tu sesión de {SESSION_DURATION_MINUTES} minutos ha expirado. Inicia una nueva sesión.",
+            headers={"X-RateLimit-Reason": "chat-session"},
         )
 
     if session.preguntas_usadas >= MAX_QUESTIONS_PER_SESSION:
@@ -76,7 +79,8 @@ async def student_chat(
         await db.commit()
         raise HTTPException(
             status_code=429,
-            detail=f"Has alcanzado el límite de {MAX_QUESTIONS_PER_SESSION} preguntas en esta sesión."
+            detail=f"Has alcanzado el límite de {MAX_QUESTIONS_PER_SESSION} preguntas en esta sesión.",
+            headers={"X-RateLimit-Reason": "chat-session"},
         )
 
     # Get exam content (without answer key)
@@ -84,6 +88,16 @@ async def student_chat(
     examen = result.scalar_one_or_none()
     if not examen:
         raise HTTPException(status_code=404, detail="Examen no encontrado")
+
+    # Resolve profesor config to select chatbot model
+    profesor_ai_cfg = None
+    if getattr(examen, "materia_id", None):
+        mat_result = await db.execute(select(Materia).where(Materia.id == examen.materia_id))
+        materia = mat_result.scalar_one_or_none()
+        profesor_ai_cfg = await get_profesor_ai_config(
+            db,
+            str(materia.profesor_id) if materia and getattr(materia, "profesor_id", None) else None,
+        )
 
     # Build context - NO answer key
     exam_context = json.dumps(examen.contenido_json, ensure_ascii=False) if examen.contenido_json else ""
@@ -106,6 +120,7 @@ async def student_chat(
             student_answers=student_answers,
             feedback=feedback,
             conversation_history=conversation_history,
+            model=(profesor_ai_cfg or {}).get("chat_model"),
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en chatbot: {str(e)}")

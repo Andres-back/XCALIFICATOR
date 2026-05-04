@@ -4,9 +4,13 @@ from sqlalchemy import select, update
 from datetime import datetime, timezone
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
-import httpx
 
 from app.core.database import get_db
+from app.core.ai_provider_config import (
+    get_profesor_ai_config,
+    upsert_profesor_ai_config,
+    fetch_ollama_models,
+)
 from app.core.security import (
     hash_password, verify_password,
     create_access_token, create_refresh_token, decode_token,
@@ -18,6 +22,7 @@ from app.models.models import User, Sesion, PreferenciaNotif
 from app.schemas.schemas import (
     UserRegister, UserLogin, GoogleLoginRequest,
     TokenResponse, UserOut, RefreshTokenRequest, UserUpdate, ChangePasswordRequest,
+    LocalAIConfigOut, LocalAIConfigUpdate, LocalOllamaModelsOut,
 )
 from app.services.notification_service import send_email
 
@@ -320,3 +325,86 @@ async def logout(
     await _close_user_sessions(db, current_user.id)
     await db.commit()
     return {"detail": "Sesión cerrada"}
+
+
+def _as_local_ai_out(cfg: dict) -> LocalAIConfigOut:
+    return LocalAIConfigOut(
+        ollama_url=cfg.get("ollama_url") or "http://host.docker.internal:11434",
+        grading_local_model=cfg.get("grading_fallback_model") or None,
+        ocr_local_model=cfg.get("ocr_fallback_model") or None,
+    )
+
+
+@router.get("/me/local-ai-config", response_model=LocalAIConfigOut)
+async def get_my_local_ai_config(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.rol != "profesor":
+        raise HTTPException(status_code=403, detail="Solo los profesores pueden configurar IA local")
+
+    cfg = await get_profesor_ai_config(db, str(current_user.id))
+    return _as_local_ai_out(cfg)
+
+
+@router.put("/me/local-ai-config", response_model=LocalAIConfigOut)
+async def update_my_local_ai_config(
+    data: LocalAIConfigUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.rol != "profesor":
+        raise HTTPException(status_code=403, detail="Solo los profesores pueden configurar IA local")
+
+    current_cfg = await get_profesor_ai_config(db, str(current_user.id))
+    patch = data.model_dump(exclude_unset=True)
+
+    if "grading_local_model" in patch:
+        grading_local_model = patch.get("grading_local_model") or ""
+    else:
+        grading_local_model = current_cfg.get("grading_fallback_model") or ""
+
+    if "ocr_local_model" in patch:
+        ocr_local_model = patch.get("ocr_local_model") or ""
+    else:
+        ocr_local_model = current_cfg.get("ocr_fallback_model") or ""
+
+    merged = {
+        **current_cfg,
+        "ollama_url": patch.get("ollama_url", current_cfg.get("ollama_url")),
+        "grading_fallback_provider": "ollama" if grading_local_model else None,
+        "grading_fallback_model": grading_local_model,
+        "ocr_fallback_provider": "ollama_vision" if ocr_local_model else None,
+        "ocr_fallback_model": ocr_local_model,
+    }
+
+    updated = await upsert_profesor_ai_config(
+        db=db,
+        profesor_id=str(current_user.id),
+        config=merged,
+        updated_by=str(current_user.id),
+    )
+    await db.commit()
+    return _as_local_ai_out(updated)
+
+
+@router.get("/me/ollama-models", response_model=LocalOllamaModelsOut)
+async def get_my_ollama_models(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.rol != "profesor":
+        raise HTTPException(status_code=403, detail="Solo los profesores pueden consultar modelos Ollama")
+
+    cfg = await get_profesor_ai_config(db, str(current_user.id))
+    ollama_url = cfg.get("ollama_url") or "http://host.docker.internal:11434"
+
+    try:
+        models = await fetch_ollama_models(ollama_url)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"No se pudo consultar Ollama en {ollama_url}: {str(exc)}",
+        )
+
+    return LocalOllamaModelsOut(ollama_url=ollama_url, models=models)

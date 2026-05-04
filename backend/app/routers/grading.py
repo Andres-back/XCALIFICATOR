@@ -6,10 +6,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.database import get_db
 from app.core.dependencies import require_role
+from app.core.ai_provider_config import get_profesor_ai_config
 from app.core.config import get_settings
 from app.models.models import User, Examen, Nota, Materia, Matricula
 from app.services.ocr_service import process_exam_image
-from app.services.groq_service import grade_exam
+from app.services.groq_service import grade_exam_with_fallback
 from app.schemas.schemas import NotaOut
 
 router = APIRouter(prefix="/grading", tags=["Calificación Automática"])
@@ -24,7 +25,7 @@ async def _assert_examen_access(
     db: AsyncSession,
     examen_id: str,
     current_user: User,
-) -> Examen:
+) -> tuple[Examen, Materia]:
     examen_result = await db.execute(select(Examen).where(Examen.id == examen_id))
     examen = examen_result.scalar_one_or_none()
     if not examen:
@@ -38,7 +39,7 @@ async def _assert_examen_access(
     if current_user.rol == "profesor" and str(materia.profesor_id) != str(current_user.id):
         raise HTTPException(status_code=403, detail="Sin permiso")
 
-    return examen
+    return examen, materia
 
 
 async def _assert_student_enrolled(
@@ -177,7 +178,7 @@ async def grade_uploaded_exam(
         raise HTTPException(status_code=400, detail="Tipo de archivo no permitido")
 
     # Get exam with answer key and enforce ownership
-    examen = await _assert_examen_access(db, examen_id, current_user)
+    examen, materia = await _assert_examen_access(db, examen_id, current_user)
     if not examen.clave_respuestas:
         raise HTTPException(status_code=400, detail="El examen no tiene clave de respuestas")
 
@@ -202,9 +203,14 @@ async def grade_uploaded_exam(
     with open(save_path, "wb") as f:
         f.write(file_bytes)
 
+    ai_config = await get_profesor_ai_config(
+        db,
+        str(materia.profesor_id) if getattr(materia, "profesor_id", None) else None,
+    )
+
     # OCR Pipeline
     try:
-        ocr_result = await process_exam_image(file_bytes, filename)
+        ocr_result = await process_exam_image(file_bytes, filename, ai_config)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en OCR: {str(e)}")
 
@@ -270,9 +276,10 @@ async def grade_uploaded_exam(
                 f"OCR smart grading: {len(smart['objective_results'])} objective auto-graded, "
                 f"{len(smart['open_questions_resp'])} open-ended sent to LLM"
             )
-            llm_result = await grade_exam(
+            llm_result = await grade_exam_with_fallback(
                 respuestas_estudiante=smart["open_questions_resp"],
                 clave_respuestas=smart["open_questions_key"],
+                provider_config=ai_config,
             )
             # Merge results
             all_preguntas = list(smart["objective_results"])
@@ -293,9 +300,10 @@ async def grade_uploaded_exam(
         else:
             # Fallback: send everything to LLM (no contenido_json types available)
             logger.info("OCR grading: no question types found, sending all to LLM")
-            grading_result = await grade_exam(
+            grading_result = await grade_exam_with_fallback(
                 respuestas_estudiante=ocr_questions,
                 clave_respuestas=clave_list,
+                provider_config=ai_config,
             )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en calificación: {str(e)}")
@@ -348,9 +356,14 @@ async def grade_online_response(
         await db.flush()
 
     # Get exam and enforce ownership
-    examen = await _assert_examen_access(db, examen_id, current_user)
+    examen, materia = await _assert_examen_access(db, examen_id, current_user)
     if not examen.clave_respuestas:
         raise HTTPException(status_code=404, detail="Examen o clave no encontrada")
+    ai_config = await get_profesor_ai_config(
+        db,
+        str(materia.profesor_id) if getattr(materia, "profesor_id", None) else None,
+    )
+
 
     await _assert_student_enrolled(db, str(examen.materia_id), estudiante_id)
 
@@ -394,9 +407,10 @@ async def grade_online_response(
             f"Online smart grading: {len(smart['objective_results'])} objective auto-graded, "
             f"{len(smart['open_questions_resp'])} open-ended sent to LLM"
         )
-        llm_result = await grade_exam(
+        llm_result = await grade_exam_with_fallback(
             respuestas_estudiante=smart["open_questions_resp"],
             clave_respuestas=smart["open_questions_key"],
+            provider_config=ai_config,
         )
         # Merge results
         all_preguntas = list(smart["objective_results"])
@@ -424,9 +438,10 @@ async def grade_online_response(
         else:
             clave_list = [clave]
 
-        grading_result = await grade_exam(
+        grading_result = await grade_exam_with_fallback(
             respuestas_estudiante=resp_list,
             clave_respuestas=clave_list,
+            provider_config=ai_config,
         )
 
     nota = Nota(
