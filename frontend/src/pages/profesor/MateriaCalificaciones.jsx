@@ -100,17 +100,24 @@ export default function MateriaCalificaciones({ materiaId }) {
     [notas, examById]
   );
 
-  // Compute overall stats
-  const totalCalificados = allNotas.length;
-  const promedio = totalCalificados > 0 ? (allNotas.reduce((a, n) => a + n.__nota, 0) / totalCalificados) : 0;
-  const aprobados = allNotas.filter((n) => n.__nota >= 3.0).length;
+  // Pending notas (null grade = pending OCR review)
+  const pendingNotas = useMemo(
+    () => Object.values(notas).flat().filter(n => n.nota == null),
+    [notas]
+  );
+
+  // Compute overall stats — only count graded notas (exclude null = pending review)
+  const gradedNotas = allNotas.filter(n => n.nota != null);
+  const totalCalificados = gradedNotas.length;
+  const promedio = totalCalificados > 0 ? (gradedNotas.reduce((a, n) => a + n.__nota, 0) / totalCalificados) : 0;
+  const aprobados = gradedNotas.filter((n) => n.__nota >= 3.0).length;
   const porcentajeAprobados = totalCalificados > 0 ? Math.round((aprobados / totalCalificados) * 100) : 0;
-  const notaMasAlta = totalCalificados > 0 ? Math.max(...allNotas.map((n) => n.__nota)) : 0;
+  const notaMasAlta = totalCalificados > 0 ? Math.max(...gradedNotas.map((n) => n.__nota)) : 0;
 
   const studentRows = useMemo(() => {
     const byStudent = new Map();
 
-    allNotas.forEach((note) => {
+    gradedNotas.forEach((note) => {
       const nombre = [note.estudiante_nombre || note.nombre, note.estudiante_apellido]
         .filter(Boolean)
         .join(' ')
@@ -143,7 +150,7 @@ export default function MateriaCalificaciones({ materiaId }) {
         };
       })
       .sort((a, b) => b.promedio - a.promedio || a.nombre.localeCompare(b.nombre));
-  }, [allNotas]);
+  }, [gradedNotas]);
 
   const distribucion = GRADE_BANDS.reduce((acc, band) => {
     acc[band.label] = 0;
@@ -202,6 +209,14 @@ export default function MateriaCalificaciones({ materiaId }) {
 
   return (
     <div className="space-y-6">
+      {/* Pending-review alert */}
+      {pendingNotas.length > 0 && (
+        <div className="flex items-center gap-3 p-3 bg-amber-50 border border-amber-200 rounded-xl text-sm">
+          <span className="text-amber-600 font-semibold">⚠ {pendingNotas.length} {pendingNotas.length === 1 ? 'calificación pendiente' : 'calificaciones pendientes'} de revisión manual (OCR)</span>
+          <span className="text-amber-500 text-xs">Visible en la pestaña Exámenes → Calificar</span>
+        </div>
+      )}
+
       {/* Stats Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard icon={Award} label="Calificados" value={totalCalificados} color="blue" />

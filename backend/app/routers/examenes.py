@@ -825,7 +825,10 @@ async def get_respuestas_online(
             "nota": float(nota_obj.nota) if nota_obj and nota_obj.nota is not None else None,
             "tiene_preguntas_abiertas": tiene_abiertas,
             "estado_calificacion": estado_calificacion,
-            "requiere_revision": estado_calificacion == "parcial",
+            "requiere_revision": (
+                (nota_obj.detalle_json or {}).get("requiere_revision_profesor", False)
+                if nota_obj else False
+            ),
         })
     return out
 

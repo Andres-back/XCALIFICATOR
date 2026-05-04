@@ -115,11 +115,12 @@ export default function EstudianteNotas() {
                 <div className="flex items-center gap-4">
                   {/* Grade badge */}
                   <div className={`w-14 h-14 rounded-xl flex items-center justify-center ${
-                    n.nota >= 4.0 ? 'bg-green-100 text-green-700' :
-                    n.nota >= 3.0 ? 'bg-blue-100 text-blue-700' :
-                    'bg-red-100 text-red-700'
+                    n.nota == null    ? 'bg-amber-50 text-amber-500' :
+                    n.nota >= 4.0     ? 'bg-green-100 text-green-700' :
+                    n.nota >= 3.0     ? 'bg-blue-100 text-blue-700' :
+                                        'bg-red-100 text-red-700'
                   }`}>
-                    <span className="text-xl font-bold">{n.nota}</span>
+                    <span className="text-xl font-bold">{n.nota ?? '—'}</span>
                   </div>
                   <div className="min-w-0">
                     {n.examen_titulo && (
@@ -129,16 +130,21 @@ export default function EstudianteNotas() {
                       {n.materia_nombre && (
                         <span className="text-xs px-2 py-0.5 rounded-full bg-primary-50 text-primary-700 font-medium">{n.materia_nombre}</span>
                       )}
+                      {n.nota == null && (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 font-medium border border-amber-200">Pendiente</span>
+                      )}
                       <span className="text-xs text-gray-400">
                         {format(new Date(n.created_at), "d MMM yyyy, HH:mm", { locale: es })}
                       </span>
                     </div>
                     {/* Grade bar */}
-                    <div className="mt-2 h-1.5 w-32 bg-gray-100 rounded-full overflow-hidden">
-                      <div className={`h-full rounded-full transition-all ${
-                        n.nota >= 4.0 ? 'bg-green-500' : n.nota >= 3.0 ? 'bg-blue-500' : 'bg-red-500'
-                      }`} style={{ width: `${(n.nota / 5.0) * 100}%` }} />
-                    </div>
+                    {n.nota != null && (
+                      <div className="mt-2 h-1.5 w-32 bg-gray-100 rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full transition-all ${
+                          n.nota >= 4.0 ? 'bg-green-500' : n.nota >= 3.0 ? 'bg-blue-500' : 'bg-red-500'
+                        }`} style={{ width: `${(n.nota / 5.0) * 100}%` }} />
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">

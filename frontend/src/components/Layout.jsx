@@ -4,20 +4,21 @@ import {
   LayoutDashboard, Users, BookOpen, Award,
   LogOut, Menu, X,
   Shield, ClipboardList, Wrench, BarChart3, Calendar, ScrollText,
-  Settings, ChevronRight, Presentation,
+  Settings, ChevronRight, Presentation, Cpu,
 } from 'lucide-react';
 import { useState } from 'react';
 
 // ── Nav items per role ────────────────────────────────────────────────────
 const NAV_ITEMS = {
   admin: [
-    { label: 'Dashboard',     path: '/admin',          icon: LayoutDashboard, exact: true },
-    { label: 'Usuarios',      path: '/admin/users',    icon: Users },
-    { label: 'Materias',      path: '/admin/materias', icon: BookOpen },
-    { label: 'Períodos',      path: '/admin/periodos', icon: Calendar },
-    { label: 'Boletines',     path: '/admin/boletines',icon: ScrollText },
-    { label: 'Impacto Tesis', path: '/admin/impacto',  icon: ClipboardList },
-    { label: 'Auditoría',     path: '/admin/audit',    icon: Shield },
+    { label: 'Dashboard',     path: '/admin',           icon: LayoutDashboard, exact: true },
+    { label: 'Usuarios',      path: '/admin/users',     icon: Users },
+    { label: 'Materias',      path: '/admin/materias',  icon: BookOpen },
+    { label: 'Períodos',      path: '/admin/periodos',  icon: Calendar },
+    { label: 'Boletines',     path: '/admin/boletines', icon: ScrollText },
+    { label: 'IA y OCR',      path: '/admin/ai-config', icon: Cpu },
+    { label: 'Impacto Tesis', path: '/admin/impacto',   icon: ClipboardList },
+    { label: 'Auditoría',     path: '/admin/audit',     icon: Shield },
   ],
   profesor: [
     { label: 'Materias',       path: '/profesor/materias',       icon: BookOpen,     prefix: '/profesor/materia' },
@@ -27,10 +28,10 @@ const NAV_ITEMS = {
     { label: 'Impacto Tesis',  path: '/profesor/impacto',        icon: ClipboardList },
   ],
   estudiante: [
-    { label: 'Inicio',          path: '/estudiante',        icon: LayoutDashboard, exact: true },
-    { label: 'Mis Notas',       path: '/estudiante/notas',  icon: Award },
-    { label: 'Boletín',         path: '/estudiante/boletin',icon: ScrollText },
-    { label: 'Encuesta Impacto',path: '/encuesta/impacto',  icon: ClipboardList },
+    { label: 'Inicio',          path: '/estudiante',         icon: LayoutDashboard, exact: true },
+    { label: 'Mis Notas',       path: '/estudiante/notas',   icon: Award },
+    { label: 'Boletín',         path: '/estudiante/boletin', icon: ScrollText },
+    { label: 'Encuesta Impacto',path: '/encuesta/impacto',   icon: ClipboardList },
   ],
 };
 
