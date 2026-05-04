@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useLayoutEffect } from 'react';
-import { CheckCircle2, XCircle, RotateCcw, Trash2 } from 'lucide-react';
+import { CheckCircle2, XCircle, RotateCcw } from 'lucide-react';
 
 /* ─── colour palette for cables ─── */
 const CABLE_COLORS = [

@@ -12,7 +12,6 @@ export default function EstudianteChat() {
   const [loading, setLoading] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [session, setSession] = useState(null);
-  const [rateLimitSecondsLeft, setRateLimitSecondsLeft] = useState(0);
   const messagesEnd = useRef(null);
 
   // Load persistent chat history + session status on mount
@@ -48,14 +47,6 @@ export default function EstudianteChat() {
     messagesEnd.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  useEffect(() => {
-    if (rateLimitSecondsLeft <= 0) return undefined;
-    const timer = setInterval(() => {
-      setRateLimitSecondsLeft((prev) => (prev > 1 ? prev - 1 : 0));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [rateLimitSecondsLeft]);
-
   const sendMessage = async (e) => {
     e.preventDefault();
     if (!input.trim() || loading) return;
@@ -82,25 +73,11 @@ export default function EstudianteChat() {
     } catch (err) {
       if (err.response?.status === 429) {
         const detail = err.response.data?.detail || '';
-        const reasonHeader = String(err.response?.headers?.['x-ratelimit-reason'] || '').toLowerCase();
-        const retryAfterRaw = err.response?.headers?.['retry-after'];
-        const retryAfter = Number.parseInt(retryAfterRaw, 10);
-        const isPerMinuteRateLimit = reasonHeader === 'per-minute' || detail.toLowerCase().includes('rate limit');
-
-        if (isPerMinuteRateLimit) {
-          const waitSeconds = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : 60;
-          setRateLimitSecondsLeft(waitSeconds);
-          setMessages(prev => [...prev, {
-            role: 'assistant',
-            content: `⏳ Alcanzaste el tope de solicitudes por minuto. Espera ${waitSeconds} segundos y vuelve a intentar.`,
-          }]);
-        } else {
-          setSession(prev => prev ? { ...prev, cerrada: true, preguntas_restantes: 0 } : prev);
-          setMessages(prev => [...prev, {
-            role: 'assistant',
-            content: `⏰ ${detail || 'Sesión agotada. Inicia una nueva sesión para continuar.'}`,
-          }]);
-        }
+        setSession(prev => prev ? { ...prev, cerrada: true, preguntas_restantes: 0 } : prev);
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: `⏰ ${detail || 'Sesión agotada. Inicia una nueva sesión para continuar.'}`,
+        }]);
       } else {
         toast.error('Error en el chatbot');
         setMessages(prev => [...prev, {
@@ -124,11 +101,18 @@ export default function EstudianteChat() {
   };
 
   const sessionExpired = session && (session.cerrada || session.preguntas_restantes === 0);
-  const inputDisabled = loading || sessionExpired || rateLimitSecondsLeft > 0;
+  const inputDisabled = loading || sessionExpired;
 
   if (!historyLoaded) return (
-    <div className="flex justify-center py-20">
-      <div className="animate-spin h-8 w-8 border-4 border-primary-500 border-t-transparent rounded-full"></div>
+    <div className="max-w-2xl mx-auto space-y-4 pt-6">
+      <div className="skeleton h-12 w-full rounded-xl" />
+      <div className="flex-1 space-y-3">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div key={i} className={`flex ${i % 2 === 0 ? 'justify-start' : 'justify-end'}`}>
+            <div className={`skeleton rounded-2xl h-12 ${i % 2 === 0 ? 'w-64' : 'w-48'}`} />
+          </div>
+        ))}
+      </div>
     </div>
   );
 
@@ -147,9 +131,9 @@ export default function EstudianteChat() {
       {/* Session status bar */}
       {session && (
         <div className={`flex items-center justify-between px-4 py-2 rounded-xl text-sm mb-3 ${
-          sessionExpired 
-            ? 'bg-red-50 text-red-700 border border-red-200' 
-            : 'bg-blue-50 text-blue-700 border border-blue-200'
+          sessionExpired
+            ? 'bg-red-50 text-red-700 border border-red-200'
+            : 'bg-estudiante-50 text-estudiante-700 border border-estudiante-200'
         }`}>
           <div className="flex items-center gap-2">
             {sessionExpired ? <AlertCircle className="w-4 h-4" /> : <Clock className="w-4 h-4" />}
@@ -167,12 +151,6 @@ export default function EstudianteChat() {
         </div>
       )}
 
-      {rateLimitSecondsLeft > 0 && !sessionExpired && (
-        <div className="flex items-center justify-between px-4 py-2 rounded-xl text-sm mb-3 bg-amber-50 text-amber-700 border border-amber-200">
-          <span>Tope por minuto alcanzado. Podrás enviar otra pregunta en {rateLimitSecondsLeft}s.</span>
-        </div>
-      )}
-
       {/* Messages */}
       <div className="flex-1 overflow-y-auto space-y-3 mb-4">
         {messages.map((msg, i) => (
@@ -187,7 +165,7 @@ export default function EstudianteChat() {
             </div>
             <div className={`max-w-[80%] px-4 py-3 rounded-2xl text-sm whitespace-pre-line
               ${msg.role === 'user'
-                ? 'bg-primary-600 text-white rounded-br-md'
+                ? 'bg-estudiante-600 text-white rounded-br-md'
                 : 'bg-gray-100 text-gray-800 rounded-bl-md'
               }`}>
               <MathText text={msg.content} />

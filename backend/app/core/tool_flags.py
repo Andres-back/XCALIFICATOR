@@ -8,6 +8,7 @@ TOOL_TYPE_LABELS: dict[str, str] = {
     "emparejar": "Emparejar",
     "cuento": "Cuento",
     "para_colorear": "Para Colorear",
+    "presentacion": "Presentación",
 }
 
 SUPPORTED_TOOL_TYPES = tuple(TOOL_TYPE_LABELS.keys())

@@ -1,5 +1,10 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { existsSync } from 'node:fs';
+
+const isDocker = existsSync('/.dockerenv');
+const defaultApiTarget = isDocker ? 'http://backend:8000' : 'http://localhost:8000';
+const apiProxyTarget = process.env.VITE_DEV_PROXY_TARGET || defaultApiTarget;
 
 export default defineConfig({
   plugins: [react()],
@@ -11,11 +16,11 @@ export default defineConfig({
     },
     proxy: {
       '/api': {
-        target: 'http://backend:8000',
+        target: apiProxyTarget,
         changeOrigin: true,
       },
       '/uploads': {
-        target: 'http://backend:8000',
+        target: apiProxyTarget,
         changeOrigin: true,
       },
     },

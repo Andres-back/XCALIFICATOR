@@ -9,8 +9,10 @@ from app.core.dependencies import require_role
 from app.core.ai_provider_config import get_profesor_ai_config
 from app.core.config import get_settings
 from app.models.models import User, Examen, Nota, Materia, Matricula
+from app.services.nota_service import upsert_nota
 from app.services.ocr_service import process_exam_image
 from app.services.groq_service import grade_exam_with_fallback
+from app.services.vision_grading_service import grade_interactive_with_vision
 from app.schemas.schemas import NotaOut
 
 router = APIRouter(prefix="/grading", tags=["Calificación Automática"])
@@ -66,9 +68,132 @@ def _normalize(s: str) -> str:
 
 
 AUTO_GRADABLE_TYPES = {"seleccion_multiple", "verdadero_falso"}
+INTERACTIVE_TYPES = {"sopa_letras", "crucigrama", "emparejar"}
 
 
-def _smart_grade(examen: Examen, resp_list: list[dict]) -> dict:
+def _safe_float(value, default: float = 1.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _question_sort_key(value) -> tuple[int, int | str]:
+    if isinstance(value, int):
+        return (0, value)
+    text = str(value)
+    if text.isdigit():
+        return (0, int(text))
+    return (1, text)
+
+
+def _has_interactive_content(examen: Examen) -> bool:
+    if examen.tipo in INTERACTIVE_TYPES:
+        return True
+    content = examen.contenido_json if isinstance(examen.contenido_json, dict) else {}
+    return any(key in content for key in INTERACTIVE_TYPES)
+
+
+def _build_effective_key(examen: Examen) -> list[dict]:
+    """
+    Build a robust answer key using clave_respuestas first, then contenido_json as fallback.
+    This allows grading even when legacy exams have incomplete clave_respuestas.
+    """
+    contenido = examen.contenido_json if isinstance(examen.contenido_json, dict) else {}
+    preguntas = contenido.get("preguntas", []) if isinstance(contenido.get("preguntas", []), list) else []
+
+    preguntas_map = {}
+    for p in preguntas:
+        if not isinstance(p, dict):
+            continue
+        num = p.get("numero")
+        if num is None:
+            continue
+        preguntas_map[num] = p
+
+    clave_raw = examen.clave_respuestas
+    if isinstance(clave_raw, dict) and "preguntas" in clave_raw and isinstance(clave_raw.get("preguntas"), list):
+        clave_list = [c for c in clave_raw.get("preguntas", []) if isinstance(c, dict)]
+    elif isinstance(clave_raw, list):
+        clave_list = [c for c in clave_raw if isinstance(c, dict)]
+    elif isinstance(clave_raw, dict):
+        clave_list = [clave_raw]
+    else:
+        clave_list = []
+
+    merged: dict = {}
+
+    for c in clave_list:
+        num = c.get("numero")
+        if num is None:
+            continue
+        meta = preguntas_map.get(num, {})
+        opciones = c.get("opciones") if c.get("opciones") is not None else meta.get("opciones", [])
+        if not isinstance(opciones, list):
+            opciones = []
+
+        merged[num] = {
+            "numero": num,
+            "respuesta_correcta": c.get("respuesta_correcta") or meta.get("respuesta_correcta") or "",
+            "puntos": _safe_float(c.get("puntos", meta.get("puntos", 1.0)), 1.0),
+            "tipo": c.get("tipo") or meta.get("tipo") or "",
+            "enunciado": c.get("enunciado") or meta.get("enunciado") or meta.get("pregunta") or "",
+            "opciones": opciones,
+        }
+
+    for num, meta in preguntas_map.items():
+        if num in merged:
+            continue
+        opciones = meta.get("opciones", [])
+        if not isinstance(opciones, list):
+            opciones = []
+
+        merged[num] = {
+            "numero": num,
+            "respuesta_correcta": meta.get("respuesta_correcta") or "",
+            "puntos": _safe_float(meta.get("puntos", 1.0), 1.0),
+            "tipo": meta.get("tipo") or "",
+            "enunciado": meta.get("enunciado") or meta.get("pregunta") or "",
+            "opciones": opciones,
+        }
+
+    return [merged[k] for k in sorted(merged.keys(), key=_question_sort_key)]
+
+
+def _merge_grading_results(base: dict, extra: dict) -> dict:
+    if not extra:
+        return base
+
+    base_questions = base.get("preguntas") if isinstance(base.get("preguntas"), list) else []
+    extra_questions = extra.get("preguntas") if isinstance(extra.get("preguntas"), list) else []
+    existing_nums = {
+        str(p.get("numero")) for p in base_questions if isinstance(p, dict)
+    }
+    for p in extra_questions:
+        if not isinstance(p, dict):
+            continue
+        if str(p.get("numero")) in existing_nums:
+            continue
+        base_questions.append(p)
+
+    base["preguntas"] = base_questions
+    base["nota_total"] = round(
+        _safe_float(base.get("nota_total"), 0.0) + _safe_float(extra.get("nota_total"), 0.0),
+        2,
+    )
+    base["nota_maxima"] = round(
+        _safe_float(base.get("nota_maxima"), 0.0) + _safe_float(extra.get("nota_maxima"), 0.0),
+        2,
+    )
+    base["tiene_preguntas_abiertas"] = bool(base.get("tiene_preguntas_abiertas")) or bool(
+        extra.get("tiene_preguntas_abiertas")
+    )
+    if extra.get("calificacion_automatica") is False:
+        base["calificacion_automatica"] = False
+    return base
+
+
+def _smart_grade(examen: Examen, resp_list: list[dict], clave_list: list[dict] | None = None) -> dict:
     """
     Split questions into objective (auto-graded locally) and open-ended (need LLM).
     Returns {
@@ -81,32 +206,26 @@ def _smart_grade(examen: Examen, resp_list: list[dict]) -> dict:
       "all_objective": bool,
     }
     """
-    clave_raw = examen.clave_respuestas or {}
-    contenido = examen.contenido_json or {}
-
-    if isinstance(clave_raw, dict) and "preguntas" in clave_raw:
-        clave_list = clave_raw["preguntas"]
-    elif isinstance(clave_raw, list):
-        clave_list = clave_raw
-    else:
-        clave_list = []
+    contenido = examen.contenido_json if isinstance(examen.contenido_json, dict) else {}
+    clave_list = clave_list or _build_effective_key(examen)
 
     # Build lookup for question types from contenido_json
     preguntas_info = {}
+    preguntas_meta = {}
     for p in contenido.get("preguntas", []):
-        preguntas_info[p.get("numero")] = p.get("tipo", "")
+        if not isinstance(p, dict):
+            continue
+        num = p.get("numero")
+        if num is None:
+            continue
+        preguntas_info[num] = p.get("tipo", "")
+        preguntas_meta[num] = p
 
     # Build lookup for student responses
     resp_map = {}
     for r in resp_list:
         if isinstance(r, dict):
             resp_map[r.get("numero")] = r.get("respuesta", "")
-
-    # Build lookup for answer key
-    clave_map = {}
-    for c in clave_list:
-        if isinstance(c, dict):
-            clave_map[c.get("numero")] = c
 
     objective_results = []
     open_questions_resp = []
@@ -119,12 +238,19 @@ def _smart_grade(examen: Examen, resp_list: list[dict]) -> dict:
         if not isinstance(c, dict):
             continue
         num = c.get("numero")
-        puntos = float(c.get("puntos", 1.0))
-        respuesta_correcta = str(c.get("respuesta_correcta", ""))
-        tipo = preguntas_info.get(num, "")
+        if num is None:
+            continue
+        meta = preguntas_meta.get(num, {})
+        puntos = _safe_float(c.get("puntos", meta.get("puntos", 1.0)), 1.0)
+        respuesta_correcta = str(c.get("respuesta_correcta") or meta.get("respuesta_correcta") or "")
+        tipo = c.get("tipo") or preguntas_info.get(num, "") or meta.get("tipo", "")
+        enunciado = c.get("enunciado") or meta.get("enunciado") or meta.get("pregunta") or ""
+        opciones = c.get("opciones") if c.get("opciones") is not None else meta.get("opciones", [])
+        if not isinstance(opciones, list):
+            opciones = []
         respuesta_est = str(resp_map.get(num, ""))
 
-        if tipo in AUTO_GRADABLE_TYPES:
+        if tipo in AUTO_GRADABLE_TYPES and _normalize(respuesta_correcta):
             correcto = _normalize(respuesta_correcta) == _normalize(respuesta_est)
             nota_maxima_objective += puntos
             if correcto:
@@ -146,8 +272,17 @@ def _smart_grade(examen: Examen, resp_list: list[dict]) -> dict:
                 "numero": num,
                 "respuesta": respuesta_est,
                 "tipo": tipo,
+                "enunciado": enunciado,
+                "opciones": opciones,
             })
-            open_questions_key.append(c)
+            open_questions_key.append({
+                "numero": num,
+                "respuesta_correcta": respuesta_correcta,
+                "puntos": puntos,
+                "tipo": tipo,
+                "enunciado": enunciado,
+                "opciones": opciones,
+            })
 
     return {
         "objective_results": objective_results,
@@ -179,8 +314,14 @@ async def grade_uploaded_exam(
 
     # Get exam with answer key and enforce ownership
     examen, materia = await _assert_examen_access(db, examen_id, current_user)
-    if not examen.clave_respuestas:
-        raise HTTPException(status_code=400, detail="El examen no tiene clave de respuestas")
+    content = examen.contenido_json if isinstance(examen.contenido_json, dict) else {}
+    has_interactive = _has_interactive_content(examen)
+    effective_key = _build_effective_key(examen)
+    if not effective_key and not has_interactive:
+        raise HTTPException(
+            status_code=400,
+            detail="El examen no tiene clave de respuestas ni respuestas_correctas en contenido_json",
+        )
 
     await _assert_student_enrolled(db, str(examen.materia_id), estudiante_id)
 
@@ -208,80 +349,112 @@ async def grade_uploaded_exam(
         str(materia.profesor_id) if getattr(materia, "profesor_id", None) else None,
     )
 
-    # OCR Pipeline
-    try:
-        ocr_result = await process_exam_image(file_bytes, filename, ai_config)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error en OCR: {str(e)}")
+    ocr_result = {"texto_extraido": "", "preguntas": [], "tipo_escritura": "desconocido"}
+    grading_result = {
+        "nota_total": 0.0,
+        "nota_maxima": 0.0,
+        "preguntas": [],
+        "calificacion_automatica": True,
+        "tiene_preguntas_abiertas": False,
+    }
+    needs_ocr = isinstance(content.get("preguntas"), list) and len(content.get("preguntas")) > 0
 
-    # ── Smart Grading: auto-grade objective, LLM only for open-ended ──
-    try:
-        clave = examen.clave_respuestas
-        if isinstance(clave, dict) and "preguntas" in clave:
-            clave_list = clave["preguntas"]
-        elif isinstance(clave, list):
-            clave_list = clave
-        else:
-            clave_list = [clave]
+    if needs_ocr:
+        # OCR Pipeline
+        try:
+            ocr_result = await process_exam_image(file_bytes, filename, ai_config)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error en OCR: {str(e)}")
 
-        ocr_questions = ocr_result.get("preguntas", [])
+        # ── Smart Grading: auto-grade objective, LLM only for open-ended ──
+        try:
+            ocr_questions = ocr_result.get("preguntas", [])
 
-        # Try smart grading if we have contenido_json with question types
-        smart = _smart_grade(examen, ocr_questions)
+            # Try smart grading if we have contenido_json with question types
+            smart = _smart_grade(examen, ocr_questions, effective_key)
 
-        if smart["all_objective"]:
-            # All questions are objective — skip LLM entirely!
-            logger.info(f"OCR smart grading: all {len(smart['objective_results'])} questions are objective, skipping LLM")
-            grading_result = {
-                "nota_total": smart["nota_objective"],
-                "nota_maxima": smart["nota_maxima_objective"],
-                "preguntas": smart["objective_results"],
-                "calificacion_automatica": True,
-                "tiene_preguntas_abiertas": False,
-            }
-        elif smart["open_questions_resp"]:
-            # Mix: auto-grade objective locally, LLM only for open-ended
-            logger.info(
-                f"OCR smart grading: {len(smart['objective_results'])} objective auto-graded, "
-                f"{len(smart['open_questions_resp'])} open-ended sent to LLM"
-            )
-            llm_result = await grade_exam_with_fallback(
-                respuestas_estudiante=smart["open_questions_resp"],
-                clave_respuestas=smart["open_questions_key"],
+            if smart["all_objective"]:
+                # All questions are objective — skip LLM entirely!
+                logger.info(f"OCR smart grading: all {len(smart['objective_results'])} questions are objective, skipping LLM")
+                grading_result = {
+                    "nota_total": smart["nota_objective"],
+                    "nota_maxima": smart["nota_maxima_objective"],
+                    "preguntas": smart["objective_results"],
+                    "calificacion_automatica": True,
+                    "tiene_preguntas_abiertas": False,
+                }
+            elif smart["open_questions_resp"]:
+                # Mix: auto-grade objective locally, LLM only for open-ended
+                logger.info(
+                    f"OCR smart grading: {len(smart['objective_results'])} objective auto-graded, "
+                    f"{len(smart['open_questions_resp'])} open-ended sent to LLM"
+                )
+                llm_result = await grade_exam_with_fallback(
+                    respuestas_estudiante=smart["open_questions_resp"],
+                    clave_respuestas=smart["open_questions_key"],
+                    provider_config=ai_config,
+                )
+                # Merge results
+                all_preguntas = list(smart["objective_results"])
+                for p in llm_result.get("preguntas", []):
+                    all_preguntas.append(p)
+                all_preguntas.sort(key=lambda x: _question_sort_key(x.get("numero")))
+
+                nota_total = smart["nota_objective"] + llm_result.get("nota_total", 0)
+                nota_maxima = smart["nota_maxima_objective"] + llm_result.get("nota_maxima", smart["nota_maxima_open"])
+
+                grading_result = {
+                    "nota_total": round(nota_total, 2),
+                    "nota_maxima": round(nota_maxima, 2),
+                    "preguntas": all_preguntas,
+                    "calificacion_automatica": True,
+                    "tiene_preguntas_abiertas": False,  # All graded now
+                }
+            else:
+                # Fallback: send everything to LLM (no contenido_json types available)
+                logger.info("OCR grading: no question types found, sending all to LLM")
+                grading_result = await grade_exam_with_fallback(
+                    respuestas_estudiante=ocr_questions,
+                    clave_respuestas=effective_key,
+                    provider_config=ai_config,
+                )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error en calificación: {str(e)}")
+
+    if has_interactive:
+        try:
+            vision_result = await grade_interactive_with_vision(
+                file_bytes=file_bytes,
+                filename=filename,
+                content_type=file.content_type,
+                exam_tipo=examen.tipo,
+                contenido_json=content,
+                clave_respuestas=examen.clave_respuestas,
                 provider_config=ai_config,
             )
-            # Merge results
-            all_preguntas = list(smart["objective_results"])
-            for p in llm_result.get("preguntas", []):
-                all_preguntas.append(p)
-            all_preguntas.sort(key=lambda x: x.get("numero", 0))
+            if vision_result:
+                grading_result = _merge_grading_results(grading_result, vision_result)
+            elif not needs_ocr:
+                raise HTTPException(
+                    status_code=500,
+                    detail="No fue posible calificar actividades interactivas con vision",
+                )
+        except HTTPException:
+            raise
+        except Exception as e:
+            if not needs_ocr:
+                raise HTTPException(status_code=500, detail=f"Error en calificación por visión: {str(e)}")
+            logger.error(f"Vision grading failed: {e}")
 
-            nota_total = smart["nota_objective"] + llm_result.get("nota_total", 0)
-            nota_maxima = smart["nota_maxima_objective"] + llm_result.get("nota_maxima", smart["nota_maxima_open"])
+    if isinstance(grading_result.get("preguntas"), list):
+        grading_result["preguntas"].sort(key=lambda x: _question_sort_key(x.get("numero")) if isinstance(x, dict) else (1, ""))
 
-            grading_result = {
-                "nota_total": round(nota_total, 2),
-                "nota_maxima": round(nota_maxima, 2),
-                "preguntas": all_preguntas,
-                "calificacion_automatica": True,
-                "tiene_preguntas_abiertas": False,  # All graded now
-            }
-        else:
-            # Fallback: send everything to LLM (no contenido_json types available)
-            logger.info("OCR grading: no question types found, sending all to LLM")
-            grading_result = await grade_exam_with_fallback(
-                respuestas_estudiante=ocr_questions,
-                clave_respuestas=clave_list,
-                provider_config=ai_config,
-            )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error en calificación: {str(e)}")
-
-    # Save nota
-    nota = Nota(
+    # Save nota (single row per student+exam)
+    nota = await upsert_nota(
+        db,
         estudiante_id=estudiante_id,
         examen_id=examen_id,
-        nota=grading_result.get("nota_total"),
+        nota_val=grading_result.get("nota_total"),
         detalle_json=grading_result,
         retroalimentacion="\n".join(
             f"P{p['numero']}: {p['retroalimentacion']}"
@@ -290,7 +463,6 @@ async def grade_uploaded_exam(
         imagen_procesada_url=f"/uploads/{file_id}{ext}",
         texto_extraido=ocr_result["texto_extraido"],
     )
-    db.add(nota)
     await db.commit()
     await db.refresh(nota)
 
@@ -306,23 +478,13 @@ async def grade_online_response(
 ):
     """Grade an online response that was submitted by a student (LLM-based, for open-ended questions)."""
     from app.models.models import RespuestaOnline
-
-    # Check for existing Nota — delete it to re-grade
-    existing_nota = await db.execute(
-        select(Nota).where(
-            Nota.examen_id == examen_id,
-            Nota.estudiante_id == estudiante_id,
-        )
-    )
-    old_nota = existing_nota.scalar_one_or_none()
-    if old_nota:
-        await db.delete(old_nota)
-        await db.flush()
+    from app.routers.examenes import auto_grade_objective
 
     # Get exam and enforce ownership
     examen, materia = await _assert_examen_access(db, examen_id, current_user)
-    if not examen.clave_respuestas:
-        raise HTTPException(status_code=404, detail="Examen o clave no encontrada")
+    effective_key = _build_effective_key(examen)
+    if not effective_key:
+        raise HTTPException(status_code=404, detail="Examen sin clave ni respuestas_correctas configuradas")
     ai_config = await get_profesor_ai_config(
         db,
         str(materia.profesor_id) if getattr(materia, "profesor_id", None) else None,
@@ -342,9 +504,9 @@ async def grade_online_response(
     if not respuesta:
         raise HTTPException(status_code=404, detail="Respuesta del estudiante no encontrada")
 
-    # ── Smart Grade: auto-grade objective, LLM only for open-ended ──
-    clave = examen.clave_respuestas
+    # ── Smart Grade: keep interactive/objective grading consistent with /examenes/responder ──
     respuestas_est = respuesta.respuestas_json
+    auto_result = auto_grade_objective(examen, respuestas_est)
 
     if isinstance(respuestas_est, dict) and "preguntas" in respuestas_est:
         resp_list = respuestas_est["preguntas"]
@@ -353,20 +515,18 @@ async def grade_online_response(
     else:
         resp_list = [respuestas_est]
 
-    smart = _smart_grade(examen, resp_list)
+    smart = _smart_grade(examen, resp_list, effective_key)
 
-    if smart["all_objective"]:
-        # All objective — no LLM needed!
-        logger.info(f"Online smart grading: all {len(smart['objective_results'])} questions are objective, skipping LLM")
+    if auto_result and not auto_result.get("tiene_preguntas_abiertas", False):
+        # Fully solved locally (objective + interactive types), no LLM needed.
+        logger.info("Online smart grading: all questions auto-graded locally, skipping LLM")
         grading_result = {
-            "nota_total": smart["nota_objective"],
-            "nota_maxima": smart["nota_maxima_objective"],
-            "preguntas": smart["objective_results"],
+            **auto_result,
             "calificacion_automatica": True,
             "tiene_preguntas_abiertas": False,
         }
     elif smart["open_questions_resp"]:
-        # Mix: auto-grade objective locally, only open-ended to LLM
+        # Mix: keep local auto-graded details and ask LLM only for pending open-ended items.
         logger.info(
             f"Online smart grading: {len(smart['objective_results'])} objective auto-graded, "
             f"{len(smart['open_questions_resp'])} open-ended sent to LLM"
@@ -376,14 +536,25 @@ async def grade_online_response(
             clave_respuestas=smart["open_questions_key"],
             provider_config=ai_config,
         )
+        if auto_result and isinstance(auto_result.get("preguntas"), list):
+            base_results = [p for p in auto_result["preguntas"] if not p.get("pendiente")]
+        else:
+            base_results = list(smart["objective_results"])
+
         # Merge results
-        all_preguntas = list(smart["objective_results"])
+        all_preguntas = list(base_results)
         for p in llm_result.get("preguntas", []):
             all_preguntas.append(p)
-        all_preguntas.sort(key=lambda x: x.get("numero", 0))
+        all_preguntas.sort(key=lambda x: _question_sort_key(x.get("numero")))
 
-        nota_total = smart["nota_objective"] + llm_result.get("nota_total", 0)
-        nota_maxima = smart["nota_maxima_objective"] + llm_result.get("nota_maxima", smart["nota_maxima_open"])
+        nota_base = sum(_safe_float(p.get("nota"), 0.0) for p in base_results)
+        nota_maxima_base = sum(_safe_float(p.get("nota_maxima"), 0.0) for p in base_results)
+        nota_total = nota_base + _safe_float(llm_result.get("nota_total"), 0.0)
+
+        llm_nota_maxima = _safe_float(llm_result.get("nota_maxima"), 0.0)
+        if llm_nota_maxima <= 0:
+            llm_nota_maxima = sum(_safe_float(k.get("puntos"), 0.0) for k in smart["open_questions_key"])
+        nota_maxima = nota_maxima_base + llm_nota_maxima
 
         grading_result = {
             "nota_total": round(nota_total, 2),
@@ -392,33 +563,33 @@ async def grade_online_response(
             "calificacion_automatica": True,
             "tiene_preguntas_abiertas": False,
         }
+    elif auto_result:
+        # If open-ended split failed, keep deterministic local result instead of losing progress.
+        grading_result = {
+            **auto_result,
+            "calificacion_automatica": True,
+            "tiene_preguntas_abiertas": auto_result.get("tiene_preguntas_abiertas", False),
+        }
     else:
         # Fallback: send everything to LLM
         logger.info("Online grading: no question types found, sending all to LLM")
-        if isinstance(clave, dict) and "preguntas" in clave:
-            clave_list = clave["preguntas"]
-        elif isinstance(clave, list):
-            clave_list = clave
-        else:
-            clave_list = [clave]
-
         grading_result = await grade_exam_with_fallback(
             respuestas_estudiante=resp_list,
-            clave_respuestas=clave_list,
+            clave_respuestas=effective_key,
             provider_config=ai_config,
         )
 
-    nota = Nota(
+    nota = await upsert_nota(
+        db,
         estudiante_id=estudiante_id,
         examen_id=examen_id,
-        nota=grading_result.get("nota_total"),
+        nota_val=grading_result.get("nota_total"),
         detalle_json=grading_result,
         retroalimentacion="\n".join(
             f"P{p['numero']}: {p['retroalimentacion']}"
             for p in grading_result.get("preguntas", [])
         ),
     )
-    db.add(nota)
     await db.commit()
     await db.refresh(nota)
 

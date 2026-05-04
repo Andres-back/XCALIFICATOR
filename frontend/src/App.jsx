@@ -9,13 +9,14 @@ import AdminMaterias from './pages/admin/Materias';
 import AdminAuditLog from './pages/admin/AuditLog';
 import AdminPeriodos from './pages/admin/Periodos';
 import AdminBoletines from './pages/admin/Boletines';
-import AdminAIConfig from './pages/admin/AIConfig';
 import ProfesorMaterias from './pages/profesor/Materias';
 import ProfesorExamenes from './pages/profesor/Examenes';
 import ProfesorGenerar from './pages/profesor/GenerarExamen';
 import ProfesorCalificar from './pages/profesor/Calificar';
 import ProfesorNotas from './pages/profesor/Notas';
 import ProfesorHerramientas from './pages/profesor/Herramientas';
+import ProfesorPresentacion from './pages/profesor/GenerarPresentacion';
+import ProfesorMisPresentaciones from './pages/profesor/MisPresentaciones';
 import ProfesorReportes from './pages/profesor/Reportes';
 import ImpactoTesis from './pages/profesor/ImpactoTesis';
 import MateriaDetail from './pages/profesor/MateriaDetail';
@@ -90,11 +91,6 @@ export default function App() {
             <Layout><AdminBoletines /></Layout>
           </ProtectedRoute>
         } />
-        <Route path="/admin/ai-config" element={
-          <ProtectedRoute roles={['admin']}>
-            <Layout><AdminAIConfig /></Layout>
-          </ProtectedRoute>
-        } />
         <Route path="/admin/impacto" element={
           <ProtectedRoute roles={['admin']}>
             <Layout><ImpactoTesis /></Layout>
@@ -135,6 +131,21 @@ export default function App() {
         <Route path="/profesor/herramientas" element={
           <ProtectedRoute roles={['profesor', 'admin']}>
             <Layout><ProfesorHerramientas /></Layout>
+          </ProtectedRoute>
+        } />
+        <Route path="/profesor/presentaciones" element={
+          <ProtectedRoute roles={['profesor', 'admin']}>
+            <Layout><ProfesorMisPresentaciones /></Layout>
+          </ProtectedRoute>
+        } />
+        <Route path="/profesor/presentacion" element={
+          <ProtectedRoute roles={['profesor', 'admin']}>
+            <Layout><ProfesorPresentacion /></Layout>
+          </ProtectedRoute>
+        } />
+        <Route path="/profesor/presentacion/:materiaId" element={
+          <ProtectedRoute roles={['profesor', 'admin']}>
+            <Layout><ProfesorPresentacion /></Layout>
           </ProtectedRoute>
         } />
         <Route path="/profesor/reportes" element={

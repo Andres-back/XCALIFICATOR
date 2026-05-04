@@ -40,6 +40,16 @@ CREATE TABLE materias (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE TABLE materia_encuentros (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  materia_id  UUID REFERENCES materias(id) ON DELETE CASCADE,
+  dia_semana  VARCHAR(10) NOT NULL CHECK (dia_semana IN ('lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo')),
+  hora_inicio VARCHAR(5) NOT NULL,
+  hora_fin    VARCHAR(5) NOT NULL,
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(materia_id, dia_semana)
+);
+
 CREATE TABLE matriculas (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   estudiante_id UUID REFERENCES users(id) ON DELETE CASCADE,
@@ -71,7 +81,8 @@ CREATE TABLE notas (
   retroalimentacion     TEXT,
   imagen_procesada_url  TEXT,
   texto_extraido        TEXT,
-  created_at            TIMESTAMPTZ DEFAULT NOW()
+  created_at            TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(estudiante_id, examen_id)
 );
 
 -- NOTIFICACIONES

@@ -97,6 +97,7 @@ async def ocr_with_ollama_vision(
     image_bytes: bytes,
     model: str | None = None,
     ollama_url: str = "http://host.docker.internal:11434",
+    ollama_api_key: str | None = None,
 ) -> str:
     """Extract text using an Ollama multimodal model."""
     selected_model = str(model or "").strip()
@@ -125,7 +126,8 @@ async def ocr_with_ollama_vision(
         base_url = "http://host.docker.internal:11434"
 
     async with httpx.AsyncClient(timeout=90.0) as client:
-        response = await client.post(f"{base_url}/api/chat", json=payload)
+        headers = {"Authorization": f"Bearer {ollama_api_key}"} if ollama_api_key else None
+        response = await client.post(f"{base_url}/api/chat", json=payload, headers=headers)
         response.raise_for_status()
         result = response.json()
 
@@ -137,6 +139,7 @@ async def _ocr_with_provider(
     provider: str,
     model: str,
     ollama_url: str,
+    ollama_api_key: str | None,
 ) -> str:
     if provider == "paddleocr":
         return await ocr_with_paddle(image_bytes)
@@ -144,15 +147,15 @@ async def _ocr_with_provider(
         selected_model = model or DEFAULT_GROQ_OCR_MODEL
         return await ocr_with_groq_vision(image_bytes, selected_model)
     if provider == "ollama_vision":
-        return await ocr_with_ollama_vision(image_bytes, model, ollama_url)
+        return await ocr_with_ollama_vision(image_bytes, model, ollama_url, ollama_api_key)
     raise ValueError(f"Proveedor OCR no soportado: {provider}")
 
 
 async def _ocr_with_fallback(image_bytes: bytes, provider_config: dict | None = None) -> str:
     cfg = provider_config or {}
-    primary = str(cfg.get("ocr_provider") or "paddleocr").strip().lower()
+    primary = str(cfg.get("ocr_provider") or "groq_vision").strip().lower()
     if primary not in OCR_PROVIDER_OPTIONS:
-        primary = "paddleocr"
+        primary = "groq_vision"
 
     fallback = cfg.get("ocr_fallback_provider")
     fallback = str(fallback).strip().lower() if fallback else None
@@ -162,6 +165,7 @@ async def _ocr_with_fallback(image_bytes: bytes, provider_config: dict | None = 
     primary_model = str(cfg.get("ocr_model") or "").strip()
     fallback_model = str(cfg.get("ocr_fallback_model") or "").strip()
     ollama_url = str(cfg.get("ollama_url") or "http://host.docker.internal:11434").strip()
+    ollama_api_key = str(cfg.get("ollama_api_key") or "").strip() or None
 
     attempts: list[tuple[str, str]] = [(primary, primary_model)]
     if fallback and fallback != "none":
@@ -171,7 +175,7 @@ async def _ocr_with_fallback(image_bytes: bytes, provider_config: dict | None = 
     errors = []
     for provider, model in attempts:
         try:
-            text = await _ocr_with_provider(image_bytes, provider, model, ollama_url)
+            text = await _ocr_with_provider(image_bytes, provider, model, ollama_url, ollama_api_key)
             if isinstance(text, str) and text.strip():
                 return text
             errors.append(f"{provider}({model or 'sin_modelo'}): texto vacío")
@@ -213,8 +217,14 @@ def parse_exam_text(raw_text: str) -> list[dict]:
     import re
 
     lines = raw_text.strip().split("\n")
-    questions_map: dict[int, dict] = {}
+    questions_map: dict = {}
     current_num: int | None = None
+
+    # Accept custom OCR prefixes (1-4 letters) plus common keywords like RESPUESTA.
+    answer_prefix_pattern = re.compile(
+        r"^(?:[A-Z]{1,4}|RESPUESTA|RESP|ANS)\s*[-_ ]*(\d{1,3})\s*([HV])?\s*[:.)-]\s*(.*)$",
+        flags=re.IGNORECASE,
+    )
 
     for raw_line in lines:
         line = raw_line.strip()
@@ -233,14 +243,13 @@ def parse_exam_text(raw_text: str) -> list[dict]:
             continue
 
         # Explicit OCR answer line: R1: A / RESPUESTA 2: texto / R-3) valor
-        ans_num_match = re.match(
-            r"^(?:R|RESP|RESPUESTA|ANS)\s*[-_ ]*(\d{1,3})\s*[:.)-]\s*(.*)$",
-            line,
-            flags=re.IGNORECASE,
-        )
+        ans_num_match = answer_prefix_pattern.match(line)
         if ans_num_match:
             num = int(ans_num_match.group(1))
-            answer = ans_num_match.group(2).strip()
+            direction = (ans_num_match.group(2) or "").strip().upper()
+            answer = ans_num_match.group(3).strip()
+            if direction:
+                answer = f"{direction}: {answer}" if answer else direction
             item = questions_map.get(num, {"numero": num, "texto": "", "respuesta": ""})
             if answer:
                 item["respuesta"] = (
@@ -275,7 +284,12 @@ def parse_exam_text(raw_text: str) -> list[dict]:
                 item["texto"] = (item.get("texto", "") + " " + line).strip() if item.get("texto") else line
             questions_map[current_num] = item
 
-    return [questions_map[num] for num in sorted(questions_map.keys())]
+    numeric_keys = [key for key in questions_map.keys() if isinstance(key, int)]
+    extra_keys = [key for key in questions_map.keys() if not isinstance(key, int)]
+
+    ordered = [questions_map[num] for num in sorted(numeric_keys)]
+    ordered.extend(questions_map[key] for key in sorted(extra_keys, key=lambda v: str(v)))
+    return ordered
 
 
 async def process_exam_image(file_bytes: bytes, filename: str, provider_config: dict | None = None) -> dict:

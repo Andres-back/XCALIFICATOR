@@ -1,5 +1,6 @@
 import json
 import re
+from typing import Any, cast
 import httpx
 from groq import Groq
 from app.core.config import get_settings
@@ -22,16 +23,19 @@ MODELS = {
 def _grade_system_prompt() -> str:
     return """Eres un calificador académico experto y justo del sistema educativo colombiano.
 Califica cada respuesta del estudiante comparándola con la clave de respuestas.
+Si una pregunta llega sin respuesta_correcta, infiere la respuesta esperada usando enunciado/opciones y conocimiento académico del tema.
+Cuando debas inferir respuesta_correcta, sé conservador, explica el criterio y evita sobrecalificar.
 USA ESCALA DE CALIFICACIÓN COLOMBIANA: de 1.0 a 5.0 donde 5.0 es la nota máxima y 3.0 es el mínimo aprobatorio.
 Asigna notas proporcionales: si una pregunta vale X puntos, la nota parcial debe estar entre 0 y X.
-La nota_total y nota_maxima deben estar en escala de 1.0 a 5.0.
+La nota_total debe ser la suma de las notas parciales de las preguntas evaluadas.
+La nota_maxima debe ser la suma de los puntos de las preguntas evaluadas.
 Asigna una nota parcial si la respuesta es parcialmente correcta.
 Proporciona retroalimentación constructiva y específica para cada pregunta.
 
 Responde ÚNICAMENTE con JSON válido siguiendo este schema exacto:
 {
-  "nota_total": float (1.0-5.0),
-  "nota_maxima": 5.0,
+    "nota_total": float,
+    "nota_maxima": float,
   "preguntas": [
     {
       "numero": int,
@@ -75,12 +79,75 @@ def _extract_json_from_text(raw_text: str) -> dict:
     return json.loads(match.group(0))
 
 
+def _require_content(raw_text: str | None, context: str) -> str:
+    text = (raw_text or "").strip()
+    if not text:
+        raise ValueError(f"Respuesta vacia del modelo en {context}")
+    return text
+
+
+def _safe_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _normalize_grade_result(result: dict, clave_respuestas: list[dict]) -> dict:
+    if not isinstance(result, dict):
+        raise ValueError("Respuesta de calificación inválida")
+
+    preguntas_raw = result.get("preguntas")
+    preguntas: list[dict] = cast(list[dict], preguntas_raw) if isinstance(preguntas_raw, list) else []
+    key_by_num = {
+        str(c.get("numero")): c
+        for c in (clave_respuestas or [])
+        if isinstance(c, dict) and c.get("numero") is not None
+    }
+
+    normalized_questions = []
+    for p in preguntas:
+        if not isinstance(p, dict):
+            continue
+        num = p.get("numero")
+        key = key_by_num.get(str(num))
+
+        nota_maxima = _safe_float(p.get("nota_maxima"), 0.0)
+        if nota_maxima <= 0 and key:
+            nota_maxima = _safe_float(key.get("puntos"), 0.0)
+
+        nota = _safe_float(p.get("nota"), 0.0)
+        if nota_maxima > 0:
+            nota = max(0.0, min(nota, nota_maxima))
+
+        normalized = dict(p)
+        normalized["nota"] = round(nota, 2)
+        if nota_maxima > 0:
+            normalized["nota_maxima"] = round(nota_maxima, 2)
+        normalized_questions.append(normalized)
+
+    nota_total = sum(_safe_float(p.get("nota"), 0.0) for p in normalized_questions)
+    nota_maxima_total = sum(_safe_float(p.get("nota_maxima"), 0.0) for p in normalized_questions)
+
+    if nota_maxima_total <= 0 and clave_respuestas:
+        nota_maxima_total = sum(
+            _safe_float(c.get("puntos"), 0.0) for c in clave_respuestas if isinstance(c, dict)
+        )
+
+    result["preguntas"] = normalized_questions
+    result["nota_total"] = round(nota_total, 2)
+    if nota_maxima_total > 0:
+        result["nota_maxima"] = round(nota_maxima_total, 2)
+    return result
+
+
 async def _grade_exam_ollama(
     respuestas_estudiante: list[dict],
     clave_respuestas: list[dict],
     rubrica: str = "",
     model: str | None = None,
     ollama_url: str = "http://host.docker.internal:11434",
+    ollama_api_key: str | None = None,
 ) -> dict:
     selected_model = str(model or "").strip()
     if not selected_model:
@@ -108,7 +175,8 @@ async def _grade_exam_ollama(
         base_url = "http://host.docker.internal:11434"
 
     async with httpx.AsyncClient(timeout=90.0) as http_client:
-        response = await http_client.post(f"{base_url}/api/chat", json=payload)
+        headers = {"Authorization": f"Bearer {ollama_api_key}"} if ollama_api_key else None
+        response = await http_client.post(f"{base_url}/api/chat", json=payload, headers=headers)
         response.raise_for_status()
         result = response.json()
 
@@ -142,7 +210,7 @@ async def _grade_exam_groq(
         response_format={"type": "json_object"},
     )
     await _log_usage("grading", selected_model, chat.usage)
-    response_text = chat.choices[0].message.content
+    response_text = _require_content(chat.choices[0].message.content, "grade_exam_groq")
     return json.loads(response_text)
 
 
@@ -166,6 +234,7 @@ async def grade_exam_with_fallback(
         or (MODELS["grading"] if fallback_provider == "groq" else "")
     ).strip()
     ollama_url = str(cfg.get("ollama_url") or "http://host.docker.internal:11434").strip()
+    ollama_api_key = str(cfg.get("ollama_api_key") or "").strip() or None
 
     attempts: list[tuple[str, str]] = [(primary_provider, primary_model)]
     if fallback_provider and fallback_provider != "none":
@@ -176,21 +245,24 @@ async def grade_exam_with_fallback(
     for provider, model in attempts:
         try:
             if provider == "groq":
-                return await _grade_exam_groq(
+                result = await _grade_exam_groq(
                     respuestas_estudiante=respuestas_estudiante,
                     clave_respuestas=clave_respuestas,
                     rubrica=rubrica,
                     model=model,
                 )
+                return _normalize_grade_result(result, clave_respuestas)
 
             if provider == "ollama":
-                return await _grade_exam_ollama(
+                result = await _grade_exam_ollama(
                     respuestas_estudiante=respuestas_estudiante,
                     clave_respuestas=clave_respuestas,
                     rubrica=rubrica,
                     model=model,
                     ollama_url=ollama_url,
+                    ollama_api_key=ollama_api_key,
                 )
+                return _normalize_grade_result(result, clave_respuestas)
 
             raise ValueError(f"Proveedor de grading no soportado: {provider}")
         except Exception as exc:
@@ -271,7 +343,7 @@ NO generes crucigrama ni sopa_letras aquí."""
         response_format={"type": "json_object"},
     )
     await _log_usage("exam_generation", MODELS["exam_generation"], chat.usage)
-    response_text = chat.choices[0].message.content
+    response_text = _require_content(chat.choices[0].message.content, "generate_exam")
     return json.loads(response_text)
 
 
@@ -336,7 +408,8 @@ Schema JSON EXACTO requerido:
         response_format={"type": "json_object"},
     )
     await _log_usage("exam_generation", MODELS["exam_generation"], chat.usage)
-    return json.loads(chat.choices[0].message.content)
+    response_text = _require_content(chat.choices[0].message.content, "generate_sopa_letras")
+    return json.loads(response_text)
 
 
 async def generate_crucigrama(
@@ -400,7 +473,8 @@ Responde SOLO con JSON válido:
         response_format={"type": "json_object"},
     )
     await _log_usage("exam_generation", MODELS["exam_generation"], chat.usage)
-    return json.loads(chat.choices[0].message.content)
+    response_text = _require_content(chat.choices[0].message.content, "generate_crucigrama")
+    return json.loads(response_text)
 
 
 async def grade_exam(
@@ -409,11 +483,12 @@ async def grade_exam(
     rubrica: str = "",
 ) -> dict:
     """Grade exam responses using Groq LLM."""
-    return await _grade_exam_groq(
+    result = await _grade_exam_groq(
         respuestas_estudiante=respuestas_estudiante,
         clave_respuestas=clave_respuestas,
         rubrica=rubrica,
     )
+    return _normalize_grade_result(result, clave_respuestas)
 
 
 async def rag_chat(
@@ -449,7 +524,15 @@ TU ROL Y COMPORTAMIENTO:
 7. Sé motivador y constructivo. Nunca hagas sentir mal al estudiante.
 8. Responde SOLO sobre el contexto del examen. Si preguntan algo fuera del tema, indica amablemente que solo puedes ayudar con este examen.
 9. Mantén respuestas concisas pero completas. Usa listas y formato claro.
-10. Recuerda la conversación previa para dar continuidad y no repetirte."""
+10. Recuerda la conversación previa para dar continuidad y no repetirte.
+11. Cuando haya matemáticas/física/química, escribe SIEMPRE fórmulas con LaTeX válido: $...$ para inline y $$...$$ para bloques.
+12. Evita notación plana como a/b, sqrt(x), x**2 o matrices tipo (1 2 3 4); conviértelo a LaTeX correcto.
+13. Estructura cada respuesta con este formato amable:
+    - **Diagnóstico breve**
+    - **Procedimiento paso a paso**
+    - **Resultado y verificación**
+14. Si piden una gráfica, entrega una mini tabla de valores (en texto) + interpretación pedagógica del comportamiento; no inventes imágenes.
+15. Si usas matrices o sistemas, usa notación LaTeX (ejemplo: $$\\begin{{pmatrix}}a & b \\\\ c & d\\end{{pmatrix}}$$)."""
 
     messages = [{"role": "system", "content": system_prompt}]
 
@@ -462,12 +545,99 @@ TU ROL Y COMPORTAMIENTO:
 
     chat = client.chat.completions.create(
         model=selected_model,
-        messages=messages,
+        messages=cast(Any, messages),
         temperature=0.3,
         max_tokens=1024,
     )
     await _log_usage("rag_chat", selected_model, chat.usage)
-    return chat.choices[0].message.content
+    return _require_content(chat.choices[0].message.content, "rag_chat")
+
+
+def _truncate_for_classifier(text: str, max_chars: int = 1800) -> str:
+    clean = re.sub(r"\s+", " ", str(text or "")).strip()
+    if len(clean) <= max_chars:
+        return clean
+    return clean[:max_chars] + "..."
+
+
+async def classify_chat_relevance(
+    user_message: str,
+    exam_context: str,
+    student_answers: str,
+    feedback: str,
+    conversation_history: list[dict] | None = None,
+    model: str | None = None,
+) -> dict[str, Any]:
+    """Classify whether a student's message is related to the active exam context."""
+    selected_model = str(model or MODELS["classification"]).strip() or MODELS["classification"]
+
+    recent_history: list[str] = []
+    if conversation_history:
+        for msg in conversation_history[-6:]:
+            role = "estudiante" if msg.get("role") == "user" else "xali"
+            content = _truncate_for_classifier(str(msg.get("content") or ""), 240)
+            if content:
+                recent_history.append(f"{role}: {content}")
+
+    system_prompt = """Eres un clasificador binario de relevancia para un tutor académico.
+Debes decidir si el mensaje del estudiante está RELACIONADO con su evaluación actual.
+
+Marca is_exam_related=true SOLO si el mensaje trata sobre:
+- preguntas, respuestas, conceptos, procedimientos o errores del examen
+- retroalimentación, nota o desempeño de esa evaluación
+- dudas de estudio directamente vinculadas al contenido evaluado
+
+Marca is_exam_related=false si el mensaje pide o conversa sobre temas ajenos:
+- recetas, entretenimiento, deportes, chistes, tecnología no académica, vida personal, etc.
+
+Responde ÚNICAMENTE JSON válido con este schema exacto:
+{
+  "is_exam_related": boolean,
+  "confidence": float,
+  "reason": "string corto"
+}
+"""
+
+    payload = {
+        "mensaje_estudiante": str(user_message or ""),
+        "historial_reciente": recent_history,
+        "contexto_examen": _truncate_for_classifier(exam_context, 3000),
+        "respuestas_estudiante": _truncate_for_classifier(student_answers, 1800),
+        "retroalimentacion": _truncate_for_classifier(feedback, 1200),
+    }
+
+    try:
+        chat = client.chat.completions.create(
+            model=selected_model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+            temperature=0,
+            max_tokens=180,
+            response_format={"type": "json_object"},
+        )
+        await _log_usage("classification", selected_model, chat.usage)
+        response_text = _require_content(chat.choices[0].message.content, "classify_chat_relevance")
+        parsed = _extract_json_from_text(response_text)
+
+        confidence_raw = parsed.get("confidence", 0.0)
+        try:
+            confidence = float(confidence_raw)
+        except Exception:
+            confidence = 0.0
+
+        return {
+            "is_exam_related": bool(parsed.get("is_exam_related")),
+            "confidence": max(0.0, min(1.0, confidence)),
+            "reason": str(parsed.get("reason") or ""),
+        }
+    except Exception:
+        return {
+            "is_exam_related": False,
+            "confidence": 0.0,
+            "reason": "fallback_block",
+        }
 
 
 async def generate_emparejar(
@@ -522,7 +692,8 @@ Schema JSON EXACTO requerido:
         response_format={"type": "json_object"},
     )
     await _log_usage("exam_generation", MODELS["exam_generation"], chat.usage)
-    return json.loads(chat.choices[0].message.content)
+    response_text = _require_content(chat.choices[0].message.content, "generate_emparejar")
+    return json.loads(response_text)
 
 
 async def generate_cuento(
@@ -576,7 +747,8 @@ Schema JSON EXACTO requerido:
         response_format={"type": "json_object"},
     )
     await _log_usage("exam_generation", MODELS["exam_generation"], chat.usage)
-    return json.loads(chat.choices[0].message.content)
+    response_text = _require_content(chat.choices[0].message.content, "generate_cuento")
+    return json.loads(response_text)
 
 
 async def generate_coloring_prompt(descripcion: str, allow_letters: bool = False) -> str:
@@ -615,7 +787,7 @@ async def generate_coloring_prompt(descripcion: str, allow_letters: bool = False
         temperature=0.4,
         max_tokens=120,
     )
-    return chat.choices[0].message.content.strip()
+    return _require_content(chat.choices[0].message.content, "generate_coloring_prompt")
 
 
 def get_pollinations_image_url(prompt: str, model: str = "flux") -> str:
@@ -646,5 +818,5 @@ async def classify_writing(text_sample: str) -> str:
         max_tokens=10,
     )
     await _log_usage("classification", MODELS["classification"], chat.usage)
-    result = chat.choices[0].message.content.strip().lower()
+    result = _require_content(chat.choices[0].message.content, "classify_writing").lower()
     return "manuscrito" if "manuscrito" in result else "impreso"

@@ -87,43 +87,6 @@ class UserUpdate(BaseModel):
     celular: Optional[str] = None
 
 
-class LocalAIConfigUpdate(BaseModel):
-    ollama_url: Optional[str] = None
-    grading_local_model: Optional[str] = None
-    ocr_local_model: Optional[str] = None
-
-    @field_validator("ollama_url", mode="before")
-    @classmethod
-    def validate_ollama_url(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        value = str(v).strip()
-        if not value:
-            return None
-        if not (value.startswith("http://") or value.startswith("https://")):
-            raise ValueError("La URL de Ollama debe iniciar con http:// o https://")
-        return value.rstrip("/")
-
-    @field_validator("grading_local_model", "ocr_local_model", mode="before")
-    @classmethod
-    def validate_local_model_name(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        value = str(v).strip()
-        return value or None
-
-
-class LocalAIConfigOut(BaseModel):
-    ollama_url: str
-    grading_local_model: Optional[str] = None
-    ocr_local_model: Optional[str] = None
-
-
-class LocalOllamaModelsOut(BaseModel):
-    ollama_url: str
-    models: list[str] = []
-
-
 class AdminUserCreate(BaseModel):
     nombre: str
     apellido: str
@@ -154,6 +117,22 @@ class ChangePasswordRequest(BaseModel):
         return v
 
 
+class ChangeOwnPasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_password(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Mínimo 8 caracteres")
+        if not re.search(r"[A-Z]", v):
+            raise ValueError("Debe contener al menos una mayúscula")
+        if not re.search(r"\d", v):
+            raise ValueError("Debe contener al menos un número")
+        return v
+
+
 class ChangeRoleRequest(BaseModel):
     rol: str
 
@@ -163,6 +142,98 @@ class ChangeRoleRequest(BaseModel):
         if v not in ("admin", "profesor", "estudiante"):
             raise ValueError("Rol debe ser admin, profesor o estudiante")
         return v
+
+
+class LocalAIConfigOut(BaseModel):
+    ollama_url: str = "http://host.docker.internal:11434"
+    ollama_api_key: Optional[str] = None
+    grading_local_model: Optional[str] = None
+    ocr_local_model: Optional[str] = None
+
+
+class LocalAIConfigUpdate(BaseModel):
+    ollama_url: Optional[str] = None
+    ollama_api_key: Optional[str] = None
+    grading_local_model: Optional[str] = None
+    ocr_local_model: Optional[str] = None
+
+
+class LocalOllamaModelsOut(BaseModel):
+    ollama_url: str
+    models: list[str] = []
+
+
+# ── MateriaEncuentro schemas ──────────────────────────────────────────────
+class MateriaEncuentroItem(BaseModel):
+    dia_semana: str
+    hora_inicio: str
+    hora_fin: str
+
+
+class MateriaEncuentroOut(BaseModel):
+    id: UUID
+    materia_id: UUID
+    dia_semana: str
+    hora_inicio: str
+    hora_fin: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class MateriaEncuentrosUpdate(BaseModel):
+    encuentros: list[MateriaEncuentroItem]
+
+
+# ── Presentacion (herramienta) advanced schemas ───────────────────────────
+class PresentacionSlideItem(BaseModel):
+    title: Optional[str] = None
+    body: Optional[str] = None
+    bullets: Optional[list[str]] = None
+    image_url: Optional[str] = None
+
+
+class PresentacionEditRequest(BaseModel):
+    titulo: Optional[str] = None
+    slides: list[PresentacionSlideItem] = []
+    rerender: bool = False
+    template_presenton: Optional[str] = None
+    idioma_presentacion: Optional[str] = None
+    tono_presentacion: Optional[str] = None
+    verbosidad_presentacion: Optional[str] = None
+    incluir_tabla_contenido: bool = False
+    incluir_portada: bool = True
+    busqueda_web: bool = False
+    formato_exportacion: Optional[str] = None
+
+
+class PresentacionRegenerateRequest(BaseModel):
+    topic: Optional[str] = None
+    grade: Optional[str] = None
+    level: Optional[str] = None
+    slides: Optional[int] = None
+    mode: Optional[str] = None
+    language: Optional[str] = None
+    tone: Optional[str] = None
+    verbosity: Optional[str] = None
+    template: Optional[str] = None
+    include_table_of_contents: bool = False
+    include_title_slide: bool = True
+    web_search: bool = False
+    export_as: Optional[str] = None
+    instructions: Optional[str] = None
+    use_pexels_images: bool = False
+    pexels_images_per_slide: Optional[int] = None
+    export_google_slides: bool = False
+    ollama_url: Optional[str] = None
+    ollama_model: Optional[str] = None
+
+
+class PresentacionGoogleExportOut(BaseModel):
+    presentation_id: Optional[str] = None
+    url: Optional[str] = None
+    embed_url: Optional[str] = None
 
 
 class AdminMateriaOut(BaseModel):
@@ -418,141 +489,6 @@ class HerramientaFlagOut(BaseModel):
     updated_by: Optional[UUID] = None
 
 
-AI_GRADING_PROVIDER_VALUES = {"groq", "ollama"}
-AI_OCR_PROVIDER_VALUES = {"paddleocr", "groq_vision", "ollama_vision"}
-
-
-class ProfesorAIConfigUpdate(BaseModel):
-    grading_provider: Optional[str] = None
-    grading_model: Optional[str] = None
-    grading_fallback_provider: Optional[str] = None
-    grading_fallback_model: Optional[str] = None
-    ocr_provider: Optional[str] = None
-    ocr_model: Optional[str] = None
-    ocr_fallback_provider: Optional[str] = None
-    ocr_fallback_model: Optional[str] = None
-    chat_model: Optional[str] = None
-    ollama_url: Optional[str] = None
-
-    @field_validator("grading_provider", mode="before")
-    @classmethod
-    def validate_grading_provider(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        value = str(v).strip().lower()
-        if value not in AI_GRADING_PROVIDER_VALUES:
-            raise ValueError("Proveedor de calificación inválido")
-        return value
-
-    @field_validator("grading_fallback_provider", mode="before")
-    @classmethod
-    def validate_grading_fallback_provider(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        value = str(v).strip().lower()
-        if not value or value == "none":
-            return None
-        if value not in AI_GRADING_PROVIDER_VALUES:
-            raise ValueError("Proveedor fallback de calificación inválido")
-        return value
-
-    @field_validator("ocr_provider", mode="before")
-    @classmethod
-    def validate_ocr_provider(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        value = str(v).strip().lower()
-        if value not in AI_OCR_PROVIDER_VALUES:
-            raise ValueError("Proveedor OCR inválido")
-        return value
-
-    @field_validator("ocr_fallback_provider", mode="before")
-    @classmethod
-    def validate_ocr_fallback_provider(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        value = str(v).strip().lower()
-        if not value or value == "none":
-            return None
-        if value not in AI_OCR_PROVIDER_VALUES:
-            raise ValueError("Proveedor fallback OCR inválido")
-        return value
-
-    @field_validator(
-        "grading_model",
-        "grading_fallback_model",
-        "ocr_model",
-        "ocr_fallback_model",
-        "chat_model",
-        mode="before",
-    )
-    @classmethod
-    def validate_optional_model_name(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        value = str(v).strip()
-        return value or None
-
-    @field_validator("ollama_url", mode="before")
-    @classmethod
-    def validate_ollama_url(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        value = str(v).strip()
-        if not value:
-            return None
-        if not (value.startswith("http://") or value.startswith("https://")):
-            raise ValueError("La URL de Ollama debe iniciar con http:// o https://")
-        return value.rstrip("/")
-
-
-class ProfesorAIConfigOut(BaseModel):
-    profesor_id: UUID
-    profesor_nombre: str
-    profesor_correo: str
-    uses_global: bool = False
-    grading_provider: str
-    grading_model: Optional[str] = None
-    grading_fallback_provider: Optional[str] = None
-    grading_fallback_model: Optional[str] = None
-    ocr_provider: str
-    ocr_model: Optional[str] = None
-    ocr_fallback_provider: Optional[str] = None
-    ocr_fallback_model: Optional[str] = None
-    chat_model: Optional[str] = None
-    ollama_url: str
-    updated_at: Optional[datetime] = None
-    updated_by: Optional[UUID] = None
-
-
-class OllamaModelsOut(BaseModel):
-    profesor_id: Optional[UUID] = None
-    ollama_url: str
-    models: list[str] = []
-
-
-class GroqModelsOut(BaseModel):
-    all_models: list[str] = []
-    vision_models: list[str] = []
-    grading_models: list[str] = []
-    chatbot_models: list[str] = []
-
-
-class GlobalAIConfigOut(BaseModel):
-    grading_provider: str
-    grading_model: Optional[str] = None
-    grading_fallback_provider: Optional[str] = None
-    grading_fallback_model: Optional[str] = None
-    ocr_provider: str
-    ocr_model: Optional[str] = None
-    ocr_fallback_provider: Optional[str] = None
-    ocr_fallback_model: Optional[str] = None
-    chat_model: Optional[str] = None
-    ollama_url: str
-    updated_at: Optional[datetime] = None
-    updated_by: Optional[UUID] = None
-
-
 # --- Períodos Académicos ---
 class PeriodoAcademicoCreate(BaseModel):
     nombre: str
@@ -657,7 +593,7 @@ class HerramientaGenerate(BaseModel):
 
 
 class HerramientaCreate(BaseModel):
-    tipo: str  # 'examen', 'crucigrama', 'sopa_letras', 'emparejar', 'cuento', 'para_colorear'
+    tipo: str  # 'examen', 'crucigrama', 'sopa_letras', 'emparejar', 'cuento', 'para_colorear', 'presentacion'
     titulo: str
     contenido_json: Optional[dict] = None
     clave_respuestas: Optional[dict] = None
@@ -666,7 +602,7 @@ class HerramientaCreate(BaseModel):
     @field_validator("tipo")
     @classmethod
     def validate_tipo(cls, v: str) -> str:
-        valid = ("examen", "crucigrama", "sopa_letras", "emparejar", "cuento", "para_colorear")
+        valid = ("examen", "crucigrama", "sopa_letras", "emparejar", "cuento", "para_colorear", "presentacion")
         if v not in valid:
             raise ValueError(f"Tipo debe ser: {', '.join(valid)}")
         return v

@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import api from '../../api';
 import toast from 'react-hot-toast';
 import {
-  AlertCircle,
   Cloud,
   Cpu,
   HardDrive,
@@ -15,13 +14,13 @@ import {
 
 const GRADING_PROVIDER_OPTIONS = [
   { value: 'groq', label: 'Groq Cloud (API pagada)' },
-  { value: 'ollama', label: 'Ollama local' },
+  { value: 'ollama', label: 'Ollama (local o cloud)' },
 ];
 
 const OCR_PROVIDER_OPTIONS = [
   { value: 'paddleocr', label: 'PaddleOCR (motor OCR dedicado)' },
   { value: 'groq_vision', label: 'Groq Vision (modelo multimodal)' },
-  { value: 'ollama_vision', label: 'Ollama Vision (modelo multimodal local)' },
+  { value: 'ollama_vision', label: 'Ollama Vision (local o cloud)' },
 ];
 
 const DEFAULT_GROQ_VISION_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
@@ -109,6 +108,7 @@ function normalizeRow(row) {
     ocr_fallback_model: row.ocr_fallback_model || '',
     chat_model: row.chat_model || DEFAULT_GROQ_VISION_MODEL,
     ollama_url: row.ollama_url || DEFAULT_OLLAMA_URL,
+    ollama_api_key: row.ollama_api_key || '',
   };
 }
 
@@ -118,12 +118,13 @@ function normalizeConfig(cfg) {
     grading_model: cfg.grading_model || '',
     grading_fallback_provider: cfg.grading_fallback_provider || '',
     grading_fallback_model: cfg.grading_fallback_model || '',
-    ocr_provider: cfg.ocr_provider || 'paddleocr',
+    ocr_provider: cfg.ocr_provider || 'groq_vision',
     ocr_model: cfg.ocr_model || '',
     ocr_fallback_provider: cfg.ocr_fallback_provider || '',
     ocr_fallback_model: cfg.ocr_fallback_model || '',
     chat_model: cfg.chat_model || DEFAULT_GROQ_VISION_MODEL,
     ollama_url: cfg.ollama_url || DEFAULT_OLLAMA_URL,
+    ollama_api_key: cfg.ollama_api_key || '',
     updated_at: cfg.updated_at || null,
     updated_by: cfg.updated_by || null,
   };
@@ -141,6 +142,7 @@ function toPayload(cfg) {
     ocr_fallback_model: cfg.ocr_fallback_model || null,
     chat_model: cfg.chat_model || null,
     ollama_url: cfg.ollama_url || null,
+    ollama_api_key: cfg.ollama_api_key || null,
   };
 }
 
@@ -192,6 +194,16 @@ function ConfigEditor({
 
   const ocrFallbackVisionOptions = withCurrentOption(
     toModelOptions(groqModels.vision_models),
+    cfg.ocr_fallback_model,
+  );
+
+  const ocrMainOllamaOptions = withCurrentOption(
+    toModelOptions(ollamaModels || []),
+    cfg.ocr_model,
+  );
+
+  const ocrFallbackOllamaOptions = withCurrentOption(
+    toModelOptions(ollamaModels || []),
     cfg.ocr_fallback_model,
   );
 
@@ -345,12 +357,23 @@ function ConfigEditor({
                   <option key={`ocr-main-${opt.value || 'empty'}`} value={opt.value}>{opt.label}</option>
                 ))}
               </select>
+            ) : cfg.ocr_provider === 'ollama_vision' && (ollamaModels || []).length > 0 ? (
+              <select
+                className="input-field mt-1"
+                value={cfg.ocr_model || ''}
+                onChange={(e) => onFieldChange('ocr_model', e.target.value)}
+                disabled={disabled}
+              >
+                {ocrMainOllamaOptions.map((opt) => (
+                  <option key={`ocr-main-ollama-${opt.value || 'empty'}`} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
             ) : (
               <input
                 className="input-field mt-1"
                 value={cfg.ocr_model}
                 onChange={(e) => onFieldChange('ocr_model', e.target.value)}
-                placeholder="qwen2.5vl:7b"
+                placeholder="qwen3-vl"
                 disabled={disabled}
               />
             )}
@@ -384,12 +407,23 @@ function ConfigEditor({
                   <option key={`ocr-fallback-${opt.value || 'empty'}`} value={opt.value}>{opt.label}</option>
                 ))}
               </select>
+            ) : cfg.ocr_fallback_provider === 'ollama_vision' && (ollamaModels || []).length > 0 ? (
+              <select
+                className="input-field mt-1"
+                value={cfg.ocr_fallback_model || ''}
+                onChange={(e) => onFieldChange('ocr_fallback_model', e.target.value)}
+                disabled={disabled}
+              >
+                {ocrFallbackOllamaOptions.map((opt) => (
+                  <option key={`ocr-fallback-ollama-${opt.value || 'empty'}`} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
             ) : (
               <input
                 className="input-field mt-1"
                 value={cfg.ocr_fallback_model}
                 onChange={(e) => onFieldChange('ocr_fallback_model', e.target.value)}
-                placeholder="paddleocr o qwen2.5vl:7b"
+                placeholder="paddleocr o qwen3-vl"
                 disabled={disabled}
               />
             )}
@@ -416,7 +450,7 @@ function ConfigEditor({
 
       <div className="border border-gray-200 rounded-xl p-4 space-y-3">
         <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
-          <HardDrive className="w-4 h-4 text-slate-700" /> Ollama local
+          <HardDrive className="w-4 h-4 text-slate-700" /> Ollama local / cloud
         </h3>
 
         <div className="grid grid-cols-1 xl:grid-cols-[1fr_auto] gap-3 items-end">
@@ -427,6 +461,17 @@ function ConfigEditor({
               value={cfg.ollama_url}
               onChange={(e) => onFieldChange('ollama_url', e.target.value)}
               placeholder={DEFAULT_OLLAMA_URL}
+              disabled={disabled}
+            />
+          </div>
+          <div>
+            <label className="text-xs text-gray-500">API Key (opcional)</label>
+            <input
+              className="input-field mt-1"
+              type="password"
+              value={cfg.ollama_api_key}
+              onChange={(e) => onFieldChange('ollama_api_key', e.target.value)}
+              placeholder="Bearer token si aplica"
               disabled={disabled}
             />
           </div>
@@ -666,7 +711,7 @@ export default function AdminAIConfig() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Configuración IA y OCR</h1>
           <p className="text-sm text-gray-500 mt-1">
-            Flujo recomendado: primero define la configuracion global y solo crea ajustes individuales cuando realmente lo necesites.
+            Define configuración global y, si hace falta, ajustes por profesor.
           </p>
         </div>
         <button
@@ -676,19 +721,6 @@ export default function AdminAIConfig() {
         >
           <RefreshCw className="w-4 h-4" /> Recargar
         </button>
-      </div>
-
-      <div className="card bg-amber-50 border border-amber-200 text-amber-900">
-        <div className="flex items-start gap-2">
-          <AlertCircle className="w-5 h-5 mt-0.5 shrink-0" />
-          <div className="text-sm">
-            <p className="font-semibold">Recomendacion operativa</p>
-            <p>
-              Para evitar caídas cuando Groq no esté disponible, usa <strong>Groq</strong> como principal y <strong>Ollama</strong> como fallback.
-              En OCR puedes priorizar PaddleOCR y dejar visión multimodal como respaldo.
-            </p>
-          </div>
-        </div>
       </div>
 
       <div className="card space-y-4">

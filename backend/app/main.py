@@ -11,7 +11,7 @@ from app.core.rate_limiter import RateLimiter
 from app.core.database import AsyncSessionLocal
 from app.core.redis import check_redis_health
 from app.routers import auth, admin, materias, examenes, grading, generation, chat, notifications
-from app.routers import periodos, herramientas, asistencia, reportes, grupos, tesis
+from app.routers import periodos, herramientas, asistencia, reportes, grupos, tesis, presentaciones
 
 app = FastAPI(
     title="XCalificator API",
@@ -54,6 +54,7 @@ app.include_router(asistencia.router, prefix="/api")
 app.include_router(reportes.router, prefix="/api")
 app.include_router(grupos.router, prefix="/api")
 app.include_router(tesis.router, prefix="/api")
+app.include_router(presentaciones.router, prefix="/api")
 
 
 async def check_db_health() -> dict:

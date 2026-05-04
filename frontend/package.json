@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check:api-contract": "node ../scripts/check_api_contracts.cjs"
   },
   "dependencies": {
     "@jaredreisinger/react-crossword": "^5.2.0",

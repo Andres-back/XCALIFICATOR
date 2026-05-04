@@ -12,8 +12,10 @@ import StatCard from '../../components/StatCard';
 import EmptyState from '../../components/EmptyState';
 import SkeletonLoader from '../../components/SkeletonLoader';
 import MathText from '../../components/MathText';
+import useStore from '../../store';
 
 export default function EstudianteNotas() {
+  const { user } = useStore();
   const [notas, setNotas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(null);
@@ -21,11 +23,17 @@ export default function EstudianteNotas() {
   const [filtroMateria, setFiltroMateria] = useState(searchParams.get('materia') || '');
 
   useEffect(() => {
+    if (user?.rol !== 'estudiante') {
+      setNotas([]);
+      setLoading(false);
+      return;
+    }
+
     api.get('/examenes/mis-notas')
       .then(res => setNotas(res.data))
       .catch(() => toast.error('Error cargando notas'))
       .finally(() => setLoading(false));
-  }, []);
+  }, [user?.rol]);
 
   // Extract unique materias for filter
   const materias = [...new Set(notas.map(n => n.materia_nombre).filter(Boolean))];

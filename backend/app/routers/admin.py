@@ -4,80 +4,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, case, cast, Date
 from sqlalchemy.orm import selectinload
 from app.core.database import get_db
-from app.core.ai_provider_config import (
-    get_global_ai_config,
-    upsert_global_ai_config,
-    get_profesor_ai_config,
-    has_profesor_ai_override,
-    clear_profesor_ai_override,
-    upsert_profesor_ai_config,
-    fetch_ollama_models,
-    fetch_groq_models,
-    split_groq_models,
-)
 from app.core.dependencies import require_role
 from app.core.security import hash_password
 from app.core.tool_flags import SUPPORTED_TOOL_TYPES, list_tool_flags, set_tool_flag
-from app.models.models import User, Sesion, Nota, AuditLog, Materia, Matricula, Examen, RespuestaOnline, APIUsageLog, Boletin, PeriodoAcademico
+from app.models.models import User, Sesion, Nota, AuditLog, Materia, Matricula, Examen, RespuestaOnline, APIUsageLog, Boletin, PeriodoAcademico, Herramienta, TiempoEvaluacion
 from app.schemas.schemas import (
     UserOut, AdminUserCreate, AdminUserUpdate, ChangePasswordRequest, ChangeRoleRequest,
     SesionOut, AdminStats, AuditLogOut, AdminMateriaOut, APIUsageStats, APIUsageByModel,
     HerramientaFlagOut, HerramientaFlagUpdate,
-    ProfesorAIConfigOut, ProfesorAIConfigUpdate, OllamaModelsOut, GroqModelsOut, GlobalAIConfigOut,
 )
 
 router = APIRouter(prefix="/admin", tags=["Administración"])
-
-
-async def _get_profesor_or_404(db: AsyncSession, profesor_id: str) -> User:
-    result = await db.execute(
-        select(User).where(
-            User.id == profesor_id,
-            User.rol == "profesor",
-        )
-    )
-    profesor = result.scalar_one_or_none()
-    if not profesor:
-        raise HTTPException(status_code=404, detail="Profesor no encontrado")
-    return profesor
-
-
-def _to_profesor_config_out(profesor: User, cfg: dict, uses_global: bool = False) -> ProfesorAIConfigOut:
-    return ProfesorAIConfigOut(
-        profesor_id=profesor.id,
-        profesor_nombre=f"{profesor.nombre} {profesor.apellido}",
-        profesor_correo=profesor.correo,
-        uses_global=uses_global,
-        grading_provider=cfg.get("grading_provider") or "groq",
-        grading_model=cfg.get("grading_model") or None,
-        grading_fallback_provider=cfg.get("grading_fallback_provider") or None,
-        grading_fallback_model=cfg.get("grading_fallback_model") or None,
-        ocr_provider=cfg.get("ocr_provider") or "paddleocr",
-        ocr_model=cfg.get("ocr_model") or None,
-        ocr_fallback_provider=cfg.get("ocr_fallback_provider") or None,
-        ocr_fallback_model=cfg.get("ocr_fallback_model") or None,
-        chat_model=cfg.get("chat_model") or "meta-llama/llama-4-scout-17b-16e-instruct",
-        ollama_url=cfg.get("ollama_url") or "http://host.docker.internal:11434",
-        updated_at=cfg.get("updated_at"),
-        updated_by=cfg.get("updated_by"),
-    )
-
-
-def _to_global_config_out(cfg: dict) -> GlobalAIConfigOut:
-    return GlobalAIConfigOut(
-        grading_provider=cfg.get("grading_provider") or "groq",
-        grading_model=cfg.get("grading_model") or None,
-        grading_fallback_provider=cfg.get("grading_fallback_provider") or None,
-        grading_fallback_model=cfg.get("grading_fallback_model") or None,
-        ocr_provider=cfg.get("ocr_provider") or "paddleocr",
-        ocr_model=cfg.get("ocr_model") or None,
-        ocr_fallback_provider=cfg.get("ocr_fallback_provider") or None,
-        ocr_fallback_model=cfg.get("ocr_fallback_model") or None,
-        chat_model=cfg.get("chat_model") or "meta-llama/llama-4-scout-17b-16e-instruct",
-        ollama_url=cfg.get("ollama_url") or "http://host.docker.internal:11434",
-        updated_at=cfg.get("updated_at"),
-        updated_by=cfg.get("updated_by"),
-    )
 
 
 # ──────────────── STATS ────────────────
@@ -522,6 +459,167 @@ async def get_api_usage(
     )
 
 
+# ──────────────── PRESENTACIONES STATS (TESIS) ────────────────
+
+@router.get("/presentaciones-stats")
+async def get_presentaciones_stats(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin")),
+):
+    """
+    Métricas de uso de presentaciones para la tesis.
+    Cubre adopción, distribución por tipo, top docentes y tiempo invertido.
+
+    Devuelve:
+        {
+          "total": int,
+          "por_subtipo": [{ subtipo, label, count }],
+          "top_profesores": [{ profesor_id, nombre, count }],
+          "tiempo_promedio_seg": float,
+          "tiempo_total_minutos": float,    # de TiempoEvaluacion
+          "adopcion_diaria": [{ date, count }],   # últimos 30 días
+          "ultimas": [{ titulo, profesor, subtipo, created_at }],
+        }
+    """
+    now = datetime.now(timezone.utc)
+    thirty_ago = now - timedelta(days=30)
+
+    # ── Total ─────────────────────────────────────────────────────
+    total = (await db.execute(
+        select(func.count(Herramienta.id))
+        .where(Herramienta.tipo == "presentacion")
+    )).scalar_one()
+
+    # ── Por subtipo (clase / repaso_examen / boletin_periodo) ─────
+    # Postgres JSONB → contenido_json->>'subtipo'
+    subtipo_expr = Herramienta.contenido_json["subtipo"].astext.label("subtipo")
+    subtipo_rows = (await db.execute(
+        select(subtipo_expr, func.count(Herramienta.id))
+        .where(Herramienta.tipo == "presentacion")
+        .group_by(subtipo_expr)
+    )).all()
+    SUBTIPO_LABELS = {
+        "clase":           "Clases",
+        "repaso_examen":   "Repasos",
+        "boletin_periodo": "Boletines",
+    }
+    por_subtipo = [
+        {
+            "subtipo": (r[0] or "clase"),
+            "label":   SUBTIPO_LABELS.get(r[0] or "clase", "Otra"),
+            "count":   int(r[1]),
+        }
+        for r in subtipo_rows
+    ]
+    # Asegurar que aparecen los 3 tipos aunque tengan 0
+    seen = {x["subtipo"] for x in por_subtipo}
+    for k, lbl in SUBTIPO_LABELS.items():
+        if k not in seen:
+            por_subtipo.append({"subtipo": k, "label": lbl, "count": 0})
+    por_subtipo.sort(key=lambda x: -x["count"])
+
+    # ── Top 5 profesores por uso ──────────────────────────────────
+    top_rows = (await db.execute(
+        select(
+            User.id,
+            User.nombre,
+            User.apellido,
+            func.count(Herramienta.id).label("count"),
+        )
+        .join(Herramienta, Herramienta.profesor_id == User.id)
+        .where(Herramienta.tipo == "presentacion")
+        .group_by(User.id, User.nombre, User.apellido)
+        .order_by(func.count(Herramienta.id).desc())
+        .limit(5)
+    )).all()
+    top_profesores = [
+        {
+            "profesor_id": str(r[0]),
+            "nombre": f"{r[1]} {r[2]}".strip(),
+            "count": int(r[3]),
+        }
+        for r in top_rows
+    ]
+
+    # ── Tiempo promedio de generación (segundos) ──────────────────
+    # Lo guardamos en config_json.duracion_generacion_seg.
+    # Traemos los valores y promediamos en Python (más portable que cast SQL).
+    dur_rows = (await db.execute(
+        select(Herramienta.config_json)
+        .where(Herramienta.tipo == "presentacion")
+    )).all()
+    duraciones = []
+    for (cfg,) in dur_rows:
+        if cfg and isinstance(cfg, dict):
+            v = cfg.get("duracion_generacion_seg")
+            if v is not None:
+                try:
+                    duraciones.append(float(v))
+                except (ValueError, TypeError):
+                    pass
+    tiempo_promedio_seg = round(sum(duraciones) / len(duraciones), 2) if duraciones else 0.0
+
+    # ── Tiempo total invertido (minutos) según TiempoEvaluacion ──
+    tiempo_total = (await db.execute(
+        select(func.coalesce(func.sum(TiempoEvaluacion.duracion_minutos), 0))
+        .where(TiempoEvaluacion.actividad_tipo.in_([
+            "presentacion", "presentacion_repaso", "presentacion_boletin",
+        ]))
+    )).scalar_one()
+    tiempo_total_minutos = float(tiempo_total or 0)
+
+    # ── Adopción diaria (últimos 30 días) ─────────────────────────
+    daily_rows = (await db.execute(
+        select(
+            cast(Herramienta.created_at, Date).label("day"),
+            func.count(Herramienta.id),
+        )
+        .where(
+            Herramienta.tipo == "presentacion",
+            Herramienta.created_at >= thirty_ago,
+        )
+        .group_by(cast(Herramienta.created_at, Date))
+        .order_by(cast(Herramienta.created_at, Date))
+    )).all()
+    adopcion_diaria = [
+        {"date": str(r[0]), "count": int(r[1])} for r in daily_rows
+    ]
+
+    # ── Últimas 5 presentaciones ──────────────────────────────────
+    ult_rows = (await db.execute(
+        select(
+            Herramienta.titulo,
+            Herramienta.contenido_json,
+            Herramienta.created_at,
+            User.nombre,
+            User.apellido,
+        )
+        .join(User, User.id == Herramienta.profesor_id)
+        .where(Herramienta.tipo == "presentacion")
+        .order_by(Herramienta.created_at.desc())
+        .limit(5)
+    )).all()
+    ultimas = []
+    for r in ult_rows:
+        contenido = r[1] or {}
+        ultimas.append({
+            "titulo": r[0],
+            "subtipo": contenido.get("subtipo", "clase") if isinstance(contenido, dict) else "clase",
+            "profesor": f"{r[3]} {r[4]}".strip(),
+            "created_at": r[2].isoformat() if r[2] else None,
+        })
+
+    return {
+        "total":                int(total or 0),
+        "por_subtipo":          por_subtipo,
+        "top_profesores":       top_profesores,
+        "tiempo_promedio_seg":  tiempo_promedio_seg,
+        "tiempo_total_minutos": round(tiempo_total_minutos, 2),
+        "adopcion_diaria":      adopcion_diaria,
+        "ultimas":              ultimas,
+    }
+
+
 # ──────────────── TOOL FLAGS ────────────────
 
 @router.get("/herramientas-flags", response_model=list[HerramientaFlagOut])
@@ -564,387 +662,7 @@ async def update_herramientas_flag(
     return selected
 
 
-# ──────────────── IA/OCR CONFIG POR PROFESOR ────────────────
-
-@router.get("/ai-configs/global", response_model=GlobalAIConfigOut)
-async def get_global_ai_config_endpoint(
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("admin")),
-):
-    cfg = await get_global_ai_config(db)
-    return _to_global_config_out(cfg)
-
-
-@router.put("/ai-configs/global", response_model=GlobalAIConfigOut)
-async def update_global_ai_config_endpoint(
-    data: ProfesorAIConfigUpdate,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("admin")),
-):
-    current_cfg = await get_global_ai_config(db)
-    patch = data.model_dump(exclude_unset=True)
-    merged = {**current_cfg, **patch}
-
-    updated_cfg = await upsert_global_ai_config(
-        db=db,
-        config=merged,
-        updated_by=str(current_user.id),
-    )
-
-    audit = AuditLog(
-        user_id=current_user.id,
-        accion="admin_ai_global_config_update",
-        detalle={"changes": patch},
-    )
-    db.add(audit)
-    await db.commit()
-
-    return _to_global_config_out(updated_cfg)
-
-
-@router.get("/ai-configs/global/ollama-models", response_model=OllamaModelsOut)
-async def detect_global_ollama_models(
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("admin")),
-):
-    cfg = await get_global_ai_config(db)
-    ollama_url = cfg.get("ollama_url") or "http://host.docker.internal:11434"
-
-    try:
-        models = await fetch_ollama_models(ollama_url)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"No se pudo consultar Ollama en {ollama_url}: {str(exc)}",
-        )
-
-    return OllamaModelsOut(
-        profesor_id=None,
-        ollama_url=ollama_url,
-        models=models,
-    )
-
-@router.get("/ai-configs", response_model=list[ProfesorAIConfigOut])
-async def list_profesores_ai_configs(
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("admin")),
-):
-    result = await db.execute(
-        select(User)
-        .where(User.rol == "profesor")
-        .order_by(User.nombre.asc(), User.apellido.asc())
-    )
-    profesores = result.scalars().all()
-
-    out = []
-    for profesor in profesores:
-        uses_override = await has_profesor_ai_override(db, str(profesor.id))
-        cfg = await get_profesor_ai_config(db, str(profesor.id))
-        out.append(_to_profesor_config_out(profesor, cfg, uses_global=not uses_override))
-    return out
-
-
-@router.get("/ai-configs/{profesor_id}", response_model=ProfesorAIConfigOut)
-async def get_profesor_ai_config_endpoint(
-    profesor_id: str,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("admin")),
-):
-    profesor = await _get_profesor_or_404(db, profesor_id)
-    uses_override = await has_profesor_ai_override(db, str(profesor.id))
-    cfg = await get_profesor_ai_config(db, str(profesor.id))
-    return _to_profesor_config_out(profesor, cfg, uses_global=not uses_override)
-
-
-@router.put("/ai-configs/{profesor_id}", response_model=ProfesorAIConfigOut)
-async def update_profesor_ai_config(
-    profesor_id: str,
-    data: ProfesorAIConfigUpdate,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("admin")),
-):
-    profesor = await _get_profesor_or_404(db, profesor_id)
-    current_cfg = await get_profesor_ai_config(db, str(profesor.id))
-    patch = data.model_dump(exclude_unset=True)
-    merged = {**current_cfg, **patch}
-
-    await upsert_profesor_ai_config(
-        db=db,
-        profesor_id=str(profesor.id),
-        config=merged,
-        updated_by=str(current_user.id),
-    )
-
-    audit = AuditLog(
-        user_id=current_user.id,
-        accion="admin_ai_config_update",
-        detalle={
-            "profesor_id": str(profesor.id),
-            "profesor_correo": profesor.correo,
-            "changes": patch,
-        },
-    )
-    db.add(audit)
-    await db.commit()
-
-    updated_cfg = await get_profesor_ai_config(db, str(profesor.id))
-    return _to_profesor_config_out(profesor, updated_cfg, uses_global=False)
-
-
-@router.delete("/ai-configs/{profesor_id}/override", response_model=ProfesorAIConfigOut)
-async def clear_profesor_ai_config_override(
-    profesor_id: str,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("admin")),
-):
-    profesor = await _get_profesor_or_404(db, profesor_id)
-
-    await clear_profesor_ai_override(db, str(profesor.id))
-
-    audit = AuditLog(
-        user_id=current_user.id,
-        accion="admin_ai_config_clear_override",
-        detalle={
-            "profesor_id": str(profesor.id),
-            "profesor_correo": profesor.correo,
-        },
-    )
-    db.add(audit)
-    await db.commit()
-
-    effective_cfg = await get_profesor_ai_config(db, str(profesor.id))
-    return _to_profesor_config_out(profesor, effective_cfg, uses_global=True)
-
-
-@router.get("/ai-configs/{profesor_id}/ollama-models", response_model=OllamaModelsOut)
-async def detect_profesor_ollama_models(
-    profesor_id: str,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("admin")),
-):
-    profesor = await _get_profesor_or_404(db, profesor_id)
-    cfg = await get_profesor_ai_config(db, str(profesor.id))
-    ollama_url = cfg.get("ollama_url") or "http://host.docker.internal:11434"
-
-    try:
-        models = await fetch_ollama_models(ollama_url)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"No se pudo consultar Ollama en {ollama_url}: {str(exc)}",
-        )
-
-    return OllamaModelsOut(
-        profesor_id=profesor.id,
-        ollama_url=ollama_url,
-        models=models,
-    )
-
-
-@router.get("/groq-models", response_model=GroqModelsOut)
-async def list_groq_models_catalog(
-    current_user: User = Depends(require_role("admin")),
-):
-    try:
-        models = await fetch_groq_models()
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"No se pudo consultar Groq Models API: {str(exc)}")
-
-    return GroqModelsOut(**split_groq_models(models))
-
-
 # ──────────────── BOLETINES GLOBALES ────────────────
-
-def _safe_float(value, default=0.0):
-    try:
-        if value is None:
-            return default
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _infer_competencia(activity: dict) -> str:
-    tipo = str(activity.get("tipo") or "").strip().lower()
-    titulo = str(activity.get("titulo") or "").strip().lower()
-    full = f"{tipo} {titulo}"
-
-    if any(k in full for k in ["proyecto", "taller", "laboratorio", "lab", "practica", "práctica", "problema", "reto", "caso"]):
-        return "Resolución de problemas y aplicación"
-
-    if any(k in full for k in ["exposicion", "exposición", "debate", "oral", "presentacion", "presentación", "participacion", "participación", "sustentacion", "sustentación"]):
-        return "Comunicación y argumentación"
-
-    if any(k in full for k in ["analisis", "análisis", "interpretacion", "interpretación", "lectura", "ensayo", "informe", "texto"]):
-        return "Pensamiento crítico e interpretación"
-
-    if tipo in {"desarrollo", "respuesta_corta"}:
-        return "Comunicación escrita y argumentación"
-
-    if tipo in {"seleccion_multiple", "verdadero_falso", "completar", "quiz", "prueba", "examen"}:
-        return "Comprensión conceptual"
-
-    if any(k in full for k in ["sopa", "crucigrama", "emparejar", "juego", "dinamica", "dinámica"]):
-        return "Relación y aplicación de conceptos"
-
-    return "Competencia académica general"
-
-
-def _strength_level(avg: float) -> str:
-    if avg >= 4.5:
-        return "sobresaliente"
-    if avg >= 4.0:
-        return "alto"
-    return "adecuado"
-
-
-def _build_materia_insights(activities: list[dict], nota_definitiva: float) -> tuple[list[str], list[str]]:
-    competencia_stats = {}
-
-    for activity in activities:
-        if not isinstance(activity, dict):
-            continue
-
-        nota_raw = activity.get("nota")
-        if nota_raw is None:
-            continue
-
-        try:
-            nota = round(float(nota_raw), 2)
-        except (TypeError, ValueError):
-            continue
-
-        competencia = _infer_competencia(activity)
-        peso = _safe_float(activity.get("porcentaje"), 0.0)
-        if peso <= 0:
-            peso = 1.0
-
-        item = competencia_stats.setdefault(
-            competencia,
-            {
-                "weighted_sum": 0.0,
-                "weight_total": 0.0,
-                "count": 0,
-            },
-        )
-        item["weighted_sum"] += nota * peso
-        item["weight_total"] += peso
-        item["count"] += 1
-
-    ranked = []
-    for competencia, stats in competencia_stats.items():
-        if stats["weight_total"] <= 0:
-            continue
-        promedio = round(stats["weighted_sum"] / stats["weight_total"], 2)
-        ranked.append(
-            {
-                "competencia": competencia,
-                "promedio": promedio,
-                "count": int(stats["count"]),
-            }
-        )
-
-    fortalezas = []
-    for row in sorted(ranked, key=lambda x: x["promedio"], reverse=True):
-        if row["promedio"] < 3.8:
-            continue
-        fortalezas.append(
-            f"{row['competencia']}: desempeño { _strength_level(row['promedio']) } ({row['promedio']:.2f}) en {row['count']} actividad(es)."
-        )
-        if len(fortalezas) >= 3:
-            break
-
-    debilidades = []
-    for row in sorted(ranked, key=lambda x: x["promedio"]):
-        if row["promedio"] >= 3.0:
-            continue
-        debilidades.append(
-            f"{row['competencia']}: requiere refuerzo ({row['promedio']:.2f}) en {row['count']} actividad(es)."
-        )
-        if len(debilidades) >= 3:
-            break
-
-    if not fortalezas:
-        if nota_definitiva >= 4.0:
-            fortalezas = ["Competencias consolidadas con rendimiento global alto."]
-        elif nota_definitiva >= 3.0:
-            fortalezas = ["Cumple de forma básica las competencias esperadas del período."]
-        else:
-            fortalezas = ["Cuenta con evidencias para trazar plan de fortalecimiento por competencias."]
-
-    if not debilidades:
-        if nota_definitiva < 3.0:
-            debilidades = ["Se requiere acompañamiento integral para fortalecer competencias base."]
-        else:
-            debilidades = ["Sin debilidades críticas por competencias en las evidencias calificadas."]
-
-    return fortalezas, debilidades
-
-
-def _join_names(items: list[str]) -> str:
-    clean = [str(x).strip() for x in items if str(x).strip()]
-    if not clean:
-        return ""
-    if len(clean) == 1:
-        return clean[0]
-    if len(clean) == 2:
-        return f"{clean[0]} y {clean[1]}"
-    return f"{', '.join(clean[:-1])} y {clean[-1]}"
-
-
-def _build_student_general_note(materias_payload: list[dict], promedio_definitivo: float) -> str:
-    if not materias_payload:
-        return "Aun no hay suficientes calificaciones para generar una nota general del estudiante."
-
-    ranked_desc = sorted(
-        materias_payload,
-        key=lambda x: _safe_float(x.get("nota_definitiva"), 0.0),
-        reverse=True,
-    )
-    ranked_asc = list(reversed(ranked_desc))
-
-    strong_subjects = []
-    for m in ranked_desc:
-        nota = _safe_float(m.get("nota_definitiva"), 0.0)
-        if nota >= 3.8:
-            strong_subjects.append(str(m.get("materia_nombre") or ""))
-        if len(strong_subjects) >= 2:
-            break
-
-    weak_subjects = []
-    for m in ranked_asc:
-        nota = _safe_float(m.get("nota_definitiva"), 0.0)
-        if nota < 3.0:
-            weak_subjects.append(str(m.get("materia_nombre") or ""))
-        if len(weak_subjects) >= 2:
-            break
-
-    parts = []
-    if promedio_definitivo >= 4.3:
-        parts.append("El estudiante presenta un desempeno academico sobresaliente.")
-    elif promedio_definitivo >= 3.8:
-        parts.append("El estudiante presenta un buen desempeno academico y muestra compromiso constante.")
-    elif promedio_definitivo >= 3.0:
-        parts.append("El estudiante cumple con los desempenos esperados y va por buen camino.")
-    else:
-        parts.append("El estudiante esta en proceso de fortalecimiento y requiere acompanamiento academico.")
-
-    if strong_subjects:
-        parts.append(
-            f"Se destaca especialmente en {_join_names(strong_subjects)}."
-        )
-
-    if weak_subjects:
-        parts.append(
-            f"Debe mejorar en {_join_names(weak_subjects)}, pero no esta mal: con practica y apoyo en casa puede avanzar rapidamente."
-        )
-
-    if promedio_definitivo >= 4.0:
-        parts.append("Tienes un hijo genial, sigamos potenciando sus talentos.")
-    elif promedio_definitivo >= 3.0 and not weak_subjects:
-        parts.append("Continua fortaleciendo habitos de estudio para seguir creciendo.")
-
-    return " ".join(parts)
 
 @router.get("/boletines-global/{periodo_id}")
 async def get_boletines_global(
@@ -965,24 +683,7 @@ async def get_boletines_global(
     if not periodo:
         raise HTTPException(status_code=404, detail="Período no encontrado")
 
-    # Get configured periods to build historical table (P1..P4 or configured set)
-    periodos_result = await db.execute(
-        select(PeriodoAcademico).order_by(PeriodoAcademico.numero.asc())
-    )
-    periodos_configurados = periodos_result.scalars().all()
-    periodos_config_payload = [
-        {
-            "id": str(p.id),
-            "nombre": p.nombre,
-            "numero": p.numero,
-            "porcentaje": _safe_float(p.porcentaje, 0.0),
-            "activo": bool(p.activo),
-        }
-        for p in periodos_configurados
-    ]
-    period_ids = [p.id for p in periodos_configurados]
-
-    # Get all published boletines for the selected period (main period view)
+    # Get all published boletines for this period
     q = (
         select(Boletin)
         .where(Boletin.periodo_id == periodo_id, Boletin.publicado == True)
@@ -992,55 +693,38 @@ async def get_boletines_global(
 
     # Fetch all referenced students, materias
     student_ids = list({b.estudiante_id for b in boletines})
+    if not student_ids:
+        return {"periodo": {"id": str(periodo.id), "nombre": periodo.nombre, "numero": periodo.numero},
+                "grados": []}
+
+    students_result = await db.execute(
+        select(User).where(User.id.in_(student_ids))
+    )
+    students_map = {u.id: u for u in students_result.scalars().all()}
+
     materia_ids = list({b.materia_id for b in boletines})
-    students_map = {}
-    materias_map = {}
-    if student_ids:
-        students_result = await db.execute(
-            select(User).where(User.id.in_(student_ids))
-        )
-        students_map = {u.id: u for u in students_result.scalars().all()}
+    materias_result = await db.execute(
+        select(Materia).where(Materia.id.in_(materia_ids))
+    )
+    materias_map = {m.id: m for m in materias_result.scalars().all()}
 
-    if materia_ids:
-        materias_result = await db.execute(
-            select(Materia).where(Materia.id.in_(materia_ids))
-        )
-        materias_map = {m.id: m for m in materias_result.scalars().all()}
-
-    # Fetch historical boletines for configured periods to fill P1..P4 and definitive grade.
-    historic_map = {}
-    historic_by_subject = {}
-    if student_ids and materia_ids:
-        period_filter_ids = [periodo.id]
-        if period_ids:
-            period_filter_ids = period_ids
-
-        historic_result = await db.execute(
-            select(Boletin).where(
-                Boletin.estudiante_id.in_(student_ids),
-                Boletin.materia_id.in_(materia_ids),
-                Boletin.publicado == True,
-                Boletin.periodo_id.in_(period_filter_ids),
-            )
-        )
-        historic_boletines = historic_result.scalars().all()
-        for hb in historic_boletines:
-            key = (str(hb.estudiante_id), str(hb.materia_id), str(hb.periodo_id))
-            historic_map[key] = hb
-            sm_key = (str(hb.estudiante_id), str(hb.materia_id))
-            if sm_key not in historic_by_subject:
-                historic_by_subject[sm_key] = []
-            historic_by_subject[sm_key].append(hb)
-
-    selected_by_student = {}
+    # Group boletines by student
+    student_boletines = {}
     for b in boletines:
-        if b.estudiante_id not in selected_by_student:
-            selected_by_student[b.estudiante_id] = []
-        selected_by_student[b.estudiante_id].append(b)
+        if b.estudiante_id not in student_boletines:
+            student_boletines[b.estudiante_id] = []
+        materia = materias_map.get(b.materia_id)
+        student_boletines[b.estudiante_id].append({
+            "materia_id": str(b.materia_id),
+            "materia_nombre": materia.nombre if materia else "Desconocida",
+            "nota_final": float(b.nota_final) if b.nota_final else 0.0,
+            "desglose_json": b.desglose_json,
+            "publicado_at": b.publicado_at.isoformat() if b.publicado_at else None,
+        })
 
     # Build per-student records grouped by grado
     grado_groups = {}
-    for sid, bols in selected_by_student.items():
+    for sid, bols in student_boletines.items():
         est = students_map.get(sid)
         if not est:
             continue
@@ -1053,84 +737,17 @@ async def get_boletines_global(
         if est_grado not in grado_groups:
             grado_groups[est_grado] = []
 
-        materias_payload = []
-        for b in bols:
-            sid_str = str(sid)
-            mid_str = str(b.materia_id)
-            materia = materias_map.get(b.materia_id)
-            historical_subject = historic_by_subject.get((sid_str, mid_str), [])
-
-            notas_periodos = {}
-            weighted_sum = 0.0
-            weighted_pct_total = 0.0
-            notas_disponibles = []
-            all_activities = []
-
-            source_periodos = periodos_configurados or [periodo]
-            for p in source_periodos:
-                hb = historic_map.get((sid_str, mid_str, str(p.id)))
-                nota_p = None
-                if hb and hb.nota_final is not None:
-                    nota_p = round(float(hb.nota_final), 2)
-                    notas_disponibles.append(nota_p)
-
-                    pct = _safe_float(getattr(p, "porcentaje", 0), 0.0)
-                    if pct > 0:
-                        weighted_sum += nota_p * (pct / 100.0)
-                        weighted_pct_total += pct
-
-                notas_periodos[str(p.numero)] = nota_p
-
-            if weighted_pct_total > 0:
-                nota_definitiva = round(min(5.0, weighted_sum / (weighted_pct_total / 100.0)), 2)
-            elif notas_disponibles:
-                nota_definitiva = round(sum(notas_disponibles) / len(notas_disponibles), 2)
-            else:
-                nota_definitiva = 0.0
-
-            for hb in historical_subject:
-                desglose = hb.desglose_json if isinstance(hb.desglose_json, dict) else {}
-                acts = desglose.get("actividades") if isinstance(desglose, dict) else []
-                if not isinstance(acts, list):
-                    continue
-                period_item = next((pp for pp in source_periodos if str(pp.id) == str(hb.periodo_id)), None)
-                periodo_numero = period_item.numero if period_item else None
-                for act in acts:
-                    if isinstance(act, dict):
-                        all_activities.append({**act, "periodo_numero": periodo_numero})
-
-            fortalezas, debilidades = _build_materia_insights(all_activities, nota_definitiva)
-
-            materias_payload.append({
-                "materia_id": mid_str,
-                "materia_nombre": materia.nombre if materia else "Desconocida",
-                "nota_final": _safe_float(b.nota_final, 0.0),
-                "desglose_json": b.desglose_json,
-                "publicado_at": b.publicado_at.isoformat() if b.publicado_at else None,
-                "notas_periodos": notas_periodos,
-                "nota_definitiva": nota_definitiva,
-                "fortalezas": fortalezas,
-                "debilidades": debilidades,
-            })
-
-        notas_periodo_actual = [m["nota_final"] for m in materias_payload]
-        promedio_periodo = round(sum(notas_periodo_actual) / len(notas_periodo_actual), 2) if notas_periodo_actual else 0.0
-
-        notas_definitivas = [m["nota_definitiva"] for m in materias_payload if m["nota_definitiva"] is not None]
-        promedio_definitivo = round(sum(notas_definitivas) / len(notas_definitivas), 2) if notas_definitivas else 0.0
-        nota_general = _build_student_general_note(materias_payload, promedio_definitivo)
+        notas = [b["nota_final"] for b in bols]
+        promedio = round(sum(notas) / len(notas), 2) if notas else 0.0
 
         grado_groups[est_grado].append({
             "estudiante_id": str(sid),
             "nombre": f"{est.nombre} {est.apellido}",
             "documento": est.documento,
             "grado": est_grado,
-            "materias": sorted(materias_payload, key=lambda x: x["materia_nombre"]),
-            "promedio_general": promedio_periodo,
-            "promedio_periodo_actual": promedio_periodo,
-            "promedio_definitivo": promedio_definitivo,
-            "nota_general": nota_general,
-            "total_materias": len(materias_payload),
+            "materias": sorted(bols, key=lambda x: x["materia_nombre"]),
+            "promedio_general": promedio,
+            "total_materias": len(bols),
         })
 
     # Sort students within each grado by apellido
@@ -1170,7 +787,6 @@ async def get_boletines_global(
             "nombre": periodo.nombre,
             "numero": periodo.numero,
         },
-        "periodos_configurados": periodos_config_payload,
         "grados": result_grados,
         "available_grados": available_grados,
     }

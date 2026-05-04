@@ -8,7 +8,7 @@ from app.core.ai_provider_config import get_profesor_ai_config
 from app.core.dependencies import require_role
 from app.models.models import User, Nota, Examen, Materia, ChatHistory, ChatSession
 from app.schemas.schemas import ChatMessage, ChatResponse, ChatHistoryOut, ChatSessionOut
-from app.services.groq_service import rag_chat
+from app.services.groq_service import rag_chat, classify_chat_relevance
 from uuid import UUID
 
 router = APIRouter(prefix="/chat", tags=["RAG Chatbot"])
@@ -16,6 +16,28 @@ router = APIRouter(prefix="/chat", tags=["RAG Chatbot"])
 # ── Xali session limits ──
 MAX_QUESTIONS_PER_SESSION = 5
 SESSION_DURATION_MINUTES = 10
+
+
+def _cooldown_seconds_from_start(started_at: datetime | None) -> int:
+    if not started_at:
+        return 0
+    elapsed_seconds = (datetime.now(timezone.utc) - started_at).total_seconds()
+    remaining = int(SESSION_DURATION_MINUTES * 60 - elapsed_seconds)
+    return max(0, remaining)
+
+
+def _format_cooldown_detail(wait_seconds: int) -> str:
+    minutes = wait_seconds // 60
+    seconds = wait_seconds % 60
+    if minutes > 0:
+        return (
+            f"Debes esperar {minutes} min {seconds:02d} s para iniciar una nueva sesión. "
+            f"Solo se permite una sesión cada {SESSION_DURATION_MINUTES} minutos."
+        )
+    return (
+        f"Debes esperar {seconds} s para iniciar una nueva sesión. "
+        f"Solo se permite una sesión cada {SESSION_DURATION_MINUTES} minutos."
+    )
 
 
 @router.get("/{nota_id}/history", response_model=list[ChatHistoryOut])
@@ -113,6 +135,45 @@ async def student_chat(
     history_rows = hist_result.scalars().all()
     conversation_history = [{"role": h.role, "content": h.content} for h in history_rows]
 
+    # Validate scope: Xali must only answer exam-related questions.
+    relevance = await classify_chat_relevance(
+        user_message=data.message,
+        exam_context=exam_context,
+        student_answers=student_answers,
+        feedback=feedback,
+        conversation_history=conversation_history,
+    )
+
+    is_related = bool(relevance.get("is_exam_related", False))
+    confidence = float(relevance.get("confidence", 0.0) or 0.0)
+
+    if (not is_related) or confidence < 0.55:
+        response = (
+            "Solo puedo ayudarte con preguntas relacionadas con esta evaluación. "
+            "Pregúntame sobre una pregunta del examen, tu retroalimentación o el procedimiento correcto para resolverla."
+        )
+
+        db.add(ChatHistory(nota_id=data.nota_id, user_id=current_user.id, role="user", content=data.message))
+        db.add(ChatHistory(nota_id=data.nota_id, user_id=current_user.id, role="assistant", content=response))
+
+        session.preguntas_usadas += 1
+        if session.preguntas_usadas >= MAX_QUESTIONS_PER_SESSION:
+            session.cerrada = True
+        await db.commit()
+
+        remaining = max(0, MAX_QUESTIONS_PER_SESSION - session.preguntas_usadas)
+        time_remaining = max(0, SESSION_DURATION_MINUTES - elapsed)
+        cooldown_seconds = _cooldown_seconds_from_start(session.inicio)
+        can_start_new = remaining == 0 and cooldown_seconds == 0
+
+        return ChatResponse(
+            response=response,
+            preguntas_restantes=remaining,
+            minutos_restantes=round(time_remaining, 1),
+            cooldown_segundos=cooldown_seconds,
+            puede_iniciar_nueva_sesion=can_start_new,
+        )
+
     try:
         response = await rag_chat(
             user_message=data.message,
@@ -131,15 +192,21 @@ async def student_chat(
 
     # Update session counter
     session.preguntas_usadas += 1
+    if session.preguntas_usadas >= MAX_QUESTIONS_PER_SESSION:
+        session.cerrada = True
     await db.commit()
 
-    remaining = MAX_QUESTIONS_PER_SESSION - session.preguntas_usadas
+    remaining = max(0, MAX_QUESTIONS_PER_SESSION - session.preguntas_usadas)
     time_remaining = max(0, SESSION_DURATION_MINUTES - elapsed)
+    cooldown_seconds = _cooldown_seconds_from_start(session.inicio)
+    can_start_new = remaining == 0 and cooldown_seconds == 0
 
     return ChatResponse(
         response=response,
         preguntas_restantes=remaining,
         minutos_restantes=round(time_remaining, 1),
+        cooldown_segundos=cooldown_seconds,
+        puede_iniciar_nueva_sesion=can_start_new,
     )
 
 
@@ -154,24 +221,34 @@ async def get_session_status(
     """Get current session status for a nota."""
     session = await _get_active_session(db, current_user.id, nota_id)
     if not session:
+        last_session = await _get_last_session(db, current_user.id, nota_id)
+        cooldown_seconds = _cooldown_seconds_from_start(
+            last_session.inicio if last_session else None
+        )
         return ChatSessionOut(
             id=None,
             nota_id=nota_id,
             preguntas_usadas=0,
             preguntas_restantes=MAX_QUESTIONS_PER_SESSION,
-            minutos_restantes=SESSION_DURATION_MINUTES,
+            minutos_restantes=0.0,
             cerrada=True,
+            cooldown_segundos=cooldown_seconds,
+            puede_iniciar_nueva_sesion=(cooldown_seconds == 0),
             inicio=None,
         )
     now = datetime.now(timezone.utc)
     elapsed = (now - session.inicio).total_seconds() / 60
+    cooldown_seconds = _cooldown_seconds_from_start(session.inicio)
+    cerrada_o_expirada = session.cerrada or elapsed > SESSION_DURATION_MINUTES
     return ChatSessionOut(
         id=session.id,
         nota_id=nota_id,
         preguntas_usadas=session.preguntas_usadas,
         preguntas_restantes=MAX_QUESTIONS_PER_SESSION - session.preguntas_usadas,
         minutos_restantes=round(max(0, SESSION_DURATION_MINUTES - elapsed), 1),
-        cerrada=session.cerrada or elapsed > SESSION_DURATION_MINUTES,
+        cerrada=cerrada_o_expirada,
+        cooldown_segundos=cooldown_seconds,
+        puede_iniciar_nueva_sesion=(cerrada_o_expirada and cooldown_seconds == 0),
         inicio=session.inicio,
     )
 
@@ -182,7 +259,19 @@ async def start_new_session(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("estudiante")),
 ):
-    """Close current session and start a new one."""
+    """Close current session and start a new one respecting cooldown."""
+    last_session = await _get_last_session(db, current_user.id, nota_id)
+    cooldown_seconds = _cooldown_seconds_from_start(last_session.inicio if last_session else None)
+    if cooldown_seconds > 0:
+        raise HTTPException(
+            status_code=429,
+            detail=_format_cooldown_detail(cooldown_seconds),
+            headers={
+                "X-RateLimit-Reason": "chat-cooldown",
+                "Retry-After": str(cooldown_seconds),
+            },
+        )
+
     # Close any existing active session
     old = await _get_active_session(db, current_user.id, nota_id)
     if old:
@@ -204,6 +293,8 @@ async def start_new_session(
         preguntas_restantes=MAX_QUESTIONS_PER_SESSION,
         minutos_restantes=SESSION_DURATION_MINUTES,
         cerrada=False,
+        cooldown_segundos=_cooldown_seconds_from_start(session.inicio),
+        puede_iniciar_nueva_sesion=False,
         inicio=session.inicio,
     )
 
@@ -238,6 +329,20 @@ async def _get_active_session(
     return result.scalar_one_or_none()
 
 
+async def _get_last_session(
+    db: AsyncSession, student_id, nota_id
+) -> ChatSession | None:
+    result = await db.execute(
+        select(ChatSession)
+        .where(
+            ChatSession.estudiante_id == student_id,
+            ChatSession.nota_id == nota_id,
+        )
+        .order_by(ChatSession.inicio.desc())
+    )
+    return result.scalars().first()
+
+
 async def _get_or_create_session(
     db: AsyncSession, student_id, nota_id
 ) -> ChatSession:
@@ -249,6 +354,18 @@ async def _get_or_create_session(
             return session
         session.cerrada = True
         await db.flush()
+
+    last_session = session or await _get_last_session(db, student_id, nota_id)
+    cooldown_seconds = _cooldown_seconds_from_start(last_session.inicio if last_session else None)
+    if cooldown_seconds > 0:
+        raise HTTPException(
+            status_code=429,
+            detail=_format_cooldown_detail(cooldown_seconds),
+            headers={
+                "X-RateLimit-Reason": "chat-cooldown",
+                "Retry-After": str(cooldown_seconds),
+            },
+        )
 
     # Create new session
     session = ChatSession(

@@ -2,9 +2,59 @@ import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 const AUTH_STORAGE_KEYS = ['access_token', 'refresh_token', 'user'];
+let refreshPromise = null;
+let isRedirectingToLogin = false;
 
 const clearAuthStorage = () => {
   AUTH_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
+};
+
+const redirectToLoginOnce = () => {
+  if (isRedirectingToLogin) return;
+  isRedirectingToLogin = true;
+  window.location.href = '/login';
+};
+
+const decodeJwtPayload = (token) => {
+  try {
+    const part = String(token || '').split('.')[1];
+    if (!part) return null;
+    const normalized = part.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+    return JSON.parse(atob(padded));
+  } catch {
+    return null;
+  }
+};
+
+const isTokenExpiredOrNearExpiry = (token, skewSeconds = 20) => {
+  const payload = decodeJwtPayload(token);
+  const exp = Number(payload?.exp || 0);
+  if (!exp) return false;
+  return (Date.now() + skewSeconds * 1000) >= exp * 1000;
+};
+
+const runRefreshTokenFlow = async () => {
+  const refreshToken = localStorage.getItem('refresh_token');
+  if (!refreshToken) {
+    throw new Error('No refresh token');
+  }
+
+  if (!refreshPromise) {
+    refreshPromise = axios
+      .post(`${API_URL}/api/auth/refresh`, { refresh_token: refreshToken })
+      .then((res) => {
+        const { access_token, refresh_token: newRefresh } = res.data;
+        localStorage.setItem('access_token', access_token);
+        localStorage.setItem('refresh_token', newRefresh);
+        return { access_token, refresh_token: newRefresh };
+      })
+      .finally(() => {
+        refreshPromise = null;
+      });
+  }
+
+  return refreshPromise;
 };
 
 const normalizeApiDetail = (detail) => {
@@ -33,9 +83,25 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
-// Request interceptor - add auth token
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('access_token');
+// Request interceptor - add auth token and pre-refresh when token is expired
+api.interceptors.request.use(async (config) => {
+  const url = String(config?.url || '');
+  if (url.includes('/auth/login') || url.includes('/auth/register') || url.includes('/auth/google') || url.includes('/auth/refresh')) {
+    return config;
+  }
+
+  let token = localStorage.getItem('access_token');
+  if (token && isTokenExpiredOrNearExpiry(token)) {
+    try {
+      const refreshed = await runRefreshTokenFlow();
+      token = refreshed.access_token;
+    } catch {
+      clearAuthStorage();
+      redirectToLoginOnce();
+      throw new axios.Cancel('Sesión expirada');
+    }
+  }
+
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -63,28 +129,18 @@ api.interceptors.response.use(
       }
     }
 
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {
       originalRequest._retry = true;
-      const refreshToken = localStorage.getItem('refresh_token');
-      if (refreshToken) {
-        try {
-          const res = await axios.post(`${API_URL}/api/auth/refresh`, {
-            refresh_token: refreshToken,
-          });
-          const { access_token, refresh_token: newRefresh } = res.data;
-          localStorage.setItem('access_token', access_token);
-          localStorage.setItem('refresh_token', newRefresh);
-          originalRequest.headers.Authorization = `Bearer ${access_token}`;
-          return api(originalRequest);
-        } catch {
-          clearAuthStorage();
-          window.location.href = '/login';
-        }
-      } else {
+      try {
+        const refreshed = await runRefreshTokenFlow();
+        originalRequest.headers.Authorization = `Bearer ${refreshed.access_token}`;
+        return api(originalRequest);
+      } catch {
         clearAuthStorage();
-        window.location.href = '/login';
+        redirectToLoginOnce();
       }
     }
+
     return Promise.reject(error);
   }
 );

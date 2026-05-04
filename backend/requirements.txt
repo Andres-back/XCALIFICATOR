@@ -25,3 +25,5 @@ numpy==1.26.4
 # WhatsApp via Whapi (usa httpx, ya incluido arriba)
 google-auth==2.35.0
 google-auth-oauthlib==1.2.1
+google-auth-httplib2==0.2.0
+google-api-python-client==2.149.0

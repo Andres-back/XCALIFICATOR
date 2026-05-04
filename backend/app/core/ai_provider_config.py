@@ -26,12 +26,13 @@ DEFAULT_CONFIG: dict = {
     "grading_model": "llama-3.3-70b-versatile",
     "grading_fallback_provider": None,
     "grading_fallback_model": "",
-    "ocr_provider": "paddleocr",
+    "ocr_provider": "groq_vision",
     "ocr_model": "",
     "ocr_fallback_provider": None,
     "ocr_fallback_model": "",
     "chat_model": "meta-llama/llama-4-scout-17b-16e-instruct",
     "ollama_url": "http://host.docker.internal:11434",
+    "ollama_api_key": "",
     "updated_at": None,
     "updated_by": None,
 }
@@ -43,6 +44,7 @@ _INHERIT_IF_EMPTY_KEYS = {
     "ocr_fallback_model",
     "chat_model",
     "ollama_url",
+    "ollama_api_key",
 }
 
 
@@ -89,7 +91,7 @@ def normalize_ai_config(raw: dict | None) -> dict:
     cfg["ocr_provider"] = _normalize_provider(
         cfg.get("ocr_provider"),
         OCR_PROVIDER_OPTIONS,
-        "paddleocr",
+        "groq_vision",
     )
     cfg["ocr_fallback_provider"] = _normalize_provider(
         cfg.get("ocr_fallback_provider"),
@@ -104,6 +106,7 @@ def normalize_ai_config(raw: dict | None) -> dict:
     cfg["ocr_fallback_model"] = _normalize_text(cfg.get("ocr_fallback_model")) or ""
     cfg["chat_model"] = _normalize_text(cfg.get("chat_model")) or DEFAULT_CONFIG["chat_model"]
     cfg["ollama_url"] = _normalize_text(cfg.get("ollama_url")) or DEFAULT_CONFIG["ollama_url"]
+    cfg["ollama_api_key"] = _normalize_text(cfg.get("ollama_api_key")) or ""
     return cfg
 
 
@@ -116,12 +119,13 @@ async def ensure_ai_provider_table(db: AsyncSession) -> None:
             grading_model VARCHAR(120),
             grading_fallback_provider VARCHAR(30),
             grading_fallback_model VARCHAR(120),
-            ocr_provider VARCHAR(30) NOT NULL DEFAULT 'paddleocr',
+            ocr_provider VARCHAR(30) NOT NULL DEFAULT 'groq_vision',
             ocr_model VARCHAR(120),
             ocr_fallback_provider VARCHAR(30),
             ocr_fallback_model VARCHAR(120),
             chat_model VARCHAR(120),
             ollama_url VARCHAR(255) NOT NULL DEFAULT 'http://host.docker.internal:11434',
+            ollama_api_key VARCHAR(255),
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
             CHECK (id = 1)
@@ -138,18 +142,26 @@ async def ensure_ai_provider_table(db: AsyncSession) -> None:
 
     await db.execute(text(
         """
+        ALTER TABLE IF EXISTS ai_global_config
+        ADD COLUMN IF NOT EXISTS ollama_api_key VARCHAR(255)
+        """
+    ))
+
+    await db.execute(text(
+        """
         CREATE TABLE IF NOT EXISTS profesor_ai_configs (
             profesor_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
             grading_provider VARCHAR(30) NOT NULL DEFAULT 'groq',
             grading_model VARCHAR(120),
             grading_fallback_provider VARCHAR(30),
             grading_fallback_model VARCHAR(120),
-            ocr_provider VARCHAR(30) NOT NULL DEFAULT 'paddleocr',
+            ocr_provider VARCHAR(30) NOT NULL DEFAULT 'groq_vision',
             ocr_model VARCHAR(120),
             ocr_fallback_provider VARCHAR(30),
             ocr_fallback_model VARCHAR(120),
             chat_model VARCHAR(120),
             ollama_url VARCHAR(255) NOT NULL DEFAULT 'http://host.docker.internal:11434',
+            ollama_api_key VARCHAR(255),
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_by UUID REFERENCES users(id) ON DELETE SET NULL
         )
@@ -161,6 +173,13 @@ async def ensure_ai_provider_table(db: AsyncSession) -> None:
         """
         ALTER TABLE IF EXISTS profesor_ai_configs
         ADD COLUMN IF NOT EXISTS chat_model VARCHAR(120)
+        """
+    ))
+
+    await db.execute(text(
+        """
+        ALTER TABLE IF EXISTS profesor_ai_configs
+        ADD COLUMN IF NOT EXISTS ollama_api_key VARCHAR(255)
         """
     ))
 
@@ -180,6 +199,7 @@ async def _get_global_ai_row(db: AsyncSession) -> dict | None:
                 ocr_fallback_model,
                 chat_model,
                 ollama_url,
+                ollama_api_key,
                 updated_at,
                 updated_by
             FROM ai_global_config
@@ -220,6 +240,7 @@ async def upsert_global_ai_config(
                 ocr_fallback_model,
                 chat_model,
                 ollama_url,
+                ollama_api_key,
                 updated_at,
                 updated_by
             )
@@ -235,6 +256,7 @@ async def upsert_global_ai_config(
                 :ocr_fallback_model,
                 :chat_model,
                 :ollama_url,
+                :ollama_api_key,
                 NOW(),
                 :updated_by
             )
@@ -249,6 +271,7 @@ async def upsert_global_ai_config(
                 ocr_fallback_model = EXCLUDED.ocr_fallback_model,
                 chat_model = EXCLUDED.chat_model,
                 ollama_url = EXCLUDED.ollama_url,
+                ollama_api_key = EXCLUDED.ollama_api_key,
                 updated_at = NOW(),
                 updated_by = EXCLUDED.updated_by
             """
@@ -264,6 +287,7 @@ async def upsert_global_ai_config(
             "ocr_fallback_model": normalized["ocr_fallback_model"] or None,
             "chat_model": normalized["chat_model"] or None,
             "ollama_url": normalized["ollama_url"],
+            "ollama_api_key": normalized["ollama_api_key"] or None,
             "updated_by": updated_by,
         },
     )
@@ -286,6 +310,7 @@ async def _get_profesor_ai_row(db: AsyncSession, profesor_id: str) -> dict | Non
                 ocr_fallback_model,
                 chat_model,
                 ollama_url,
+                ollama_api_key,
                 updated_at,
                 updated_by
             FROM profesor_ai_configs
@@ -357,6 +382,7 @@ async def upsert_profesor_ai_config(
                 ocr_fallback_model,
                 chat_model,
                 ollama_url,
+                ollama_api_key,
                 updated_at,
                 updated_by
             )
@@ -372,6 +398,7 @@ async def upsert_profesor_ai_config(
                 :ocr_fallback_model,
                 :chat_model,
                 :ollama_url,
+                :ollama_api_key,
                 NOW(),
                 :updated_by
             )
@@ -386,6 +413,7 @@ async def upsert_profesor_ai_config(
                 ocr_fallback_model = EXCLUDED.ocr_fallback_model,
                 chat_model = EXCLUDED.chat_model,
                 ollama_url = EXCLUDED.ollama_url,
+                ollama_api_key = EXCLUDED.ollama_api_key,
                 updated_at = NOW(),
                 updated_by = EXCLUDED.updated_by
             """
@@ -402,6 +430,7 @@ async def upsert_profesor_ai_config(
             "ocr_fallback_model": normalized["ocr_fallback_model"] or None,
             "chat_model": normalized["chat_model"] or None,
             "ollama_url": normalized["ollama_url"],
+            "ollama_api_key": normalized["ollama_api_key"] or None,
             "updated_by": updated_by,
         },
     )
@@ -409,13 +438,17 @@ async def upsert_profesor_ai_config(
     return await get_profesor_ai_config(db, profesor_id)
 
 
-async def fetch_ollama_models(ollama_url: str) -> list[str]:
+async def fetch_ollama_models(ollama_url: str, api_key: str | None = None) -> list[str]:
     base_url = (ollama_url or "").strip().rstrip("/")
     if not base_url:
         return []
 
+    headers = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
     async with httpx.AsyncClient(timeout=12.0) as client:
-        response = await client.get(f"{base_url}/api/tags")
+        response = await client.get(f"{base_url}/api/tags", headers=headers)
         response.raise_for_status()
         payload = response.json()
 

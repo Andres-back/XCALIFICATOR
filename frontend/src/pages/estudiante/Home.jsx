@@ -4,8 +4,8 @@ import api from '../../api';
 import useStore from '../../store';
 import toast from 'react-hot-toast';
 import {
-  BookOpen, Plus, FileText, ClipboardList, X, Clock,
-  CheckCircle, Calendar, TrendingUp, AlertCircle, Award,
+  BookOpen, Plus, ClipboardList, X,
+  CheckCircle, TrendingUp, AlertCircle, Award,
   ChevronRight, ScrollText, Sparkles,
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
@@ -25,6 +25,11 @@ export default function EstudianteHome() {
   const [codigo, setCodigo] = useState('');
 
   const fetchData = async () => {
+    if (user?.rol !== 'estudiante') {
+      setLoading(false);
+      return;
+    }
+
     try {
       const [matRes, respRes, notasRes] = await Promise.all([
         api.get('/materias/mis-inscripciones'),
@@ -59,7 +64,7 @@ export default function EstudianteHome() {
     }
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { fetchData(); }, [user?.rol]);
 
   const inscribir = async (e) => {
     e.preventDefault();
