@@ -1,5 +1,8 @@
 from datetime import datetime, timezone, timedelta
+from typing import Optional
+from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, case, cast, Date
 from sqlalchemy.orm import selectinload
@@ -7,6 +10,19 @@ from app.core.database import get_db
 from app.core.dependencies import require_role
 from app.core.security import hash_password
 from app.core.tool_flags import SUPPORTED_TOOL_TYPES, list_tool_flags, set_tool_flag
+from app.core.ai_provider_config import (
+    get_global_ai_config,
+    upsert_global_ai_config,
+    get_profesor_ai_config,
+    upsert_profesor_ai_config,
+    has_profesor_ai_override,
+    clear_profesor_ai_override,
+    fetch_ollama_models,
+    fetch_groq_models,
+    split_groq_models,
+    _get_profesor_ai_row,
+    ensure_ai_provider_table,
+)
 from app.models.models import User, Sesion, Nota, AuditLog, Materia, Matricula, Examen, RespuestaOnline, APIUsageLog, Boletin, PeriodoAcademico, Herramienta, TiempoEvaluacion
 from app.schemas.schemas import (
     UserOut, AdminUserCreate, AdminUserUpdate, ChangePasswordRequest, ChangeRoleRequest,
@@ -790,3 +806,187 @@ async def get_boletines_global(
         "grados": result_grados,
         "available_grados": available_grados,
     }
+
+
+# ──────────────── AI CONFIG ENDPOINTS ────────────────
+
+class AIConfigUpdate(BaseModel):
+    grading_provider: Optional[str] = None
+    grading_model: Optional[str] = None
+    grading_fallback_provider: Optional[str] = None
+    grading_fallback_model: Optional[str] = None
+    ocr_provider: Optional[str] = None
+    ocr_model: Optional[str] = None
+    ocr_fallback_provider: Optional[str] = None
+    ocr_fallback_model: Optional[str] = None
+    chat_model: Optional[str] = None
+    ollama_url: Optional[str] = None
+    ollama_api_key: Optional[str] = None
+
+
+@router.get("/groq-models")
+async def get_groq_models(
+    current_user: User = Depends(require_role("admin")),
+):
+    """Fetches available Groq model list and splits by capability."""
+    try:
+        models = await fetch_groq_models()
+        return split_groq_models(models)
+    except Exception:
+        return split_groq_models([])
+
+
+@router.get("/ai-configs/global")
+async def get_global_config(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin")),
+):
+    """Returns the global AI/OCR configuration."""
+    cfg = await get_global_ai_config(db)
+    return cfg
+
+
+@router.put("/ai-configs/global")
+async def update_global_config(
+    payload: AIConfigUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin")),
+):
+    """Updates the global AI/OCR configuration."""
+    cfg = await upsert_global_ai_config(db, payload.model_dump(exclude_none=True), str(current_user.id))
+    await db.commit()
+    return cfg
+
+
+@router.get("/ai-configs/global/ollama-models")
+async def get_global_ollama_models(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin")),
+):
+    """Fetches available Ollama models using the global Ollama URL."""
+    cfg = await get_global_ai_config(db)
+    try:
+        models = await fetch_ollama_models(cfg.get("ollama_url", ""), cfg.get("ollama_api_key"))
+    except Exception:
+        models = []
+    return {"models": models}
+
+
+@router.get("/ai-configs")
+async def list_ai_configs(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin")),
+):
+    """Lists all professors with their effective AI config and override status."""
+    await ensure_ai_provider_table(db)
+    result = await db.execute(
+        select(User).where(User.rol == "profesor", User.activo == True)  # noqa: E712
+        .order_by(User.apellido, User.nombre)
+    )
+    profesores = result.scalars().all()
+
+    rows = []
+    for prof in profesores:
+        has_override = await has_profesor_ai_override(db, str(prof.id))
+        cfg = await get_profesor_ai_config(db, str(prof.id))
+        # Get raw override values if they exist
+        raw_row = await _get_profesor_ai_row(db, str(prof.id))
+        effective = cfg if not has_override else (raw_row or cfg)
+        rows.append({
+            "profesor_id": str(prof.id),
+            "profesor_nombre": f"{prof.nombre} {prof.apellido}".strip(),
+            "profesor_correo": prof.correo,
+            "uses_global": not has_override,
+            **(raw_row if has_override and raw_row else cfg),
+        })
+
+    return rows
+
+
+@router.get("/ai-configs/{profesor_id}")
+async def get_profesor_config(
+    profesor_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin")),
+):
+    """Returns the effective AI config for a specific professor."""
+    result = await db.execute(select(User).where(User.id == profesor_id))
+    prof = result.scalar_one_or_none()
+    if not prof:
+        raise HTTPException(status_code=404, detail="Profesor no encontrado")
+
+    has_override = await has_profesor_ai_override(db, str(profesor_id))
+    raw_row = await _get_profesor_ai_row(db, str(profesor_id))
+    cfg = await get_profesor_ai_config(db, str(profesor_id))
+    return {
+        "profesor_id": str(prof.id),
+        "profesor_nombre": f"{prof.nombre} {prof.apellido}".strip(),
+        "profesor_correo": prof.correo,
+        "uses_global": not has_override,
+        **(raw_row if has_override and raw_row else cfg),
+    }
+
+
+@router.put("/ai-configs/{profesor_id}")
+async def update_profesor_config(
+    profesor_id: UUID,
+    payload: AIConfigUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin")),
+):
+    """Sets an individual AI config override for a specific professor."""
+    result = await db.execute(select(User).where(User.id == profesor_id))
+    prof = result.scalar_one_or_none()
+    if not prof:
+        raise HTTPException(status_code=404, detail="Profesor no encontrado")
+
+    cfg = await upsert_profesor_ai_config(
+        db, str(profesor_id), payload.model_dump(exclude_none=True), str(current_user.id)
+    )
+    await db.commit()
+    return {
+        "profesor_id": str(prof.id),
+        "profesor_nombre": f"{prof.nombre} {prof.apellido}".strip(),
+        "profesor_correo": prof.correo,
+        "uses_global": False,
+        **cfg,
+    }
+
+
+@router.delete("/ai-configs/{profesor_id}/override", status_code=200)
+async def clear_profesor_config_override(
+    profesor_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin")),
+):
+    """Removes the individual AI config override for a professor (reverts to global)."""
+    result = await db.execute(select(User).where(User.id == profesor_id))
+    prof = result.scalar_one_or_none()
+    if not prof:
+        raise HTTPException(status_code=404, detail="Profesor no encontrado")
+
+    await clear_profesor_ai_override(db, str(profesor_id))
+    await db.commit()
+    cfg = await get_global_ai_config(db)
+    return {
+        "profesor_id": str(prof.id),
+        "profesor_nombre": f"{prof.nombre} {prof.apellido}".strip(),
+        "profesor_correo": prof.correo,
+        "uses_global": True,
+        **cfg,
+    }
+
+
+@router.get("/ai-configs/{profesor_id}/ollama-models")
+async def get_profesor_ollama_models(
+    profesor_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin")),
+):
+    """Fetches available Ollama models using the professor's configured Ollama URL."""
+    cfg = await get_profesor_ai_config(db, str(profesor_id))
+    try:
+        models = await fetch_ollama_models(cfg.get("ollama_url", ""), cfg.get("ollama_api_key"))
+    except Exception:
+        models = []
+    return {"models": models}

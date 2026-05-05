@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useState, useEffect, useRef } from 'react';
+import { useParams, useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import toast from 'react-hot-toast';
 import {
@@ -278,12 +278,16 @@ function EmparejarReview({ emparejar, respuestaRaw, detallePares }) {
 
 export default function ProfesorNotas() {
   const { examenId } = useParams();
+  const [searchParams] = useSearchParams();
+  const highlightNotaId = searchParams.get('notaId');
+  const highlightRef = useRef(null);
+
   const [notas, setNotas]       = useState([]);
   const [stats, setStats]       = useState(null);
   const [loading, setLoading]   = useState(true);
   const [editing, setEditing]   = useState(null);
   const [editValues, setEditValues] = useState({ nota: '', retroalimentacion: '' });
-  const [expanded, setExpanded] = useState(null);
+  const [expanded, setExpanded] = useState(highlightNotaId || null);
   const [showStats, setShowStats] = useState(true);
   const [generandoRepaso, setGenerandoRepaso] = useState(false);
   const [repasoResult, setRepasoResult] = useState(null);
@@ -324,6 +328,15 @@ export default function ProfesorNotas() {
     fetchNotas();
     fetchStats();
   }, [examenId]);
+
+  // Auto-scroll to highlighted nota when notas are loaded
+  useEffect(() => {
+    if (!highlightNotaId || !notas.length || loading) return;
+    const el = highlightRef.current;
+    if (el) {
+      setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
+    }
+  }, [notas, loading, highlightNotaId]);
 
   const startEdit = (nota) => {
     setEditing(nota.id);
@@ -621,8 +634,16 @@ export default function ProfesorNotas() {
             const examType     = n.examen_tipo || n.detalle_json?.tipo || '';
             const notaNum      = n.nota != null ? parseFloat(n.nota) : null;
 
+            const isHighlighted = n.id === highlightNotaId;
             return (
-              <div key={n.id} className={`card ${needsReview ? 'border-amber-200 bg-amber-50/30' : ''}`}>
+              <div
+                key={n.id}
+                ref={isHighlighted ? highlightRef : null}
+                className={`card transition-all duration-300
+                  ${needsReview ? 'border-amber-200 bg-amber-50/30' : ''}
+                  ${isHighlighted ? 'ring-2 ring-indigo-400 border-indigo-300' : ''}
+                `}
+              >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-lg font-extrabold
