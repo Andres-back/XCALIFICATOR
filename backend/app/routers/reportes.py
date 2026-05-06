@@ -198,6 +198,108 @@ async def _get_attendance_stats(db, materia_id, estudiante_id, fecha_inicio, fec
     }
 
 
+def _empty_attendance_stats() -> dict[str, int]:
+    return {
+        "presente": 0,
+        "ausente": 0,
+        "tardanza": 0,
+        "justificado": 0,
+        "total": 0,
+    }
+
+
+async def _get_attendance_stats_map(
+    db: AsyncSession,
+    materia_id: str,
+    student_ids: list,
+    fecha_inicio,
+    fecha_fin,
+) -> dict[str, dict[str, int]]:
+    """Get attendance counts for many students in one grouped query."""
+    if not student_ids:
+        return {}
+
+    stats_map: dict[str, dict[str, int]] = {
+        str(sid): _empty_attendance_stats() for sid in student_ids
+    }
+
+    rows = await db.execute(
+        select(
+            Asistencia.estudiante_id,
+            Asistencia.estado,
+            func.count(Asistencia.id),
+        ).where(
+            Asistencia.materia_id == materia_id,
+            Asistencia.estudiante_id.in_(student_ids),
+            Asistencia.fecha >= fecha_inicio,
+            Asistencia.fecha <= fecha_fin,
+        ).group_by(Asistencia.estudiante_id, Asistencia.estado)
+    )
+
+    for estudiante_id, estado, total in rows.all():
+        sid_key = str(estudiante_id)
+        if sid_key not in stats_map:
+            stats_map[sid_key] = _empty_attendance_stats()
+
+        count_val = int(total or 0)
+        stats_map[sid_key]["total"] += count_val
+        if estado in stats_map[sid_key]:
+            stats_map[sid_key][estado] += count_val
+
+    return stats_map
+
+
+async def _get_participacion_map(
+    db: AsyncSession,
+    materia_id: str,
+    periodo_id: str,
+    student_ids: list,
+) -> dict[str, NotaParticipacion]:
+    """Get participation records for many students in one query."""
+    if not student_ids:
+        return {}
+
+    part_result = await db.execute(
+        select(NotaParticipacion).where(
+            NotaParticipacion.materia_id == materia_id,
+            NotaParticipacion.periodo_id == periodo_id,
+            NotaParticipacion.estudiante_id.in_(student_ids),
+        )
+    )
+    return {str(p.estudiante_id): p for p in part_result.scalars().all()}
+
+
+def _calculate_attendance_grade(ausencias: int, total_registros: int) -> float:
+    if total_registros <= 0:
+        return 0.0
+    return round(max(0, 5.0 - ausencias * 0.3), 2)
+
+
+def _build_config_map(config_list: list[ConfigPorcentaje]) -> dict[str, float]:
+    config_map: dict[str, float] = {}
+    for c in config_list:
+        if c.examen_id:
+            config_map[str(c.examen_id)] = float(c.porcentaje)
+        elif c.tipo_actividad:
+            config_map[f"__{c.tipo_actividad}__"] = float(c.porcentaje)
+    return config_map
+
+
+def _require_config_map(config_map: dict[str, float]) -> None:
+    if not config_map:
+        raise HTTPException(
+            status_code=400,
+            detail="No hay configuración de porcentajes para este período. Debes configurarla antes de calcular reportes o boletines.",
+        )
+
+    total_pct = sum(config_map.values())
+    if abs(total_pct - 100.0) > 0.01:
+        raise HTTPException(
+            status_code=400,
+            detail=f"La configuración de porcentajes es inválida ({round(total_pct, 2)}%). Debe sumar 100%.",
+        )
+
+
 def _period_end_dt(periodo: PeriodoAcademico) -> datetime:
     return datetime.combine(periodo.fecha_fin, datetime.max.time()).replace(tzinfo=timezone.utc)
 
@@ -302,13 +404,20 @@ async def get_reporte_notas(
         )
     )
     config_list = config_result.scalars().all()
-    # Build unified config map: key → porcentaje
-    config_map = {}
-    for c in config_list:
-        if c.examen_id:
-            config_map[str(c.examen_id)] = float(c.porcentaje)
-        elif c.tipo_actividad:
-            config_map[f"__{c.tipo_actividad}__"] = float(c.porcentaje)
+    config_map = _build_config_map(config_list)
+    config_total_pct = round(sum(config_map.values()), 2) if config_map else 0.0
+    config_valida = bool(config_map) and abs(config_total_pct - 100.0) <= 0.01
+    config_warning = None
+    if not config_map:
+        config_warning = (
+            "No hay configuración de porcentajes para este período. "
+            "La nota proyectada no puede calcularse aún."
+        )
+    elif not config_valida:
+        config_warning = (
+            f"La configuración de porcentajes suma {config_total_pct}% y debe sumar 100%. "
+            "La nota proyectada no puede calcularse con esta configuración."
+        )
 
     now_utc = datetime.now(timezone.utc)
 
@@ -328,8 +437,21 @@ async def get_reporte_notas(
             if key not in notas_map:
                 notas_map[key] = n
 
+    attendance_map = await _get_attendance_stats_map(
+        db=db,
+        materia_id=materia_id,
+        student_ids=student_ids,
+        fecha_inicio=periodo.fecha_inicio,
+        fecha_fin=periodo.fecha_fin,
+    )
+    participacion_map = await _get_participacion_map(
+        db=db,
+        materia_id=materia_id,
+        periodo_id=periodo_id,
+        student_ids=student_ids,
+    )
+
     report = []
-    auto_notes_changed = False
 
     # Build report per student
     for est in students:
@@ -344,18 +466,9 @@ async def get_reporte_notas(
             auto_asignada = False
 
             if nota_val is None and overdue:
-                nota_obj, nota_val, changed, created_new = _assign_default_grade_one(
-                    nota_obj=nota_obj,
-                    estudiante_id=est.id,
-                    examen_id=ex.id,
-                    now_utc=now_utc,
-                )
-                auto_asignada = changed
-                if created_new:
-                    db.add(nota_obj)
-                    notas_map[nota_key] = nota_obj
-                if changed:
-                    auto_notes_changed = True
+                # In report preview mode we apply the overdue default virtually, without mutating DB.
+                nota_val = 1.0
+                auto_asignada = True
 
             pct = config_map.get(str(ex.id), 0)
             act_item = {
@@ -382,11 +495,12 @@ async def get_reporte_notas(
                 })
 
         # Attendance stats + nota
-        asistencia = await _get_attendance_stats(
-            db, materia_id, est.id, periodo.fecha_inicio, periodo.fecha_fin
-        )
+        asistencia = dict(attendance_map.get(str(est.id), _empty_attendance_stats()))
         # Attendance grade: 5.0 - (ausencias × 0.3), min 0
-        nota_asistencia = round(max(0, 5.0 - asistencia["ausente"] * 0.3), 2)
+        nota_asistencia = _calculate_attendance_grade(
+            asistencia["ausente"],
+            asistencia.get("total", 0),
+        )
         asistencia["nota"] = nota_asistencia
         if "__asistencia__" in config_map:
             all_items.append({
@@ -395,15 +509,8 @@ async def get_reporte_notas(
             })
 
         # Participation grade
-        part_result = await db.execute(
-            select(NotaParticipacion).where(
-                NotaParticipacion.materia_id == materia_id,
-                NotaParticipacion.periodo_id == periodo_id,
-                NotaParticipacion.estudiante_id == est.id,
-            )
-        )
-        part = part_result.scalar_one_or_none()
-        nota_participacion = float(part.nota) if part else 0.0
+        part = participacion_map.get(str(est.id))
+        nota_participacion = float(part.nota) if part and part.nota is not None else 0.0
         if "__participacion__" in config_map:
             all_items.append({
                 "config_key": "__participacion__",
@@ -422,9 +529,6 @@ async def get_reporte_notas(
             "asistencia": asistencia,
             "nota_participacion": nota_participacion,
         })
-
-    if auto_notes_changed:
-        await db.commit()
 
     return {
         "materia_id": materia_id,
@@ -524,39 +628,41 @@ async def get_estudiante_detalle_periodo(
         )
     )
     config_list = config_result.scalars().all()
-    config_map = {}
-    for c in config_list:
-        if c.examen_id:
-            config_map[str(c.examen_id)] = float(c.porcentaje)
-        elif c.tipo_actividad:
-            config_map[f"__{c.tipo_actividad}__"] = float(c.porcentaje)
+    config_map = _build_config_map(config_list)
+    config_total_pct = round(sum(config_map.values()), 2) if config_map else 0.0
+    config_valida = bool(config_map) and abs(config_total_pct - 100.0) <= 0.01
+    config_warning = None
+    if not config_map:
+        config_warning = (
+            "No hay configuración de porcentajes para este período. "
+            "La nota proyectada no puede calcularse aún."
+        )
+    elif not config_valida:
+        config_warning = (
+            f"La configuración de porcentajes suma {config_total_pct}% y debe sumar 100%. "
+            "La nota proyectada no puede calcularse con esta configuración."
+        )
 
     actividades = []
     all_items = []
     calificados = 0
     notas_actividades = []
     now_utc = datetime.now(timezone.utc)
-    auto_notes_changed = False
     for ex in exams:
         nota_obj = notas_by_examen.get(str(ex.id))
         respuesta_obj = respuestas_by_examen.get(str(ex.id))
         nota_val = float(nota_obj.nota) if nota_obj and nota_obj.nota is not None else None
         overdue = _is_activity_overdue(ex, periodo, now_utc)
         auto_asignada = False
+        auto_detail = None
+        auto_feedback = None
 
         if nota_val is None and overdue:
-            nota_obj, nota_val, changed, created_new = _assign_default_grade_one(
-                nota_obj=nota_obj,
-                estudiante_id=estudiante_id,
-                examen_id=ex.id,
-                now_utc=now_utc,
-            )
-            auto_asignada = changed
-            if created_new:
-                db.add(nota_obj)
-            notas_by_examen[str(ex.id)] = nota_obj
-            if changed:
-                auto_notes_changed = True
+            # For detail preview, represent overdue defaults without writing changes.
+            nota_val = 1.0
+            auto_asignada = True
+            auto_detail = _build_auto_default_detail(now_utc)
+            auto_feedback = "Nota mínima (1.0) aplicada por vencimiento (vista previa, sin persistencia)."
 
         if nota_val is not None:
             calificados += 1
@@ -587,8 +693,8 @@ async def get_estudiante_detalle_periodo(
             "estado": estado,
             "auto_asignada": auto_asignada,
             "nota_id": str(nota_obj.id) if nota_obj else None,
-            "retroalimentacion": nota_obj.retroalimentacion if nota_obj else None,
-            "detalle_json": nota_obj.detalle_json if nota_obj else None,
+            "retroalimentacion": nota_obj.retroalimentacion if nota_obj else auto_feedback,
+            "detalle_json": nota_obj.detalle_json if nota_obj else auto_detail,
             "preguntas_examen": preguntas_examen,
             "respuesta_online_id": str(respuesta_obj.id) if respuesta_obj else None,
             "respuestas_json": respuesta_obj.respuestas_json if respuesta_obj else None,
@@ -621,7 +727,7 @@ async def get_estudiante_detalle_periodo(
             asistencia_counts[row.estado] += 1
 
     total_asistencia = len(asistencia_rows)
-    nota_asistencia = round(max(0, 5.0 - asistencia_counts["ausente"] * 0.3), 2)
+    nota_asistencia = _calculate_attendance_grade(asistencia_counts["ausente"], total_asistencia)
     porcentaje_asistencia = round(
         ((asistencia_counts["presente"] + asistencia_counts["justificado"]) / total_asistencia) * 100,
         1,
@@ -656,10 +762,7 @@ async def get_estudiante_detalle_periodo(
         round(sum(notas_actividades) / len(notas_actividades), 2)
         if notas_actividades else None
     )
-    nota_proyectada = _calculate_weighted_grade(all_items, config_map) if all_items else None
-
-    if auto_notes_changed:
-        await db.commit()
+    nota_proyectada = _calculate_weighted_grade(all_items, config_map) if (all_items and config_valida) else None
 
     return {
         "materia": {
@@ -723,6 +826,9 @@ async def get_estudiante_detalle_periodo(
             "desglose_json": boletin.desglose_json,
         } if boletin else None,
         "config_porcentajes": config_map,
+        "config_valida": config_valida,
+        "config_total_porcentaje": config_total_pct,
+        "config_warning": config_warning,
     }
 
 
@@ -737,8 +843,7 @@ def _calculate_weighted_grade(all_items: list[dict], config_map: dict) -> float:
     Not-yet-due ungraded activities should be excluded by the caller.
     """
     if not config_map:
-        notas = [a.get("nota") or 0 for a in all_items]
-        return round(sum(notas) / len(notas), 2) if notas else 0.0
+        raise ValueError("Se requiere configuración de porcentajes para calcular la nota ponderada")
 
     weighted_sum = 0.0
     for item in all_items:
@@ -794,12 +899,8 @@ async def generate_boletines(
         )
     )
     config_list = config_result.scalars().all()
-    config_map = {}
-    for c in config_list:
-        if c.examen_id:
-            config_map[str(c.examen_id)] = float(c.porcentaje)
-        elif c.tipo_actividad:
-            config_map[f"__{c.tipo_actividad}__"] = float(c.porcentaje)
+    config_map = _build_config_map(config_list)
+    _require_config_map(config_map)
 
     now_utc = datetime.now(timezone.utc)
 
@@ -818,6 +919,33 @@ async def generate_boletines(
             key = (str(n.estudiante_id), str(n.examen_id))
             if key not in notas_map:
                 notas_map[key] = n
+
+    attendance_map = await _get_attendance_stats_map(
+        db=db,
+        materia_id=materia_id,
+        student_ids=student_ids,
+        fecha_inicio=periodo.fecha_inicio,
+        fecha_fin=periodo.fecha_fin,
+    )
+    participacion_map = await _get_participacion_map(
+        db=db,
+        materia_id=materia_id,
+        periodo_id=periodo_id,
+        student_ids=student_ids,
+    )
+
+    boletines_map = {}
+    if student_ids:
+        existing_boletines_result = await db.execute(
+            select(Boletin).where(
+                Boletin.materia_id == materia_id,
+                Boletin.periodo_id == periodo_id,
+                Boletin.estudiante_id.in_(student_ids),
+            )
+        )
+        boletines_map = {
+            str(b.estudiante_id): b for b in existing_boletines_result.scalars().all()
+        }
 
     count = 0
     for est in students:
@@ -863,24 +991,18 @@ async def generate_boletines(
                 })
 
         # Attendance
-        asistencia = await _get_attendance_stats(
-            db, materia_id, est.id, periodo.fecha_inicio, periodo.fecha_fin
+        asistencia = dict(attendance_map.get(str(est.id), _empty_attendance_stats()))
+        nota_asistencia = _calculate_attendance_grade(
+            asistencia["ausente"],
+            asistencia.get("total", 0),
         )
-        nota_asistencia = round(max(0, 5.0 - asistencia["ausente"] * 0.3), 2)
         asistencia["nota"] = nota_asistencia
         if "__asistencia__" in config_map:
             all_items.append({"config_key": "__asistencia__", "nota": nota_asistencia})
 
         # Participation
-        part_result = await db.execute(
-            select(NotaParticipacion).where(
-                NotaParticipacion.materia_id == materia_id,
-                NotaParticipacion.periodo_id == periodo_id,
-                NotaParticipacion.estudiante_id == est.id,
-            )
-        )
-        part = part_result.scalar_one_or_none()
-        nota_participacion = float(part.nota) if part else 0.0
+        part = participacion_map.get(str(est.id))
+        nota_participacion = float(part.nota) if part and part.nota is not None else 0.0
         if "__participacion__" in config_map:
             all_items.append({"config_key": "__participacion__", "nota": nota_participacion})
 
@@ -894,14 +1016,7 @@ async def generate_boletines(
         }
 
         # Upsert boletin
-        existing = await db.execute(
-            select(Boletin).where(
-                Boletin.estudiante_id == est.id,
-                Boletin.materia_id == materia_id,
-                Boletin.periodo_id == periodo_id,
-            )
-        )
-        boletin = existing.scalar_one_or_none()
+        boletin = boletines_map.get(str(est.id))
         if boletin:
             boletin.nota_final = nota_final
             boletin.desglose_json = desglose
@@ -919,6 +1034,7 @@ async def generate_boletines(
                 created_by=current_user.id,
             )
             db.add(boletin)
+            boletines_map[str(est.id)] = boletin
         count += 1
 
     await db.commit()
@@ -948,11 +1064,16 @@ async def get_boletines_materia(
     per_res = await db.execute(select(PeriodoAcademico).where(PeriodoAcademico.id == periodo_id))
     periodo = per_res.scalar_one_or_none()
 
+    student_map = {}
+    student_ids = [b.estudiante_id for b in boletines]
+    if student_ids:
+        students_res = await db.execute(select(User).where(User.id.in_(student_ids)))
+        student_map = {str(s.id): s for s in students_res.scalars().all()}
+
     out = []
     for b in boletines:
         d = BoletinOut.model_validate(b)
-        est = await db.execute(select(User).where(User.id == b.estudiante_id))
-        e = est.scalar_one_or_none()
+        e = student_map.get(str(b.estudiante_id))
         if e:
             d.estudiante_nombre = f"{e.nombre} {e.apellido}"
         if materia:
@@ -977,17 +1098,57 @@ async def get_my_boletines(
     )
     boletines = result.scalars().all()
 
+    materia_map = {}
+    periodo_map = {}
+    materia_ids = list({b.materia_id for b in boletines})
+    periodo_ids = list({b.periodo_id for b in boletines})
+    if materia_ids:
+        materias_result = await db.execute(select(Materia).where(Materia.id.in_(materia_ids)))
+        materia_map = {str(m.id): m for m in materias_result.scalars().all()}
+    if periodo_ids:
+        periodos_result = await db.execute(select(PeriodoAcademico).where(PeriodoAcademico.id.in_(periodo_ids)))
+        periodo_map = {str(p.id): p for p in periodos_result.scalars().all()}
+
+    materia_grade_map: dict[str, dict[str, float]] = {}
+    materia_fallback_avg_map: dict[str, dict[str, float]] = {}
+    for b in boletines:
+        materia_key = str(b.materia_id)
+        nota_periodo = float(b.nota_final) if b.nota_final is not None else None
+        periodo = periodo_map.get(str(b.periodo_id))
+        periodo_pct = float(periodo.porcentaje) if periodo and periodo.porcentaje is not None else 0.0
+
+        if nota_periodo is not None:
+            if materia_key not in materia_fallback_avg_map:
+                materia_fallback_avg_map[materia_key] = {"sum": 0.0, "count": 0.0}
+            materia_fallback_avg_map[materia_key]["sum"] += nota_periodo
+            materia_fallback_avg_map[materia_key]["count"] += 1.0
+
+            if materia_key not in materia_grade_map:
+                materia_grade_map[materia_key] = {"weighted_sum": 0.0, "porcentaje_sum": 0.0}
+            materia_grade_map[materia_key]["weighted_sum"] += nota_periodo * (periodo_pct / 100.0)
+            materia_grade_map[materia_key]["porcentaje_sum"] += periodo_pct
+
     out = []
     for b in boletines:
         d = BoletinOut.model_validate(b)
-        mat = await db.execute(select(Materia).where(Materia.id == b.materia_id))
-        m = mat.scalar_one_or_none()
+        materia_key = str(b.materia_id)
+        m = materia_map.get(str(b.materia_id))
         if m:
             d.materia_nombre = m.nombre
-        per = await db.execute(select(PeriodoAcademico).where(PeriodoAcademico.id == b.periodo_id))
-        p = per.scalar_one_or_none()
+        p = periodo_map.get(str(b.periodo_id))
         if p:
             d.periodo_nombre = p.nombre
+            d.periodo_porcentaje = float(p.porcentaje) if p.porcentaje is not None else None
+
+        agg = materia_grade_map.get(materia_key)
+        fallback_avg = materia_fallback_avg_map.get(materia_key)
+        if agg and agg.get("porcentaje_sum", 0.0) > 0:
+            d.nota_materia = round(min(agg["weighted_sum"], 5.0), 2)
+            d.porcentaje_materia_acumulado = round(agg["porcentaje_sum"], 2)
+        elif fallback_avg and fallback_avg.get("count", 0.0) > 0:
+            d.nota_materia = round(fallback_avg["sum"] / fallback_avg["count"], 2)
+            d.porcentaje_materia_acumulado = 0.0
+
         out.append(d)
     return out
 
@@ -1042,31 +1203,41 @@ async def save_participacion(
     await _assert_materia_access(db, materia_id, current_user)
 
     notas_data = data.get("notas", [])
+
+    incoming_student_ids = [item.get("estudiante_id") for item in notas_data if item.get("estudiante_id")]
+    existing_parts_map = {}
+    if incoming_student_ids:
+        existing_parts = await db.execute(
+            select(NotaParticipacion).where(
+                NotaParticipacion.materia_id == materia_id,
+                NotaParticipacion.periodo_id == periodo_id,
+                NotaParticipacion.estudiante_id.in_(incoming_student_ids),
+            )
+        )
+        existing_parts_map = {
+            str(p.estudiante_id): p for p in existing_parts.scalars().all()
+        }
+
     for item in notas_data:
         eid = item.get("estudiante_id")
         nota_val = item.get("nota", 0)
         obs = item.get("observacion")
 
-        existing = await db.execute(
-            select(NotaParticipacion).where(
-                NotaParticipacion.materia_id == materia_id,
-                NotaParticipacion.periodo_id == periodo_id,
-                NotaParticipacion.estudiante_id == eid,
-            )
-        )
-        part = existing.scalar_one_or_none()
+        part = existing_parts_map.get(str(eid))
         if part:
             part.nota = nota_val
             part.observacion = obs
             part.updated_at = datetime.now(timezone.utc)
         else:
-            db.add(NotaParticipacion(
+            part = NotaParticipacion(
                 materia_id=materia_id,
                 periodo_id=periodo_id,
                 estudiante_id=eid,
                 nota=nota_val,
                 observacion=obs,
-            ))
+            )
+            db.add(part)
+            existing_parts_map[str(eid)] = part
 
     await db.commit()
     return {"detail": f"Participación guardada para {len(notas_data)} estudiantes"}
@@ -1200,10 +1371,15 @@ async def get_exposicion_archivos(
     )
     respuestas = result.scalars().all()
 
+    user_map = {}
+    user_ids = [r.estudiante_id for r in respuestas]
+    if user_ids:
+        users_result = await db.execute(select(User).where(User.id.in_(user_ids)))
+        user_map = {str(u.id): u for u in users_result.scalars().all()}
+
     out = []
     for r in respuestas:
-        est = await db.execute(select(User).where(User.id == r.estudiante_id))
-        e = est.scalar_one_or_none()
+        e = user_map.get(str(r.estudiante_id))
         archivos = r.respuestas_json.get("archivos", []) if r.respuestas_json else []
         out.append({
             "estudiante_id": str(r.estudiante_id),

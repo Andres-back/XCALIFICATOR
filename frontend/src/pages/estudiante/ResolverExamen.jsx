@@ -294,9 +294,31 @@ export default function ResolverExamen() {
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center py-20 gap-4">
-        <div className="animate-spin h-10 w-10 border-4 border-primary-500 border-t-transparent rounded-full"></div>
-        <p className="text-gray-500 text-sm">Cargando examen...</p>
+      <div className="max-w-2xl mx-auto space-y-4 pt-4">
+        {/* Header skeleton */}
+        <div className="flex items-center gap-3 mb-2">
+          <div className="skeleton h-8 w-8 rounded-lg" />
+          <div className="flex-1"><div className="skeleton h-6 w-56 rounded" /></div>
+          <div className="skeleton h-6 w-20 rounded-full" />
+        </div>
+        {/* Progress bar */}
+        <div className="skeleton h-2 w-full rounded-full" />
+        {/* Question card */}
+        <div className="card space-y-4 p-6">
+          <div className="skeleton h-5 w-20 rounded-full" />
+          <div className="skeleton h-5 w-full rounded" />
+          <div className="skeleton h-4 w-3/4 rounded" />
+          <div className="space-y-2 pt-2">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="skeleton h-12 w-full rounded-xl" />
+            ))}
+          </div>
+        </div>
+        {/* Nav buttons */}
+        <div className="flex justify-between">
+          <div className="skeleton h-10 w-28 rounded-xl" />
+          <div className="skeleton h-10 w-28 rounded-xl" />
+        </div>
       </div>
     );
   }

@@ -117,6 +117,22 @@ class ChangePasswordRequest(BaseModel):
         return v
 
 
+class ChangeOwnPasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_password(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Mínimo 8 caracteres")
+        if not re.search(r"[A-Z]", v):
+            raise ValueError("Debe contener al menos una mayúscula")
+        if not re.search(r"\d", v):
+            raise ValueError("Debe contener al menos un número")
+        return v
+
+
 class ChangeRoleRequest(BaseModel):
     rol: str
 
@@ -126,6 +142,98 @@ class ChangeRoleRequest(BaseModel):
         if v not in ("admin", "profesor", "estudiante"):
             raise ValueError("Rol debe ser admin, profesor o estudiante")
         return v
+
+
+class LocalAIConfigOut(BaseModel):
+    ollama_url: str = "http://host.docker.internal:11434"
+    ollama_api_key: Optional[str] = None
+    grading_local_model: Optional[str] = None
+    ocr_local_model: Optional[str] = None
+
+
+class LocalAIConfigUpdate(BaseModel):
+    ollama_url: Optional[str] = None
+    ollama_api_key: Optional[str] = None
+    grading_local_model: Optional[str] = None
+    ocr_local_model: Optional[str] = None
+
+
+class LocalOllamaModelsOut(BaseModel):
+    ollama_url: str
+    models: list[str] = []
+
+
+# ── MateriaEncuentro schemas ──────────────────────────────────────────────
+class MateriaEncuentroItem(BaseModel):
+    dia_semana: str
+    hora_inicio: str
+    hora_fin: str
+
+
+class MateriaEncuentroOut(BaseModel):
+    id: UUID
+    materia_id: UUID
+    dia_semana: str
+    hora_inicio: str
+    hora_fin: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class MateriaEncuentrosUpdate(BaseModel):
+    encuentros: list[MateriaEncuentroItem]
+
+
+# ── Presentacion (herramienta) advanced schemas ───────────────────────────
+class PresentacionSlideItem(BaseModel):
+    title: Optional[str] = None
+    body: Optional[str] = None
+    bullets: Optional[list[str]] = None
+    image_url: Optional[str] = None
+
+
+class PresentacionEditRequest(BaseModel):
+    titulo: Optional[str] = None
+    slides: list[PresentacionSlideItem] = []
+    rerender: bool = False
+    template_presenton: Optional[str] = None
+    idioma_presentacion: Optional[str] = None
+    tono_presentacion: Optional[str] = None
+    verbosidad_presentacion: Optional[str] = None
+    incluir_tabla_contenido: bool = False
+    incluir_portada: bool = True
+    busqueda_web: bool = False
+    formato_exportacion: Optional[str] = None
+
+
+class PresentacionRegenerateRequest(BaseModel):
+    topic: Optional[str] = None
+    grade: Optional[str] = None
+    level: Optional[str] = None
+    slides: Optional[int] = None
+    mode: Optional[str] = None
+    language: Optional[str] = None
+    tone: Optional[str] = None
+    verbosity: Optional[str] = None
+    template: Optional[str] = None
+    include_table_of_contents: bool = False
+    include_title_slide: bool = True
+    web_search: bool = False
+    export_as: Optional[str] = None
+    instructions: Optional[str] = None
+    use_pexels_images: bool = False
+    pexels_images_per_slide: Optional[int] = None
+    export_google_slides: bool = False
+    ollama_url: Optional[str] = None
+    ollama_model: Optional[str] = None
+
+
+class PresentacionGoogleExportOut(BaseModel):
+    presentation_id: Optional[str] = None
+    url: Optional[str] = None
+    embed_url: Optional[str] = None
 
 
 class AdminMateriaOut(BaseModel):
@@ -198,6 +306,8 @@ class ExamenOut(BaseModel):
     activo_online: bool
     fecha_limite: Optional[datetime] = None
     fecha_activacion: Optional[datetime] = None
+    modo_grupal: bool = False
+    max_integrantes: int = 3
     created_at: datetime
 
     class Config:
@@ -485,7 +595,7 @@ class HerramientaGenerate(BaseModel):
 
 
 class HerramientaCreate(BaseModel):
-    tipo: str  # 'examen', 'crucigrama', 'sopa_letras', 'emparejar', 'cuento', 'para_colorear'
+    tipo: str  # 'examen', 'crucigrama', 'sopa_letras', 'emparejar', 'cuento', 'para_colorear', 'presentacion'
     titulo: str
     contenido_json: Optional[dict] = None
     clave_respuestas: Optional[dict] = None
@@ -494,7 +604,7 @@ class HerramientaCreate(BaseModel):
     @field_validator("tipo")
     @classmethod
     def validate_tipo(cls, v: str) -> str:
-        valid = ("examen", "crucigrama", "sopa_letras", "emparejar", "cuento", "para_colorear")
+        valid = ("examen", "crucigrama", "sopa_letras", "emparejar", "cuento", "para_colorear", "presentacion")
         if v not in valid:
             raise ValueError(f"Tipo debe ser: {', '.join(valid)}")
         return v

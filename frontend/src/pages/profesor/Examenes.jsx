@@ -10,6 +10,15 @@ import {
 import { format } from 'date-fns';
 import MathText from '../../components/MathText';
 
+const TIPO_LABELS = {
+  examen:       'Examen',
+  crucigrama:   'Crucigrama',
+  sopa_letras:  'Sopa de Letras',
+  emparejar:    'Emparejar',
+  cuento:       'Cuento',
+  para_colorear:'Para Colorear',
+};
+
 export default function ProfesorExamenes({ materiaId: propMateriaId, embedded = false }) {
   const params = useParams();
   const materiaId = propMateriaId || params.materiaId;
@@ -197,7 +206,39 @@ export default function ProfesorExamenes({ materiaId: propMateriaId, embedded = 
     }
   };
 
-  if (loading) return <div className="flex justify-center py-20"><div className="animate-spin h-8 w-8 border-4 border-primary-500 border-t-transparent rounded-full"></div></div>;
+  if (loading) return (
+    <div className={embedded ? '' : 'max-w-5xl mx-auto'}>
+      {!embedded && (
+        <div className="flex items-center justify-between mb-6">
+          <div className="skeleton h-7 w-32 rounded-lg" />
+          <div className="skeleton h-9 w-36 rounded-lg" />
+        </div>
+      )}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="card space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex-1 space-y-1.5">
+                <div className="skeleton h-5 w-48 rounded" />
+                <div className="skeleton h-3 w-32 rounded" />
+              </div>
+              <div className="skeleton h-5 w-16 rounded-full" />
+            </div>
+            <div className="skeleton h-px w-full" />
+            <div className="flex gap-2">
+              <div className="skeleton h-3 w-20 rounded" />
+              <div className="skeleton h-3 w-20 rounded" />
+            </div>
+            <div className="flex gap-2">
+              <div className="skeleton h-8 w-20 rounded-lg" />
+              <div className="skeleton h-8 w-20 rounded-lg" />
+              <div className="skeleton h-8 w-20 rounded-lg" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 
   return (
     <div className={embedded ? '' : 'max-w-5xl mx-auto'}>
@@ -212,9 +253,16 @@ export default function ProfesorExamenes({ materiaId: propMateriaId, embedded = 
       )}
 
       {examenes.length === 0 ? (
-        <div className="card text-center py-12">
-          <FileText className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-          <p className="text-gray-500">No hay exámenes. ¡Genera tu primer examen con IA!</p>
+        <div className="card text-center py-14">
+          <div className="w-14 h-14 rounded-2xl bg-indigo-50 flex items-center justify-center mx-auto mb-4">
+            <FileText className="w-7 h-7 text-indigo-400" />
+          </div>
+          <p className="font-semibold text-gray-700 mb-1">No hay exámenes todavía</p>
+          <p className="text-sm text-gray-500 mb-5">Genera tu primer examen con inteligencia artificial en segundos</p>
+          <Link to={`/profesor/generar/${materiaId}`}
+            className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-semibold text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 transition shadow-sm">
+            <FileText className="w-4 h-4" /> Generar Examen con IA
+          </Link>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -224,7 +272,7 @@ export default function ProfesorExamenes({ materiaId: propMateriaId, embedded = 
                 <div className="min-w-0 flex-1">
                   <h3 className="font-semibold text-gray-900 truncate">{ex.titulo}</h3>
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs text-gray-500">
-                    <span className="px-2 py-0.5 rounded bg-gray-100 font-medium">{ex.tipo || 'Generado'}</span>
+                    <span className="px-2 py-0.5 rounded bg-gray-100 font-medium">{TIPO_LABELS[ex.tipo] || ex.tipo || 'Generado'}</span>
                     <span>{format(new Date(ex.created_at), 'dd/MM/yyyy')}</span>
                     <span className={`px-2 py-0.5 rounded text-xs font-medium ${ex.activo_online ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
                       {ex.activo_online ? 'Online' : 'Inactivo'}
@@ -525,7 +573,7 @@ export default function ProfesorExamenes({ materiaId: propMateriaId, embedded = 
                 Cancelar
               </button>
               <button onClick={saveEdit} disabled={editModal.saving}
-                className="px-5 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition disabled:opacity-50 flex items-center gap-2">
+                className="btn-md bg-profesor-600 text-white hover:bg-profesor-700 disabled:opacity-50">
                 {editModal.saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                 Guardar Cambios
               </button>

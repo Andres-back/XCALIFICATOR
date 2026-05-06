@@ -29,11 +29,13 @@ export default function EstudianteBoletin() {
     byMateria[key].push(b);
   }
 
-  // Global stats
-  const allNotas = boletines.filter(b => b.nota_final != null).map(b => b.nota_final);
-  const promedio = allNotas.length > 0 ? allNotas.reduce((a, b) => a + b, 0) / allNotas.length : 0;
-  const mejor = allNotas.length > 0 ? Math.max(...allNotas) : 0;
-  const aprobadas = allNotas.filter(n => n >= 3.0).length;
+  // Global stats based on weighted grade per materia
+  const materiaNotas = Object.values(byMateria)
+    .map((items) => items?.[0]?.nota_materia)
+    .filter((n) => n != null);
+  const promedio = materiaNotas.length > 0 ? materiaNotas.reduce((a, b) => a + b, 0) / materiaNotas.length : 0;
+  const mejor = materiaNotas.length > 0 ? Math.max(...materiaNotas) : 0;
+  const aprobadas = materiaNotas.filter((n) => n >= 3.0).length;
 
   if (loading) return (
     <div className="space-y-6">
@@ -53,14 +55,14 @@ export default function EstudianteBoletin() {
       </div>
 
       {/* Stats */}
-      {allNotas.length > 0 && (
+      {materiaNotas.length > 0 && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <StatCard icon={TrendingUp} label="Promedio General" value={promedio.toFixed(1)}
             color={promedio >= 3.0 ? 'green' : 'red'} />
           <StatCard icon={Award} label="Mejor Nota" value={mejor.toFixed(1)} color="blue" />
-          <StatCard icon={Target} label="Aprobadas" value={`${aprobadas}/${allNotas.length}`}
-            color="green" subtitle={`${allNotas.length > 0 ? Math.round((aprobadas / allNotas.length) * 100) : 0}%`} />
-          <StatCard icon={BarChart3} label="Períodos" value={allNotas.length} color="purple" />
+          <StatCard icon={Target} label="Materias Aprobadas" value={`${aprobadas}/${materiaNotas.length}`}
+            color="green" subtitle={`${materiaNotas.length > 0 ? Math.round((aprobadas / materiaNotas.length) * 100) : 0}%`} />
+          <StatCard icon={BarChart3} label="Materias" value={materiaNotas.length} color="purple" />
         </div>
       )}
 
@@ -76,13 +78,29 @@ export default function EstudianteBoletin() {
             <div key={materia} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
               {/* Materia header */}
               <div className="p-5 bg-gradient-to-r from-primary-50 to-indigo-50 border-b border-gray-100">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-primary-100 flex items-center justify-center">
-                    <BookOpen className="w-5 h-5 text-primary-600" />
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-10 h-10 rounded-xl bg-primary-100 flex items-center justify-center">
+                      <BookOpen className="w-5 h-5 text-primary-600" />
+                    </div>
+                    <div>
+                      <h2 className="font-semibold text-gray-900 truncate">{materia}</h2>
+                      <p className="text-xs text-gray-500">{bols.length} período{bols.length > 1 ? 's' : ''}</p>
+                    </div>
                   </div>
-                  <div>
-                    <h2 className="font-semibold text-gray-900">{materia}</h2>
-                    <p className="text-xs text-gray-500">{bols.length} período{bols.length > 1 ? 's' : ''}</p>
+                  <div className="text-right shrink-0">
+                    <p className="text-[11px] text-gray-500 uppercase tracking-wide">Nota materia</p>
+                    <div className={`inline-flex items-center gap-1 px-3 py-1 rounded-lg text-sm font-semibold ${
+                      (bols[0]?.nota_materia ?? 0) >= 4.0 ? 'bg-green-100 text-green-700' :
+                      (bols[0]?.nota_materia ?? 0) >= 3.0 ? 'bg-blue-100 text-blue-700' :
+                      'bg-red-100 text-red-700'
+                    }`}>
+                      <span>{bols[0]?.nota_materia != null ? Number(bols[0].nota_materia).toFixed(2) : '—'}</span>
+                      <span className="text-xs">/5.0</span>
+                    </div>
+                    <p className="text-[11px] text-gray-500 mt-1">
+                      Peso acumulado: {bols[0]?.porcentaje_materia_acumulado != null ? `${Number(bols[0].porcentaje_materia_acumulado).toFixed(0)}%` : '—'}
+                    </p>
                   </div>
                 </div>
               </div>
@@ -99,6 +117,7 @@ export default function EstudianteBoletin() {
                           <p className="text-sm font-medium text-gray-800">{b.periodo_nombre || 'Período'}</p>
                           <p className="text-xs text-gray-400">
                             Publicado: {new Date(b.publicado_at || b.created_at).toLocaleDateString('es-CO')}
+                            {b.periodo_porcentaje != null ? ` • Peso ${Number(b.periodo_porcentaje).toFixed(0)}%` : ''}
                           </p>
                         </div>
                       </div>

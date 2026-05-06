@@ -13,10 +13,12 @@ console.error = (...args) => {
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
+const appTree = (
+  <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
+    <App />
+  </GoogleOAuthProvider>
+);
+
 ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
-      <App />
-    </GoogleOAuthProvider>
-  </React.StrictMode>
+  import.meta.env.DEV ? appTree : <React.StrictMode>{appTree}</React.StrictMode>
 );

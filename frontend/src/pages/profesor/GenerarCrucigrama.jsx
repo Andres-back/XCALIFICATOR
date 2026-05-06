@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import api from '../../api';
 import toast from 'react-hot-toast';
-import { Grid3X3, Loader2, Wand2, RotateCcw, Download, Trash2, Eye, EyeOff } from 'lucide-react';
+import { Grid3X3, Loader2, Wand2, RotateCcw, Trash2, Eye, EyeOff } from 'lucide-react';
 import Crucigrama from '../../components/Crucigrama';
 import EmptyState from '../../components/EmptyState';
 import ConfirmDialog from '../../components/ConfirmDialog';
 
-export default function GenerarCrucigrama({ materiaId, materiaNombre }) {
+export default function GenerarCrucigrama({ materiaId }) {
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
     tema: '',

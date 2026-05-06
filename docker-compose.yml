@@ -76,6 +76,32 @@ services:
     volumes:
       - uploads:/app/uploads
 
+  presenton:
+    build:
+      context: ./presenton
+      dockerfile: Dockerfile
+    image: presenton-local:latest
+    container_name: xcalificator_presenton
+    restart: unless-stopped
+    ports:
+      - "5001:80"
+    environment:
+      LLM: ${PRESENTON_LLM:-custom}
+      CUSTOM_LLM_URL: ${PRESENTON_CUSTOM_LLM_URL:-https://api.groq.com/openai/v1}
+      CUSTOM_MODEL: ${PRESENTON_CUSTOM_MODEL:-meta-llama/llama-4-scout-17b-16e-instruct}
+      CUSTOM_LLM_API_KEY: ${GROQ_API_KEY}
+      IMAGE_PROVIDER: ${PRESENTON_IMAGE_PROVIDER:-pixabay}
+      PEXELS_API_KEY: ${PEXELS_API_KEY}
+      PIXABAY_API_KEY: ${PIXABAY_API_KEY}
+      DISABLE_IMAGE_GENERATION: "false"
+      APP_DATA_DIRECTORY: "/app_data"
+      CAN_CHANGE_KEYS: "false"
+      AUTH_USERNAME: ${PRESENTON_AUTH_USERNAME:-xcalificator}
+      AUTH_PASSWORD: ${PRESENTON_AUTH_PASSWORD:-XCalif2024Pres!}
+      AUTH_OVERRIDE_FROM_ENV: "true"
+    volumes:
+      - presenton_data:/app_data
+
   nginx:
     image: nginx:alpine
     container_name: xcalificator_nginx
@@ -105,3 +131,4 @@ services:
 volumes:
   pgdata:
   uploads:
+  presenton_data:

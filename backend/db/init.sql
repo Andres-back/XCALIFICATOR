@@ -40,6 +40,16 @@ CREATE TABLE materias (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE TABLE materia_encuentros (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  materia_id  UUID REFERENCES materias(id) ON DELETE CASCADE,
+  dia_semana  VARCHAR(10) NOT NULL CHECK (dia_semana IN ('lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo')),
+  hora_inicio VARCHAR(5) NOT NULL,
+  hora_fin    VARCHAR(5) NOT NULL,
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(materia_id, dia_semana)
+);
+
 CREATE TABLE matriculas (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   estudiante_id UUID REFERENCES users(id) ON DELETE CASCADE,
@@ -71,7 +81,8 @@ CREATE TABLE notas (
   retroalimentacion     TEXT,
   imagen_procesada_url  TEXT,
   texto_extraido        TEXT,
-  created_at            TIMESTAMPTZ DEFAULT NOW()
+  created_at            TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(estudiante_id, examen_id)
 );
 
 -- NOTIFICACIONES
@@ -174,6 +185,41 @@ CREATE TABLE tool_feature_flags (
   enabled     BOOLEAN NOT NULL DEFAULT TRUE,
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_by  UUID REFERENCES users(id) ON DELETE SET NULL
+);
+
+-- CONFIGURACIÓN IA/OCR GLOBAL (preferida)
+CREATE TABLE ai_global_config (
+  id                         SMALLINT PRIMARY KEY DEFAULT 1,
+  grading_provider           VARCHAR(30) NOT NULL DEFAULT 'groq',
+  grading_model              VARCHAR(120),
+  grading_fallback_provider  VARCHAR(30),
+  grading_fallback_model     VARCHAR(120),
+  ocr_provider               VARCHAR(30) NOT NULL DEFAULT 'paddleocr',
+  ocr_model                  VARCHAR(120),
+  ocr_fallback_provider      VARCHAR(30),
+  ocr_fallback_model         VARCHAR(120),
+  chat_model                 VARCHAR(120),
+  ollama_url                 VARCHAR(255) NOT NULL DEFAULT 'http://host.docker.internal:11434',
+  updated_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_by                 UUID REFERENCES users(id) ON DELETE SET NULL,
+  CHECK (id = 1)
+);
+
+-- CONFIGURACIÓN IA/OCR POR PROFESOR (override opcional sobre global)
+CREATE TABLE profesor_ai_configs (
+  profesor_id                UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  grading_provider           VARCHAR(30) NOT NULL DEFAULT 'groq',
+  grading_model              VARCHAR(120),
+  grading_fallback_provider  VARCHAR(30),
+  grading_fallback_model     VARCHAR(120),
+  ocr_provider               VARCHAR(30) NOT NULL DEFAULT 'paddleocr',
+  ocr_model                  VARCHAR(120),
+  ocr_fallback_provider      VARCHAR(30),
+  ocr_fallback_model         VARCHAR(120),
+  chat_model                 VARCHAR(120),
+  ollama_url                 VARCHAR(255) NOT NULL DEFAULT 'http://host.docker.internal:11434',
+  updated_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_by                 UUID REFERENCES users(id) ON DELETE SET NULL
 );
 
 -- ASISTENCIA

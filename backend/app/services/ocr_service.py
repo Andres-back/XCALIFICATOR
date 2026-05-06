@@ -1,14 +1,18 @@
 import io
-import json
+import base64
 import cv2
 import numpy as np
 import httpx
 import fitz  # PyMuPDF
 import pdfplumber
-from PIL import Image
+from groq import Groq
 from app.core.config import get_settings
 
 settings = get_settings()
+groq_client = Groq(api_key=settings.GROQ_API_KEY) if settings.GROQ_API_KEY else None
+
+OCR_PROVIDER_OPTIONS = {"paddleocr", "groq_vision", "ollama_vision"}
+DEFAULT_GROQ_OCR_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 
 
 def preprocess_image(image_bytes: bytes) -> np.ndarray:
@@ -59,6 +63,128 @@ async def ocr_with_paddle(image_bytes: bytes) -> str:
         return result.get("text", "")
 
 
+async def ocr_with_groq_vision(image_bytes: bytes, model: str = DEFAULT_GROQ_OCR_MODEL) -> str:
+    """Extract text using a Groq vision-capable model."""
+    if groq_client is None:
+        raise RuntimeError("GROQ_API_KEY no configurada para OCR por visión")
+
+    encoded = base64.b64encode(image_bytes).decode("utf-8")
+    image_url = f"data:image/png;base64,{encoded}"
+    prompt = (
+        "Extrae TODO el texto visible de la imagen. "
+        "Devuelve solo texto plano, preservando el orden de lectura, "
+        "una línea por renglón y sin comentarios adicionales."
+    )
+
+    chat = groq_client.chat.completions.create(
+        model=model,
+        temperature=0,
+        max_tokens=4096,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": image_url}},
+                ],
+            }
+        ],
+    )
+    return (chat.choices[0].message.content or "").strip()
+
+
+async def ocr_with_ollama_vision(
+    image_bytes: bytes,
+    model: str | None = None,
+    ollama_url: str = "http://host.docker.internal:11434",
+    ollama_api_key: str | None = None,
+) -> str:
+    """Extract text using an Ollama multimodal model."""
+    selected_model = str(model or "").strip()
+    if not selected_model:
+        raise ValueError("No hay modelo Ollama configurado para OCR")
+
+    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+    payload = {
+        "model": selected_model,
+        "stream": False,
+        "messages": [
+            {
+                "role": "user",
+                "content": (
+                    "Extrae TODO el texto visible de la imagen. "
+                    "Devuelve solo texto plano, preservando el orden de lectura, "
+                    "una línea por renglón y sin comentarios."
+                ),
+                "images": [image_b64],
+            }
+        ],
+    }
+
+    base_url = (ollama_url or "").strip().rstrip("/")
+    if not base_url:
+        base_url = "http://host.docker.internal:11434"
+
+    async with httpx.AsyncClient(timeout=90.0) as client:
+        headers = {"Authorization": f"Bearer {ollama_api_key}"} if ollama_api_key else None
+        response = await client.post(f"{base_url}/api/chat", json=payload, headers=headers)
+        response.raise_for_status()
+        result = response.json()
+
+    return (((result or {}).get("message") or {}).get("content") or "").strip()
+
+
+async def _ocr_with_provider(
+    image_bytes: bytes,
+    provider: str,
+    model: str,
+    ollama_url: str,
+    ollama_api_key: str | None,
+) -> str:
+    if provider == "paddleocr":
+        return await ocr_with_paddle(image_bytes)
+    if provider == "groq_vision":
+        selected_model = model or DEFAULT_GROQ_OCR_MODEL
+        return await ocr_with_groq_vision(image_bytes, selected_model)
+    if provider == "ollama_vision":
+        return await ocr_with_ollama_vision(image_bytes, model, ollama_url, ollama_api_key)
+    raise ValueError(f"Proveedor OCR no soportado: {provider}")
+
+
+async def _ocr_with_fallback(image_bytes: bytes, provider_config: dict | None = None) -> str:
+    cfg = provider_config or {}
+    primary = str(cfg.get("ocr_provider") or "groq_vision").strip().lower()
+    if primary not in OCR_PROVIDER_OPTIONS:
+        primary = "groq_vision"
+
+    fallback = cfg.get("ocr_fallback_provider")
+    fallback = str(fallback).strip().lower() if fallback else None
+    if fallback and fallback not in OCR_PROVIDER_OPTIONS:
+        fallback = None
+
+    primary_model = str(cfg.get("ocr_model") or "").strip()
+    fallback_model = str(cfg.get("ocr_fallback_model") or "").strip()
+    ollama_url = str(cfg.get("ollama_url") or "http://host.docker.internal:11434").strip()
+    ollama_api_key = str(cfg.get("ollama_api_key") or "").strip() or None
+
+    attempts: list[tuple[str, str]] = [(primary, primary_model)]
+    if fallback and fallback != "none":
+        if fallback != primary or fallback_model != primary_model:
+            attempts.append((fallback, fallback_model))
+
+    errors = []
+    for provider, model in attempts:
+        try:
+            text = await _ocr_with_provider(image_bytes, provider, model, ollama_url, ollama_api_key)
+            if isinstance(text, str) and text.strip():
+                return text
+            errors.append(f"{provider}({model or 'sin_modelo'}): texto vacío")
+        except Exception as exc:
+            errors.append(f"{provider}({model or 'sin_modelo'}): {str(exc)}")
+
+    raise RuntimeError("No fue posible extraer texto con OCR configurado. " + " | ".join(errors))
+
+
 def extract_text_from_pdf(pdf_bytes: bytes) -> str:
     """Extract text from digital PDF using PyMuPDF and pdfplumber."""
     text_parts = []
@@ -91,8 +217,14 @@ def parse_exam_text(raw_text: str) -> list[dict]:
     import re
 
     lines = raw_text.strip().split("\n")
-    questions_map: dict[int, dict] = {}
+    questions_map: dict = {}
     current_num: int | None = None
+
+    # Accept custom OCR prefixes (1-4 letters) plus common keywords like RESPUESTA.
+    answer_prefix_pattern = re.compile(
+        r"^(?:[A-Z]{1,4}|RESPUESTA|RESP|ANS)\s*[-_ ]*(\d{1,3})\s*([HV])?\s*[:.)-]\s*(.*)$",
+        flags=re.IGNORECASE,
+    )
 
     for raw_line in lines:
         line = raw_line.strip()
@@ -111,14 +243,13 @@ def parse_exam_text(raw_text: str) -> list[dict]:
             continue
 
         # Explicit OCR answer line: R1: A / RESPUESTA 2: texto / R-3) valor
-        ans_num_match = re.match(
-            r"^(?:R|RESP|RESPUESTA|ANS)\s*[-_ ]*(\d{1,3})\s*[:.)-]\s*(.*)$",
-            line,
-            flags=re.IGNORECASE,
-        )
+        ans_num_match = answer_prefix_pattern.match(line)
         if ans_num_match:
             num = int(ans_num_match.group(1))
-            answer = ans_num_match.group(2).strip()
+            direction = (ans_num_match.group(2) or "").strip().upper()
+            answer = ans_num_match.group(3).strip()
+            if direction:
+                answer = f"{direction}: {answer}" if answer else direction
             item = questions_map.get(num, {"numero": num, "texto": "", "respuesta": ""})
             if answer:
                 item["respuesta"] = (
@@ -153,11 +284,61 @@ def parse_exam_text(raw_text: str) -> list[dict]:
                 item["texto"] = (item.get("texto", "") + " " + line).strip() if item.get("texto") else line
             questions_map[current_num] = item
 
-    return [questions_map[num] for num in sorted(questions_map.keys())]
+    numeric_keys = [key for key in questions_map.keys() if isinstance(key, int)]
+    extra_keys = [key for key in questions_map.keys() if not isinstance(key, int)]
+
+    ordered = [questions_map[num] for num in sorted(numeric_keys)]
+    ordered.extend(questions_map[key] for key in sorted(extra_keys, key=lambda v: str(v)))
+    return ordered
 
 
-async def process_exam_image(file_bytes: bytes, filename: str) -> dict:
-    """Full pipeline: preprocess → OCR → parse."""
+def _assess_ocr_quality(text: str, preguntas: list[dict]) -> tuple[str, str]:
+    """
+    Evaluate OCR extraction quality.
+    Returns (quality: 'alta'|'media'|'baja', motivo: str)
+
+    Heuristics:
+    - Very little text extracted → baja
+    - No numbered questions found → baja
+    - Most answers are blank → baja (can't read handwriting)
+    - Many answers blank → media (image partially unreadable)
+    - Otherwise → alta
+    """
+    texto_len = len(text.strip())
+    n_preguntas = len(preguntas)
+
+    if texto_len < 50:
+        return "baja", "Texto insuficiente extraído de la imagen (imagen borrosa o ilegible)"
+
+    if n_preguntas == 0:
+        return "baja", "No se detectaron preguntas numeradas — verifique que la imagen sea legible"
+
+    blank_answers = sum(1 for p in preguntas if not (p.get("respuesta") or "").strip())
+    blank_ratio = blank_answers / n_preguntas
+
+    if blank_ratio >= 0.8:
+        pct = int(blank_ratio * 100)
+        return "baja", (
+            f"{pct}% de las respuestas no pudieron leerse — "
+            "imagen posiblemente borrosa, mal enfocada o escritura poco legible"
+        )
+
+    if blank_ratio >= 0.5:
+        pct = int(blank_ratio * 100)
+        return "media", (
+            f"{pct}% de las respuestas son difíciles de leer — "
+            "se recomienda verificar la calificación manualmente"
+        )
+
+    avg_chars = texto_len / n_preguntas
+    if avg_chars < 8:
+        return "media", "Texto muy corto por pregunta — posible imagen borrosa o escritura fragmentada"
+
+    return "alta", ""
+
+
+async def process_exam_image(file_bytes: bytes, filename: str, provider_config: dict | None = None) -> dict:
+    """Full pipeline: preprocess → OCR → parse → quality assessment."""
     is_pdf = filename.lower().endswith(".pdf")
 
     if is_pdf:
@@ -174,7 +355,7 @@ async def process_exam_image(file_bytes: bytes, filename: str) -> dict:
                 img_bytes = pix.tobytes("png")
                 processed = preprocess_image(img_bytes)
                 proc_bytes = image_to_bytes(processed)
-                page_text = await ocr_with_paddle(proc_bytes)
+                page_text = await _ocr_with_fallback(proc_bytes, provider_config)
                 all_text.append(page_text)
             doc.close()
             text = "\n".join(all_text)
@@ -183,13 +364,16 @@ async def process_exam_image(file_bytes: bytes, filename: str) -> dict:
         # Image processing
         processed = preprocess_image(file_bytes)
         proc_bytes = image_to_bytes(processed)
-        text = await ocr_with_paddle(proc_bytes)
+        text = await _ocr_with_fallback(proc_bytes, provider_config)
         writing_type = "manuscrito"
 
     questions = parse_exam_text(text)
+    ocr_quality, ocr_motivo = _assess_ocr_quality(text, questions)
 
     return {
         "texto_extraido": text,
         "preguntas": questions,
         "tipo_escritura": writing_type,
+        "ocr_quality": ocr_quality,   # 'alta' | 'media' | 'baja'
+        "ocr_motivo": ocr_motivo,     # human-readable reason (empty string when alta)
     }

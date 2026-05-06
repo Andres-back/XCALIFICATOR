@@ -12,6 +12,7 @@ from app.schemas.schemas import (
     NotaCreate, NotaUpdate, NotaOut,
     RespuestaOnlineCreate, RespuestaOnlineOut,
 )
+from app.services.nota_service import upsert_nota
 from app.services.notification_service import notify_enrolled_students, send_email, send_whatsapp
 import json as _json
 import logging
@@ -74,6 +75,76 @@ def _normalize(s: str) -> str:
     return s.strip().lower().replace("á","a").replace("é","e").replace("í","i").replace("ó","o").replace("ú","u")
 
 
+def _safe_float(value, default: float = 1.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _question_sort_key(value) -> tuple[int, int | str]:
+    if isinstance(value, int):
+        return (0, value)
+    text = str(value)
+    if text.isdigit():
+        return (0, int(text))
+    return (1, text)
+
+
+def _build_effective_key(examen: Examen) -> list[dict]:
+    """
+    Build answer key from clave_respuestas and fallback to contenido_json.
+    Useful for legacy data where clave_respuestas may be incomplete.
+    """
+    contenido = examen.contenido_json if isinstance(examen.contenido_json, dict) else {}
+    preguntas = contenido.get("preguntas", []) if isinstance(contenido.get("preguntas", []), list) else []
+
+    preguntas_map = {}
+    for p in preguntas:
+        if not isinstance(p, dict):
+            continue
+        num = p.get("numero")
+        if num is None:
+            continue
+        preguntas_map[num] = p
+
+    clave_raw = examen.clave_respuestas
+    if isinstance(clave_raw, dict) and "preguntas" in clave_raw and isinstance(clave_raw.get("preguntas"), list):
+        clave_list = [c for c in clave_raw.get("preguntas", []) if isinstance(c, dict)]
+    elif isinstance(clave_raw, list):
+        clave_list = [c for c in clave_raw if isinstance(c, dict)]
+    elif isinstance(clave_raw, dict):
+        clave_list = [clave_raw]
+    else:
+        clave_list = []
+
+    merged = {}
+
+    for c in clave_list:
+        num = c.get("numero")
+        if num is None:
+            continue
+        meta = preguntas_map.get(num, {})
+        merged[num] = {
+            "numero": num,
+            "respuesta_correcta": c.get("respuesta_correcta") or meta.get("respuesta_correcta") or "",
+            "puntos": _safe_float(c.get("puntos", meta.get("puntos", 1.0)), 1.0),
+            "tipo": c.get("tipo") or meta.get("tipo") or "",
+        }
+
+    for num, meta in preguntas_map.items():
+        if num in merged:
+            continue
+        merged[num] = {
+            "numero": num,
+            "respuesta_correcta": meta.get("respuesta_correcta") or "",
+            "puntos": _safe_float(meta.get("puntos", 1.0), 1.0),
+            "tipo": meta.get("tipo") or "",
+        }
+
+    return [merged[k] for k in sorted(merged.keys(), key=_question_sort_key)]
+
+
 def _normalize_question_statements(content: dict | None) -> dict | None:
     """Ensure exam questions expose enunciado and pregunta for frontend compatibility."""
     if not isinstance(content, dict):
@@ -116,13 +187,7 @@ def auto_grade_objective(examen: Examen, respuestas_json: dict) -> dict | None:
     contenido = examen.contenido_json
 
     # ── Parse clave_respuestas for normal questions ──
-    clave_list = []
-    clave_raw = examen.clave_respuestas
-    if clave_raw:
-        if isinstance(clave_raw, dict) and "preguntas" in clave_raw:
-            clave_list = clave_raw["preguntas"]
-        elif isinstance(clave_raw, list):
-            clave_list = clave_raw
+    clave_list = _build_effective_key(examen)
 
     preguntas_info = {}
     for p in contenido.get("preguntas", []):
@@ -153,13 +218,13 @@ def auto_grade_objective(examen: Examen, respuestas_json: dict) -> dict | None:
         if not isinstance(c, dict):
             continue
         num = c.get("numero")
-        puntos = float(c.get("puntos", 1.0))
+        puntos = _safe_float(c.get("puntos", 1.0), 1.0)
         respuesta_correcta = str(c.get("respuesta_correcta", ""))
-        tipo = preguntas_info.get(num, "")
+        tipo = c.get("tipo") or preguntas_info.get(num, "")
         respuesta_est = str(resp_map.get(num, ""))
         nota_maxima += puntos
 
-        if tipo in auto_gradable_types:
+        if tipo in auto_gradable_types and _normalize(respuesta_correcta):
             correcto = _normalize(respuesta_correcta) == _normalize(respuesta_est)
             preguntas_result.append({
                 "numero": num,
@@ -175,13 +240,16 @@ def auto_grade_objective(examen: Examen, respuestas_json: dict) -> dict | None:
                 nota_total += puntos
         else:
             has_open_ended = True
+            pending_reason = "Pendiente de revisión por el profesor"
+            if tipo in auto_gradable_types and not _normalize(respuesta_correcta):
+                pending_reason = "Pendiente: esta pregunta no tiene respuesta_correcta configurada"
             preguntas_result.append({
                 "numero": num,
                 "respuesta_estudiante": respuesta_est,
                 "respuesta_correcta": respuesta_correcta,
                 "nota": 0.0,
                 "nota_maxima": puntos,
-                "retroalimentacion": "Pendiente de revisión por el profesor",
+                "retroalimentacion": pending_reason,
                 "correcto": False,
                 "tipo": tipo,
                 "pendiente": True,
@@ -380,14 +448,14 @@ async def create_nota(
 ):
     await _assert_examen_access(db, str(data.examen_id), current_user)
 
-    nota = Nota(
+    nota = await upsert_nota(
+        db,
         estudiante_id=data.estudiante_id,
         examen_id=data.examen_id,
-        nota=data.nota,
+        nota_val=data.nota,
         detalle_json=data.detalle_json,
         retroalimentacion=data.retroalimentacion,
     )
-    db.add(nota)
     await db.commit()
     await db.refresh(nota)
     return NotaOut.model_validate(nota)
@@ -650,17 +718,17 @@ async def submit_response(
     nota_data = None
     if grading_result:
         try:
-            nota = Nota(
+            nota = await upsert_nota(
+                db,
                 estudiante_id=current_user.id,
                 examen_id=str(data.examen_id),
-                nota=grading_result["nota_total"],
+                nota_val=grading_result["nota_total"],
                 detalle_json=grading_result,
                 retroalimentacion="\n".join(
                     f"P{p['numero']}: {p['retroalimentacion']}"
                     for p in grading_result.get("preguntas", [])
                 ),
             )
-            db.add(nota)
             await db.commit()
             await db.refresh(nota)
             nota_data = {
@@ -725,12 +793,6 @@ async def get_respuestas_online(
     )
     respuestas = result.scalars().all()
 
-    # Check which students already have a Nota for this exam
-    notas_result = await db.execute(
-        select(Nota.estudiante_id).where(Nota.examen_id == examen_id)
-    )
-    graded_ids = {str(row[0]) for row in notas_result.all()}
-
     # Also get notas for score display
     notas_full = await db.execute(
         select(Nota).where(Nota.examen_id == examen_id)
@@ -741,6 +803,16 @@ async def get_respuestas_online(
     for r in respuestas:
         est = r.estudiante
         nota_obj = notas_map.get(str(r.estudiante_id))
+        tiene_nota = bool(nota_obj and nota_obj.nota is not None)
+        tiene_abiertas = bool((nota_obj.detalle_json or {}).get("tiene_preguntas_abiertas", False)) if nota_obj else False
+
+        if not tiene_nota:
+            estado_calificacion = "sin_nota"
+        elif tiene_abiertas:
+            estado_calificacion = "parcial"
+        else:
+            estado_calificacion = "completa"
+
         out.append({
             "id": str(r.id),
             "estudiante_id": str(r.estudiante_id),
@@ -748,9 +820,15 @@ async def get_respuestas_online(
             "estudiante_documento": est.documento if est else "",
             "examen_id": str(r.examen_id),
             "enviado_at": r.enviado_at.isoformat() if r.enviado_at else None,
-            "ya_calificado": str(r.estudiante_id) in graded_ids,
-            "nota": float(nota_obj.nota) if nota_obj and nota_obj.nota else None,
-            "tiene_preguntas_abiertas": (nota_obj.detalle_json or {}).get("tiene_preguntas_abiertas", False) if nota_obj else False,
+            "ya_calificado": estado_calificacion != "sin_nota",
+            "tiene_nota": tiene_nota,
+            "nota": float(nota_obj.nota) if nota_obj and nota_obj.nota is not None else None,
+            "tiene_preguntas_abiertas": tiene_abiertas,
+            "estado_calificacion": estado_calificacion,
+            "requiere_revision": (
+                (nota_obj.detalle_json or {}).get("requiere_revision_profesor", False)
+                if nota_obj else False
+            ),
         })
     return out
 

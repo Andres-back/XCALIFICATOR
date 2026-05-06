@@ -1,24 +1,53 @@
 import random
 import string
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
+from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from app.core.database import get_db
 from app.core.dependencies import require_role, get_current_user
-from app.models.models import User, Materia, Matricula
+from app.models.models import User, Materia, Matricula, MateriaEncuentro
 from app.schemas.schemas import (
-    MateriaCreate, MateriaOut, MateriaWithStudents,
+    MateriaCreate, MateriaOut,
+    MateriaEncuentroOut, MateriaEncuentrosUpdate,
     InscripcionRequest, UserOut,
 )
 
 router = APIRouter(prefix="/materias", tags=["Materias"])
+
+DAY_ORDER = {
+    "lunes": 0,
+    "martes": 1,
+    "miercoles": 2,
+    "jueves": 3,
+    "viernes": 4,
+    "sabado": 5,
+    "domingo": 6,
+}
 
 
 def generate_code(nombre: str) -> str:
     prefix = nombre[:3].upper()
     suffix = "".join(random.choices(string.ascii_uppercase + string.digits, k=4))
     return f"{prefix}-{suffix}"
+
+
+def _sort_encuentros(encuentros: list[MateriaEncuentro]) -> list[MateriaEncuentro]:
+    return sorted(encuentros, key=lambda e: (DAY_ORDER.get(e.dia_semana, 99), e.hora_inicio))
+
+
+async def _get_materia_with_ownership_check(
+    db: AsyncSession,
+    materia_id: str,
+    current_user: User,
+) -> Materia:
+    result = await db.execute(select(Materia).where(Materia.id == materia_id))
+    materia = result.scalar_one_or_none()
+    if not materia:
+        raise HTTPException(status_code=404, detail="Materia no encontrada")
+    if materia.profesor_id != current_user.id and current_user.rol != "admin":
+        raise HTTPException(status_code=403, detail="Sin permiso")
+    return materia
 
 
 # --- Profesor ---
@@ -42,7 +71,27 @@ async def create_materia(
         profesor_id=current_user.id,
     )
     db.add(materia)
-    await db.commit()
+    await db.flush()
+
+    for encuentro in data.encuentros:
+        db.add(
+            MateriaEncuentro(
+                materia_id=materia.id,
+                dia_semana=encuentro.dia_semana,
+                hora_inicio=encuentro.hora_inicio,
+                hora_fin=encuentro.hora_fin,
+            )
+        )
+
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="No se pudo crear la materia con el horario configurado",
+        ) from exc
+
     await db.refresh(materia)
     return MateriaOut.model_validate(materia)
 
@@ -73,7 +122,11 @@ async def get_materia_students(
         raise HTTPException(status_code=403, detail="Sin permiso")
 
     result = await db.execute(
-        select(User).join(Matricula).where(Matricula.materia_id == materia_id)
+        select(User)
+        .join(Matricula)
+        .where(Matricula.materia_id == materia_id)
+        .distinct()
+        .order_by(User.apellido.asc(), User.nombre.asc(), User.id.asc())
     )
     return [UserOut.model_validate(u) for u in result.scalars().all()]
 
@@ -120,6 +173,52 @@ async def get_my_inscripciones(
     return [MateriaOut.model_validate(m) for m in result.scalars().all()]
 
 
+@router.get("/{materia_id}/encuentros", response_model=list[MateriaEncuentroOut])
+async def get_materia_encuentros(
+    materia_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("profesor", "admin")),
+):
+    await _get_materia_with_ownership_check(db, materia_id, current_user)
+    result = await db.execute(select(MateriaEncuentro).where(MateriaEncuentro.materia_id == materia_id))
+    encuentros = _sort_encuentros(result.scalars().all())
+    return [MateriaEncuentroOut.model_validate(encuentro) for encuentro in encuentros]
+
+
+@router.put("/{materia_id}/encuentros", response_model=list[MateriaEncuentroOut])
+async def update_materia_encuentros(
+    materia_id: str,
+    data: MateriaEncuentrosUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("profesor", "admin")),
+):
+    await _get_materia_with_ownership_check(db, materia_id, current_user)
+
+    await db.execute(delete(MateriaEncuentro).where(MateriaEncuentro.materia_id == materia_id))
+    for encuentro in data.encuentros:
+        db.add(
+            MateriaEncuentro(
+                materia_id=materia_id,
+                dia_semana=encuentro.dia_semana,
+                hora_inicio=encuentro.hora_inicio,
+                hora_fin=encuentro.hora_fin,
+            )
+        )
+
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="No se pudo actualizar el horario de la materia",
+        ) from exc
+
+    result = await db.execute(select(MateriaEncuentro).where(MateriaEncuentro.materia_id == materia_id))
+    encuentros = _sort_encuentros(result.scalars().all())
+    return [MateriaEncuentroOut.model_validate(encuentro) for encuentro in encuentros]
+
+
 @router.get("/{materia_id}", response_model=MateriaOut)
 async def get_materia(
     materia_id: str,
@@ -131,3 +230,30 @@ async def get_materia(
     if not materia:
         raise HTTPException(status_code=404, detail="Materia no encontrada")
     return MateriaOut.model_validate(materia)
+
+
+@router.delete("/{materia_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_materia(
+    materia_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("profesor", "admin")),
+):
+    result = await db.execute(select(Materia).where(Materia.id == materia_id))
+    materia = result.scalar_one_or_none()
+    if not materia:
+        raise HTTPException(status_code=404, detail="Materia no encontrada")
+
+    if current_user.rol != "admin" and materia.profesor_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Sin permiso para eliminar esta materia")
+
+    await db.delete(materia)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="No se pudo eliminar la materia por dependencias asociadas",
+        )
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

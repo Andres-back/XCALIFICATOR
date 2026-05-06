@@ -4,7 +4,7 @@ import api from '../../api';
 import toast from 'react-hot-toast';
 import {
   Users, Search, Mail, Phone, UserX, Loader2, Calendar,
-  FileText, AlertCircle, CheckCircle2,
+  FileText, AlertCircle, CheckCircle2, Download, ClipboardList,
 } from 'lucide-react';
 import EmptyState from '../../components/EmptyState';
 import SkeletonLoader from '../../components/SkeletonLoader';
@@ -50,6 +50,37 @@ const getPreguntaEnunciado = (detallePregunta, idx, actividad) => {
   return null;
 };
 
+const normalizeName = (value) => String(value || '')
+  .trim()
+  .toLowerCase()
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '');
+
+const buildStudentIdentityKey = (student) => {
+  if (student?.id) return `id:${student.id}`;
+  if (student?.documento) return `doc:${student.documento}`;
+  if (student?.correo) return `mail:${String(student.correo).toLowerCase()}`;
+  return `fallback:${normalizeName(`${student?.nombre || ''} ${student?.apellido || ''}`)}`;
+};
+
+const sanitizeStudents = (rawStudents) => {
+  const seen = new Set();
+  const deduped = [];
+  let removedDuplicates = 0;
+
+  for (const student of rawStudents || []) {
+    const key = buildStudentIdentityKey(student);
+    if (seen.has(key)) {
+      removedDuplicates += 1;
+      continue;
+    }
+    seen.add(key);
+    deduped.push(student);
+  }
+
+  return { deduped, removedDuplicates };
+};
+
 export default function MateriaEstudiantes({ materiaId, materiaNombre }) {
   const [students, setStudents] = useState([]);
   const [periodos, setPeriodos] = useState([]);
@@ -61,6 +92,9 @@ export default function MateriaEstudiantes({ materiaId, materiaNombre }) {
   const [detailTab, setDetailTab] = useState('actividades');
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [removedDuplicates, setRemovedDuplicates] = useState(0);
+  const [exportingStudents, setExportingStudents] = useState(false);
+  const [exportingAttendanceTemplate, setExportingAttendanceTemplate] = useState(false);
 
   const fetchBaseData = async () => {
     setLoading(true);
@@ -70,10 +104,12 @@ export default function MateriaEstudiantes({ materiaId, materiaNombre }) {
         api.get('/periodos/').catch(() => ({ data: [] })),
       ]);
 
-      const studentList = studentsRes.data || [];
+      const studentListRaw = studentsRes.data || [];
+      const { deduped: studentList, removedDuplicates: removed } = sanitizeStudents(studentListRaw);
       const periodList = [...(periodosRes.data || [])].sort((a, b) => a.numero - b.numero);
 
       setStudents(studentList);
+      setRemovedDuplicates(removed);
       setPeriodos(periodList);
 
       if (periodList.length > 0) {
@@ -139,14 +175,76 @@ export default function MateriaEstudiantes({ materiaId, materiaNombre }) {
   }, [materiaId, selectedPeriodo, selectedStudentId]);
 
   const filtered = useMemo(() => (
-    students.filter((s) =>
-      `${s.nombre} ${s.apellido} ${s.correo} ${s.documento || ''}`
-        .toLowerCase()
-        .includes(searchTerm.toLowerCase())
-    )
+    [...students]
+      .filter((s) =>
+        `${s.nombre} ${s.apellido} ${s.correo} ${s.documento || ''}`
+          .toLowerCase()
+          .includes(searchTerm.toLowerCase())
+      )
+      .sort((a, b) => `${a.apellido || ''} ${a.nombre || ''}`.localeCompare(`${b.apellido || ''} ${b.nombre || ''}`))
   ), [students, searchTerm]);
 
+  const homonymMeta = useMemo(() => {
+    const counts = {};
+
+    students.forEach((student) => {
+      const key = normalizeName(`${student?.nombre || ''} ${student?.apellido || ''}`);
+      if (!key) return;
+      counts[key] = (counts[key] || 0) + 1;
+    });
+
+    return { counts };
+  }, [students]);
+
+  const isHomonymStudent = (student) => {
+    const key = normalizeName(`${student?.nombre || ''} ${student?.apellido || ''}`);
+    return Boolean(key) && (homonymMeta.counts[key] || 0) > 1;
+  };
+
+  const downloadBlob = (blobData, filename) => {
+    const url = window.URL.createObjectURL(new Blob([blobData]));
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  };
+
+  const handleExportStudentList = async () => {
+    setExportingStudents(true);
+    try {
+      const res = await api.get(`/asistencia/materia/${materiaId}/export-estudiantes-pdf`, {
+        responseType: 'blob',
+      });
+      downloadBlob(res.data, `lista_estudiantes_${materiaNombre || 'materia'}.pdf`);
+      toast.success('Lista de estudiantes descargada');
+    } catch {
+      toast.error('Error exportando lista de estudiantes');
+    } finally {
+      setExportingStudents(false);
+    }
+  };
+
+  const handleExportAttendanceTemplate = async () => {
+    setExportingAttendanceTemplate(true);
+    try {
+      const res = await api.get(`/asistencia/materia/${materiaId}/export-pdf`, {
+        responseType: 'blob',
+      });
+      downloadBlob(res.data, `asistencia_${materiaNombre || 'materia'}.pdf`);
+      toast.success('Formato de asistencia descargado');
+    } catch {
+      toast.error('Error exportando formato de asistencia');
+    } finally {
+      setExportingAttendanceTemplate(false);
+    }
+  };
+
   const selectedStudent = students.find((s) => s.id === selectedStudentId);
+  const selectedPeriodoObj = periodos.find((p) => p.id === selectedPeriodo);
+  const selectedStudentVisible = filtered.some((s) => s.id === selectedStudentId);
   const selectedActividad = useMemo(
     () => (profile?.actividades || []).find((a) => a.examen_id === selectedActividadId),
     [profile, selectedActividadId]
@@ -169,19 +267,6 @@ export default function MateriaEstudiantes({ materiaId, materiaNombre }) {
           </div>
         </div>
         <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
-          {students.length > 0 && (
-            <div className="relative w-full sm:w-64">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Buscar estudiante..."
-                className="input-field pl-9 py-2 text-sm"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-            </div>
-          )}
-
           <div className="flex items-center gap-2 w-full sm:w-56">
             <Calendar className="w-4 h-4 text-gray-400" />
             <select
@@ -201,8 +286,65 @@ export default function MateriaEstudiantes({ materiaId, materiaNombre }) {
               )}
             </select>
           </div>
+
+          {students.length > 0 && (
+            <div className="relative w-full sm:w-64">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Buscar estudiante..."
+                className="input-field pl-9 py-2 text-sm"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+          )}
         </div>
       </div>
+
+      {students.length > 0 && (
+        <div className="rounded-xl border border-gray-200 bg-gray-50/70 p-3">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-gray-600">
+              <span className="px-2 py-1 rounded-full border border-gray-200 bg-white">
+                Período: {selectedPeriodoObj?.nombre || 'Sin período'}
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full lg:w-auto">
+              <button
+                type="button"
+                onClick={handleExportStudentList}
+                disabled={exportingStudents}
+                className="btn-secondary text-sm flex items-center justify-center gap-2 w-full lg:w-auto"
+              >
+                {exportingStudents ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardList className="w-4 h-4" />}
+                Lista estudiantes
+              </button>
+              <button
+                type="button"
+                onClick={handleExportAttendanceTemplate}
+                disabled={exportingAttendanceTemplate}
+                className="btn-secondary text-sm flex items-center justify-center gap-2 w-full lg:w-auto"
+              >
+                {exportingAttendanceTemplate ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                Formato asistencia
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {students.length > 0 && removedDuplicates > 0 && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          Se detectaron {removedDuplicates} registros duplicados por ID/documento/correo y se ocultaron automáticamente en esta vista.
+        </div>
+      )}
+
+      {selectedStudent && searchTerm && !selectedStudentVisible && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          El estudiante seleccionado no coincide con el filtro actual. Limpia la búsqueda para volver a verlo en la lista.
+        </div>
+      )}
 
       {students.length === 0 ? (
         <EmptyState
@@ -225,6 +367,7 @@ export default function MateriaEstudiantes({ materiaId, materiaNombre }) {
               <div className="divide-y divide-gray-100 max-h-[36rem] overflow-auto">
                 {filtered.map((s) => {
                   const isSelected = s.id === selectedStudentId;
+                  const isHomonym = isHomonymStudent(s);
                   return (
                     <button
                       key={s.id}
@@ -243,7 +386,14 @@ export default function MateriaEstudiantes({ materiaId, materiaNombre }) {
                           {s.nombre?.[0]}{s.apellido?.[0]}
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium text-gray-900 truncate">{s.nombre} {s.apellido}</p>
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-medium text-gray-900 truncate">{s.nombre} {s.apellido}</p>
+                            {isHomonym && (
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-700 border border-blue-200">
+                                Homónimo
+                              </span>
+                            )}
+                          </div>
                           <p className="text-xs text-gray-500 truncate">{s.correo}</p>
                           <p className="text-xs text-gray-400">Doc: {s.documento || '—'}</p>
                         </div>
@@ -276,6 +426,12 @@ export default function MateriaEstudiantes({ materiaId, materiaNombre }) {
               </div>
             ) : (
               <div className="p-5 space-y-5">
+                {profile.config_warning && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    {profile.config_warning}
+                  </div>
+                )}
+
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                   <div>
                     <p className="text-lg font-semibold text-gray-900">

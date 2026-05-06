@@ -60,6 +60,22 @@ class Materia(Base):
     profesor = relationship("User", back_populates="materias")
     matriculas = relationship("Matricula", back_populates="materia", cascade="all, delete-orphan")
     examenes = relationship("Examen", back_populates="materia", cascade="all, delete-orphan")
+    encuentros = relationship("MateriaEncuentro", back_populates="materia", cascade="all, delete-orphan")
+
+
+class MateriaEncuentro(Base):
+    __tablename__ = "materia_encuentros"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    materia_id = Column(UUID(as_uuid=True), ForeignKey("materias.id", ondelete="CASCADE"), nullable=False)
+    dia_semana = Column(String(10), nullable=False)  # lunes..domingo
+    hora_inicio = Column(String(5), nullable=False)  # HH:MM
+    hora_fin = Column(String(5), nullable=False)     # HH:MM
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (UniqueConstraint("materia_id", "dia_semana"),)
+
+    materia = relationship("Materia", back_populates="encuentros")
 
 
 class Matricula(Base):
@@ -110,6 +126,8 @@ class Nota(Base):
     imagen_procesada_url = Column(Text, nullable=True)
     texto_extraido = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (UniqueConstraint("estudiante_id", "examen_id"),)
 
     estudiante = relationship("User", back_populates="notas")
     examen = relationship("Examen", back_populates="notas")

@@ -4,8 +4,8 @@ import api from '../../api';
 import useStore from '../../store';
 import toast from 'react-hot-toast';
 import {
-  BookOpen, Plus, FileText, ClipboardList, X, Clock,
-  CheckCircle, Calendar, TrendingUp, AlertCircle, Award,
+  BookOpen, Plus, ClipboardList, X,
+  CheckCircle, TrendingUp, AlertCircle, Award,
   ChevronRight, ScrollText, Sparkles,
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
@@ -25,6 +25,11 @@ export default function EstudianteHome() {
   const [codigo, setCodigo] = useState('');
 
   const fetchData = async () => {
+    if (user?.rol !== 'estudiante') {
+      setLoading(false);
+      return;
+    }
+
     try {
       const [matRes, respRes, notasRes] = await Promise.all([
         api.get('/materias/mis-inscripciones'),
@@ -59,7 +64,7 @@ export default function EstudianteHome() {
     }
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { fetchData(); }, [user?.rol]);
 
   const inscribir = async (e) => {
     e.preventDefault();
@@ -77,7 +82,8 @@ export default function EstudianteHome() {
   // Compute dashboard stats
   const allExamenes = Object.values(examenesPorMateria).flat();
   const pendientes = allExamenes.filter(ex => !respondidos.has(ex.id) && !(ex.fecha_limite && new Date(ex.fecha_limite) < new Date()));
-  const promedio = notas.length > 0 ? (notas.reduce((a, n) => a + (n.nota || 0), 0) / notas.length) : 0;
+  const gradedNotas = notas.filter(n => n.nota != null);
+  const promedio = gradedNotas.length > 0 ? (gradedNotas.reduce((a, n) => a + n.nota, 0) / gradedNotas.length) : 0;
 
   // Next exam (closest deadline)
   const proximoExamen = pendientes

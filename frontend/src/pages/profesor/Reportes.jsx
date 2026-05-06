@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx';
 import {
   BarChart3, Printer, Loader2, BookOpen, Users,
   Award, TrendingUp, TrendingDown, AlertTriangle, Filter, CalendarDays, FileSpreadsheet,
+  Presentation, Sparkles,
 } from 'lucide-react';
 
 
@@ -132,6 +133,7 @@ export default function ProfesorReportes() {
   const [generating, setGenerating] = useState(false);
   const [report, setReport] = useState(null);
   const [failedReports, setFailedReports] = useState([]);
+  const [creatingSlides, setCreatingSlides] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -209,6 +211,36 @@ export default function ProfesorReportes() {
       setGenerating(false);
     }
   }, [selected, materias, selectedPeriodo]);
+
+  const crearPresentacionBoletin = async () => {
+    if (creatingSlides) return;
+    if (selected.length !== 1) {
+      toast.error('Selecciona exactamente UNA materia para crear la presentación');
+      return;
+    }
+    if (!selectedPeriodo) {
+      toast.error('Selecciona un período');
+      return;
+    }
+    const materiaId = selected[0];
+    setCreatingSlides(true);
+    const tid = toast.loading('Creando presentación del período… ✨ (30-90s)');
+    try {
+      const { data } = await api.post(
+        `/presentaciones/boletin/${materiaId}/${selectedPeriodo}`,
+        null,
+        { params: { plantilla: 'modern', num_slides: 10 }, timeout: 240000 }
+      );
+      toast.dismiss(tid);
+      toast.success('¡Presentación lista! 🎉');
+      if (data?.pptx_url) window.open(data.pptx_url, '_blank', 'noopener');
+    } catch (err) {
+      toast.dismiss(tid);
+      toast.error(err?.response?.data?.detail || 'No pudimos crear la presentación');
+    } finally {
+      setCreatingSlides(false);
+    }
+  };
 
   const selectedPeriodoLabel = useMemo(() => {
     const p = periodos.find((x) => x.id === selectedPeriodo);
@@ -441,8 +473,18 @@ export default function ProfesorReportes() {
   };
 
   if (loading) return (
-    <div className="flex justify-center py-20">
-      <div className="animate-spin h-8 w-8 border-4 border-primary-500 border-t-transparent rounded-full" />
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div><div className="skeleton h-7 w-36 rounded-lg" /><div className="skeleton h-4 w-80 rounded mt-2" /></div>
+        <div className="skeleton h-10 w-60 rounded-lg" />
+      </div>
+      <div className="bg-white rounded-xl border border-gray-200 p-5">
+        <div className="skeleton h-4 w-48 rounded mb-4" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {Array.from({ length: 3 }).map((_, i) => <div key={i} className="skeleton h-14 rounded-xl" />)}
+        </div>
+      </div>
+      <div className="skeleton h-10 w-full rounded-lg" />
     </div>
   );
 
@@ -469,6 +511,20 @@ export default function ProfesorReportes() {
               ))}
             </select>
           </div>
+          {selected.length === 1 && selectedPeriodo && (
+            <button
+              onClick={crearPresentacionBoletin}
+              disabled={creatingSlides}
+              title="Slides del período listas para reunión de padres"
+              className="btn-md bg-profesor-600 text-white hover:bg-profesor-700 disabled:opacity-60 disabled:cursor-not-allowed shadow-sm shrink-0"
+            >
+              {creatingSlides
+                ? <Loader2 className="w-4 h-4 animate-spin" />
+                : <Sparkles className="w-4 h-4" />}
+              <Presentation className="w-4 h-4" />
+              {creatingSlides ? 'Creando…' : 'Slides del período'}
+            </button>
+          )}
           {report && (
             <>
               <button onClick={exportExcel}
@@ -488,11 +544,11 @@ export default function ProfesorReportes() {
       <div className="bg-white rounded-xl border border-gray-200 p-5">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
-            <Filter className="w-4 h-4 text-indigo-500" />
+            <Filter className="w-4 h-4 text-profesor-500" />
             <h3 className="text-sm font-semibold text-gray-800">Selecciona las materias para el reporte</h3>
           </div>
           <button onClick={selectAll}
-            className="text-xs text-indigo-600 font-medium hover:text-indigo-800 transition">
+            className="text-xs text-profesor-600 font-medium hover:text-profesor-800 transition">
             {selected.length === materias.length ? 'Deseleccionar todas' : 'Seleccionar todas'}
           </button>
         </div>
@@ -505,13 +561,13 @@ export default function ProfesorReportes() {
               <label key={m.id}
                 className={`flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer transition-colors ${
                   selected.includes(m.id)
-                    ? 'bg-indigo-50 border-indigo-300'
+                    ? 'bg-profesor-50 border-profesor-300'
                     : 'bg-gray-50 border-gray-200 hover:bg-gray-100'
                 }`}>
                 <input type="checkbox"
                   checked={selected.includes(m.id)}
                   onChange={() => toggleMateria(m.id)}
-                  className="rounded border-gray-300 text-indigo-600 w-4 h-4" />
+                  className="rounded border-gray-300 text-profesor-600 w-4 h-4" />
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-gray-800 truncate">{m.nombre}</p>
                   {m.grado && <p className="text-xs text-gray-400">{m.grado}</p>}
@@ -531,9 +587,9 @@ export default function ProfesorReportes() {
         </div>
       </div>
 
-      <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4">
-        <p className="text-sm text-indigo-900 font-medium">Este reporte del menú lateral es consolidado (multi-materia).</p>
-        <p className="text-xs text-indigo-700 mt-1">
+      <div className="rounded-xl border border-profesor-200 bg-profesor-50 p-4">
+        <p className="text-sm text-profesor-900 font-medium">Este reporte del menú lateral es consolidado (multi-materia).</p>
+        <p className="text-xs text-profesor-700 mt-1">
           Si necesitas un reporte individual de una sola materia con configuración y publicación de boletines,
           entra por Materias {'>'} Materia {'>'} pestaña Reportes.
         </p>
@@ -558,14 +614,14 @@ export default function ProfesorReportes() {
           {globalStats && (
             <div className="bg-white rounded-xl border border-gray-200 p-5">
               <div className="flex items-center gap-2 mb-4">
-                <BarChart3 className="w-5 h-5 text-indigo-600" />
+                <BarChart3 className="w-5 h-5 text-profesor-600" />
                 <h3 className="font-bold text-gray-900">Resumen Global ({selectedPeriodoLabel})</h3>
               </div>
 
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-                <div className="bg-indigo-50 rounded-xl p-3 text-center">
-                  <p className="text-xl font-bold text-indigo-700">{globalStats.materias}</p>
-                  <p className="text-[10px] text-indigo-500">Materias evaluadas</p>
+                <div className="bg-profesor-50 rounded-xl p-3 text-center">
+                  <p className="text-xl font-bold text-profesor-700">{globalStats.materias}</p>
+                  <p className="text-[10px] text-profesor-500">Materias evaluadas</p>
                 </div>
                 <div className="bg-blue-50 rounded-xl p-3 text-center">
                   <p className="text-xl font-bold text-blue-700">{globalStats.totalEstudiantes}</p>
@@ -604,12 +660,12 @@ export default function ProfesorReportes() {
           {report.map((r, idx) => (
             <div key={idx} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
               {/* Materia header */}
-              <div className="bg-indigo-50 px-5 py-3 border-b border-indigo-100">
+              <div className="bg-profesor-50 px-5 py-3 border-b border-profesor-100">
                 <div className="flex items-center gap-2">
-                  <BookOpen className="w-5 h-5 text-indigo-600" />
-                  <h3 className="font-bold text-indigo-800">{r.materia?.nombre || 'Materia'}</h3>
+                  <BookOpen className="w-5 h-5 text-profesor-600" />
+                  <h3 className="font-bold text-profesor-800">{r.materia?.nombre || 'Materia'}</h3>
                 </div>
-                <p className="text-xs text-indigo-600 mt-1">Período: {selectedPeriodoLabel}</p>
+                <p className="text-xs text-profesor-600 mt-1">Período: {selectedPeriodoLabel}</p>
               </div>
 
               {/* Summary cards */}
@@ -620,10 +676,10 @@ export default function ProfesorReportes() {
                     <p className="text-xl font-bold text-blue-700">{r.estudiantesTotal}</p>
                     <p className="text-[10px] text-blue-500">Estudiantes</p>
                   </div>
-                  <div className="bg-indigo-50 rounded-xl p-3 text-center">
-                    <Award className="w-5 h-5 text-indigo-600 mx-auto mb-1" />
+                  <div className="bg-profesor-50 rounded-xl p-3 text-center">
+                    <Award className="w-5 h-5 text-profesor-600 mx-auto mb-1" />
                     <p className={`text-xl font-bold ${scoreClass(r.promedioGrupo)}`}>{formatScore(r.promedioGrupo)}</p>
-                    <p className="text-[10px] text-indigo-500">Promedio</p>
+                    <p className="text-[10px] text-profesor-500">Promedio</p>
                   </div>
                   <div className="bg-emerald-50 rounded-xl p-3 text-center">
                     <TrendingUp className="w-5 h-5 text-emerald-600 mx-auto mb-1" />

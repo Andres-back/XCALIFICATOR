@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import katex from 'katex';
 import api from '../../api';
 import toast from 'react-hot-toast';
@@ -6,7 +7,7 @@ import {
   Wrench, Plus, Wand2, Loader2, Edit3, Trash2, Send,
   FileText, Grid3X3, Search, Eye, EyeOff, X, BookOpen,
   CheckCircle, Clock, AlertCircle, Link2, BookMarked,
-  Palette, Download, Printer, Save,
+  Palette, Download, Printer, Save, Presentation, Sparkles, ArrowRight,
 } from 'lucide-react';
 import Crucigrama from '../../components/Crucigrama';
 import SopaLetras from '../../components/SopaLetras';
@@ -487,7 +488,7 @@ export default function ProfesorHerramientas() {
     } else if (h.tipo === 'emparejar' && c.emparejar) {
       const pares = c.emparejar.pares || c.emparejar || [];
       body = `<table class="match"><thead><tr><th>Columna A</th><th>Columna B</th></tr></thead><tbody>${
-        pares.map((p, i) => `<tr><td>${i + 1}. ${renderMathForPrint(p.concepto || p.columna_a || '')}</td><td>${String.fromCharCode(65 + i)}. ${renderMathForPrint(p.definicion || p.columna_b || '')}</td></tr>`).join('')
+        pares.map((p, i) => `<tr><td>${i + 1}. ${renderMathForPrint(p.izquierda || p.concepto || p.columna_a || '')}</td><td>${String.fromCharCode(65 + i)}. ${renderMathForPrint(p.derecha || p.definicion || p.columna_b || '')}</td></tr>`).join('')
       }</tbody></table>`;
       if (ocrEnabled) {
         body += `<div class="ocr-mini"><h3>Respuestas OCR</h3><p>Formato sugerido por linea: ${ocrPrefix}1: A, ${ocrPrefix}2: C, ...</p>${pares.map((_, i) => `<div class="resp-line"><span class="resp-label">${ocrPrefix}${i + 1}:</span><span class="resp-fill"></span></div>`).join('')}</div>`;
@@ -586,8 +587,34 @@ export default function ProfesorHerramientas() {
     : herramientas.filter(h => h.tipo === filter);
 
   if (loading) return (
-    <div className="flex justify-center py-20">
-      <div className="animate-spin h-8 w-8 border-4 border-primary-500 border-t-transparent rounded-full"></div>
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div><div className="skeleton h-7 w-40 rounded-lg" /><div className="skeleton h-4 w-80 rounded mt-2" /></div>
+        <div className="skeleton h-9 w-36 rounded-lg" />
+      </div>
+      <div className="skeleton h-14 w-full rounded-xl" />
+      <div className="skeleton h-20 w-full rounded-2xl" />
+      <div className="flex gap-2">{Array.from({ length: 4 }).map((_, i) => <div key={i} className="skeleton h-8 w-20 rounded-lg" />)}</div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} className="bg-white rounded-xl border border-gray-200 p-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="skeleton w-10 h-10 rounded-xl" />
+                <div className="space-y-1.5"><div className="skeleton h-4 w-28 rounded" /><div className="skeleton h-3 w-16 rounded" /></div>
+              </div>
+              <div className="skeleton h-5 w-16 rounded-full" />
+            </div>
+            <div className="skeleton h-3 w-full rounded" />
+            <div className="skeleton h-3 w-24 rounded" />
+            <div className="flex gap-2 flex-wrap">
+              <div className="skeleton h-7 w-16 rounded-lg" />
+              <div className="skeleton h-7 w-20 rounded-lg" />
+              <div className="skeleton h-7 w-14 rounded-lg" />
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 
@@ -618,6 +645,39 @@ export default function ProfesorHerramientas() {
           </p>
         </div>
       </div>
+
+      {/* CTA Presentaciones (NEW · Fase 1) */}
+      <Link
+        to="/profesor/presentacion"
+        className="
+          group relative overflow-hidden flex items-center justify-between gap-4
+          p-5 rounded-2xl border-2 border-transparent
+          bg-gradient-to-r from-profesor-50 via-white to-profesor-50/50
+          hover:border-profesor-300 hover:shadow-md transition-all duration-200
+        "
+      >
+        <div className="flex items-center gap-4 min-w-0">
+          <div className="shrink-0 inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-gradient-to-br from-profesor-500 to-profesor-700 shadow-md shadow-profesor-500/30">
+            <Presentation className="w-6 h-6 text-white" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-base font-bold text-gray-900">Crear Presentación</h3>
+              <span className="badge-profesor flex items-center gap-1">
+                <Sparkles className="w-3 h-3" />
+                Nuevo
+              </span>
+            </div>
+            <p className="text-sm text-gray-600 mt-0.5">
+              Te ayudamos a hacer las diapositivas de tu clase en 3 pasos.
+            </p>
+          </div>
+        </div>
+        <div className="shrink-0 flex items-center gap-1 text-profesor-700 font-semibold text-sm group-hover:gap-2 transition-all">
+          Empezar
+          <ArrowRight className="w-4 h-4" />
+        </div>
+      </Link>
 
       {disabledTools.length > 0 && (
         <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl">
@@ -1396,20 +1456,20 @@ export default function ProfesorHerramientas() {
                     {(editForm.contenido_json.emparejar.pares || editForm.contenido_json.emparejar || []).map((p, i) => (
                       <div key={i} className="flex gap-2">
                         <input type="text" className="input-field text-xs flex-1"
-                          value={p.concepto || p.columna_a || ''}
+                          value={p.izquierda || p.concepto || p.columna_a || ''}
                           placeholder="Columna A"
                           onChange={e => {
                             const pares = [...(editForm.contenido_json.emparejar.pares || editForm.contenido_json.emparejar)];
-                            pares[i] = { ...pares[i], concepto: e.target.value, columna_a: e.target.value };
+                            pares[i] = { ...pares[i], izquierda: e.target.value, concepto: e.target.value, columna_a: e.target.value };
                             const emp = editForm.contenido_json.emparejar.pares ? { ...editForm.contenido_json.emparejar, pares } : pares;
                             setEditForm(pr => ({ ...pr, contenido_json: { ...pr.contenido_json, emparejar: emp } }));
                           }} />
                         <input type="text" className="input-field text-xs flex-1"
-                          value={p.definicion || p.columna_b || ''}
+                          value={p.derecha || p.definicion || p.columna_b || ''}
                           placeholder="Columna B"
                           onChange={e => {
                             const pares = [...(editForm.contenido_json.emparejar.pares || editForm.contenido_json.emparejar)];
-                            pares[i] = { ...pares[i], definicion: e.target.value, columna_b: e.target.value };
+                            pares[i] = { ...pares[i], derecha: e.target.value, definicion: e.target.value, columna_b: e.target.value };
                             const emp = editForm.contenido_json.emparejar.pares ? { ...editForm.contenido_json.emparejar, pares } : pares;
                             setEditForm(pr => ({ ...pr, contenido_json: { ...pr.contenido_json, emparejar: emp } }));
                           }} />

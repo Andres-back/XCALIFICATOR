@@ -39,8 +39,25 @@ export default function AuditLog() {
     : logs;
 
   if (loading) return (
-    <div className="flex justify-center py-20">
-      <div className="animate-spin h-8 w-8 border-4 border-primary-500 border-t-transparent rounded-full"></div>
+    <div>
+      <div className="flex items-center justify-between mb-6">
+        <div><div className="skeleton h-7 w-56 rounded-lg" /><div className="skeleton h-4 w-24 rounded mt-2" /></div>
+        <div className="skeleton h-9 w-28 rounded-lg" />
+      </div>
+      <div className="flex flex-wrap gap-2 mb-4">
+        {Array.from({ length: 6 }).map((_, i) => <div key={i} className="skeleton h-8 w-24 rounded-lg" />)}
+      </div>
+      <div className="card divide-y divide-gray-100">
+        {Array.from({ length: 8 }).map((_, i) => (
+          <div key={i} className="py-3 flex items-start gap-3">
+            <div className="skeleton w-8 h-8 rounded-full shrink-0 mt-0.5" />
+            <div className="flex-1 space-y-2">
+              <div className="flex gap-2"><div className="skeleton h-5 w-28 rounded-full" /><div className="skeleton h-4 w-36 rounded" /></div>
+              <div className="skeleton h-3 w-48 rounded" />
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 

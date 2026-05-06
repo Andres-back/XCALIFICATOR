@@ -6,7 +6,7 @@ import SopaLetras from '../../components/SopaLetras';
 import EmptyState from '../../components/EmptyState';
 import ConfirmDialog from '../../components/ConfirmDialog';
 
-export default function GenerarSopaLetras({ materiaId, materiaNombre }) {
+export default function GenerarSopaLetras({ materiaId }) {
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
     tema: '',

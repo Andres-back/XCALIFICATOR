@@ -1,12 +1,14 @@
-import { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useState, useEffect, useRef } from 'react';
+import { useParams, useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import toast from 'react-hot-toast';
 import {
   Award, Trash2, Edit3, X, Save, ChevronDown, ChevronUp,
   AlertTriangle, CheckCircle, XCircle, BarChart3, Users, TrendingUp, Target,
+  Presentation, Sparkles, Loader2, PlusCircle, Send, ExternalLink,
 } from 'lucide-react';
 import { format } from 'date-fns';
+import StatCard from '../../components/StatCard';
 
 /* ─── Simple Bar for distribution ─── */
 function DistBar({ label, count, max }) {
@@ -276,18 +278,33 @@ function EmparejarReview({ emparejar, respuestaRaw, detallePares }) {
 
 export default function ProfesorNotas() {
   const { examenId } = useParams();
-  const [notas, setNotas] = useState([]);
-  const [stats, setStats] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState(null);
+  const [searchParams] = useSearchParams();
+  const highlightNotaId = searchParams.get('notaId');
+  const highlightRef = useRef(null);
+
+  const [notas, setNotas]       = useState([]);
+  const [stats, setStats]       = useState(null);
+  const [loading, setLoading]   = useState(true);
+  const [editing, setEditing]   = useState(null);
   const [editValues, setEditValues] = useState({ nota: '', retroalimentacion: '' });
-  const [expanded, setExpanded] = useState(null);
+  const [expanded, setExpanded] = useState(highlightNotaId || null);
   const [showStats, setShowStats] = useState(true);
+  const [generandoRepaso, setGenerandoRepaso] = useState(false);
+  const [repasoResult, setRepasoResult] = useState(null);
+
+  // Nota manual
+  const [allStudents, setAllStudents]         = useState([]);
+  const [showManualModal, setShowManualModal] = useState(false);
+  const [manualForm, setManualForm]           = useState({ estudianteId: '', nota: '', retroalimentacion: '' });
+  const [savingManual, setSavingManual]       = useState(false);
+
+  // Enviar retroalimentación
+  const [sendingFeedback, setSendingFeedback] = useState(null); // nota.id en curso
 
   const fetchNotas = () => {
     api.get(`/examenes/notas/examen/${examenId}`)
       .then(res => setNotas(res.data))
-      .catch(() => toast.error('Error'))
+      .catch(() => toast.error('Error cargando notas'))
       .finally(() => setLoading(false));
   };
 
@@ -297,10 +314,29 @@ export default function ProfesorNotas() {
       .catch(() => {});
   };
 
+  // Cargar info del examen para obtener materia_id → lista de estudiantes
+  useEffect(() => {
+    api.get(`/examenes/${examenId}`).then(async (res) => {
+      const materiaId = res.data.materia_id;
+      if (!materiaId) return;
+      const sRes = await api.get(`/materias/${materiaId}/estudiantes`);
+      setAllStudents(sRes.data || []);
+    }).catch(() => {});
+  }, [examenId]);
+
   useEffect(() => {
     fetchNotas();
     fetchStats();
   }, [examenId]);
+
+  // Auto-scroll to highlighted nota when notas are loaded
+  useEffect(() => {
+    if (!highlightNotaId || !notas.length || loading) return;
+    const el = highlightRef.current;
+    if (el) {
+      setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
+    }
+  }, [notas, loading, highlightNotaId]);
 
   const startEdit = (nota) => {
     setEditing(nota.id);
@@ -333,60 +369,176 @@ export default function ProfesorNotas() {
 
   const toggleExpand = (id) => setExpanded(expanded === id ? null : id);
 
-  if (loading) return <div className="flex justify-center py-20"><div className="animate-spin h-8 w-8 border-4 border-primary-500 border-t-transparent rounded-full"></div></div>;
+  // ── Crear nota manual (para estudiantes que entregaron en papel sin OCR) ──
+  const createManualNota = async () => {
+    if (!manualForm.estudianteId || !manualForm.nota) {
+      toast.error('Selecciona un estudiante y escribe la nota');
+      return;
+    }
+    const notaNum = parseFloat(manualForm.nota);
+    if (isNaN(notaNum) || notaNum < 0 || notaNum > 5) {
+      toast.error('La nota debe estar entre 0.0 y 5.0');
+      return;
+    }
+    setSavingManual(true);
+    try {
+      await api.post('/examenes/notas', {
+        estudiante_id: manualForm.estudianteId,
+        examen_id: examenId,
+        nota: notaNum,
+        retroalimentacion: manualForm.retroalimentacion || null,
+      });
+      toast.success('Nota registrada');
+      setShowManualModal(false);
+      setManualForm({ estudianteId: '', nota: '', retroalimentacion: '' });
+      fetchNotas();
+      fetchStats();
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'No se pudo registrar la nota');
+    } finally {
+      setSavingManual(false);
+    }
+  };
+
+  // ── Enviar retroalimentación al estudiante por email/WhatsApp ──
+  const sendFeedback = async (notaId, nombreEstudiante) => {
+    setSendingFeedback(notaId);
+    try {
+      const { data } = await api.post(`/examenes/notas/${notaId}/send-feedback`);
+      const canales = data?.sent_channels || [];
+      if (canales.length > 0) {
+        toast.success(`Retroalimentación enviada a ${nombreEstudiante} vía ${canales.join(' y ')}`);
+      } else {
+        toast('El estudiante no tiene canales de notificación configurados', { icon: 'ℹ️' });
+      }
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'No se pudo enviar la retroalimentación');
+    } finally {
+      setSendingFeedback(null);
+    }
+  };
+
+  // ── Generar presentación de repaso ──
+  const generarRepaso = async () => {
+    if (generandoRepaso) return;
+    if (!stats || !stats.total) {
+      toast.error('Necesitas calificar al menos un estudiante primero');
+      return;
+    }
+    setGenerandoRepaso(true);
+    setRepasoResult(null);
+    const tid = toast.loading('Creando repaso… esto puede tardar 30-90 segundos ✨');
+    try {
+      const { data } = await api.post(`/presentaciones/repaso-examen/${examenId}`, null, {
+        params: { plantilla: 'general', num_slides: 8 },
+        timeout: 240000,
+      });
+      toast.dismiss(tid);
+      toast.success('¡Presentación lista! 🎉');
+      setRepasoResult(data);
+      if (data?.pptx_url) {
+        window.open(data.pptx_url, '_blank', 'noopener');
+      }
+    } catch (err) {
+      toast.dismiss(tid);
+      toast.error(err?.response?.data?.detail || 'No pudimos generar el repaso');
+    } finally {
+      setGenerandoRepaso(false);
+    }
+  };
+
+  if (loading) return (
+    <div className="max-w-4xl mx-auto space-y-4">
+      <div className="flex items-center justify-between mb-4">
+        <div className="skeleton h-7 w-52 rounded-lg" />
+        <div className="skeleton h-8 w-36 rounded-lg" />
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {Array.from({ length: 4 }).map((_, i) => <div key={i} className="skeleton h-24 rounded-xl" />)}
+      </div>
+      <div className="space-y-2">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} className="flex items-center gap-3 p-4 bg-white rounded-xl border border-gray-200">
+            <div className="skeleton w-10 h-10 rounded-full shrink-0" />
+            <div className="flex-1 space-y-1.5">
+              <div className="skeleton h-4 w-40 rounded" />
+              <div className="skeleton h-3 w-24 rounded" />
+            </div>
+            <div className="skeleton h-8 w-16 rounded-lg" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 
   const maxInDist = stats?.distribucion ? Math.max(...stats.distribucion.map(d => d.count), 1) : 1;
 
   return (
     <div className="max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
         <h1 className="text-2xl font-bold text-gray-900">Notas del Examen</h1>
-        {stats && stats.total > 0 && (
-          <button onClick={() => setShowStats(!showStats)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-300 rounded-lg hover:bg-gray-50 transition">
-            <BarChart3 className="w-3.5 h-3.5" />
-            {showStats ? 'Ocultar métricas' : 'Ver métricas'}
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => setShowManualModal(true)}
+            title="Registrar nota de un estudiante que entregó en papel"
+            className="btn-sm bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"
+          >
+            <PlusCircle className="w-3.5 h-3.5" />
+            Agregar nota manual
           </button>
-        )}
+          {stats && stats.total > 0 && (<>
+            <button
+              onClick={generarRepaso}
+              disabled={generandoRepaso}
+              title="Genera diapositivas con las preguntas más falladas"
+              className="btn-sm bg-profesor-600 text-white hover:bg-profesor-700 disabled:opacity-60 disabled:cursor-not-allowed shadow-sm"
+            >
+              {generandoRepaso
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : <><Sparkles className="w-3.5 h-3.5" /><Presentation className="w-3.5 h-3.5" /></>}
+              {generandoRepaso ? 'Creando repaso…' : 'Crear repaso para clase'}
+            </button>
+            <button onClick={() => setShowStats(!showStats)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-300 rounded-lg hover:bg-gray-50 transition">
+              <BarChart3 className="w-3.5 h-3.5" />
+              {showStats ? 'Ocultar métricas' : 'Ver métricas'}
+            </button>
+          </>)}
+        </div>
       </div>
+
+      {/* Resultado del repaso generado */}
+      {repasoResult && (
+        <div className="mb-4 flex items-center gap-3 p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-sm">
+          <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+          <span className="flex-1 text-emerald-800 font-medium">Repaso generado con éxito</span>
+          {repasoResult.pptx_url && (
+            <a href={repasoResult.pptx_url} download target="_blank" rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 px-3 py-1 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition">
+              Descargar .pptx
+            </a>
+          )}
+          {repasoResult.edit_url && (
+            <a href={repasoResult.edit_url} target="_blank" rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 px-3 py-1 text-xs font-semibold text-emerald-700 border border-emerald-300 hover:bg-emerald-100 rounded-lg transition">
+              <ExternalLink className="w-3 h-3" /> Editar en Presenton
+            </a>
+          )}
+          <button onClick={() => setRepasoResult(null)} className="p-1 rounded text-emerald-600 hover:bg-emerald-100">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* ═══════ METRICS DASHBOARD ═══════ */}
       {showStats && stats && stats.total > 0 && (
         <div className="space-y-4 mb-8 animate-fadeIn">
           {/* Top Stats Cards */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div className="bg-gradient-to-br from-indigo-50 to-indigo-100 rounded-xl p-4 border border-indigo-200">
-              <div className="flex items-center gap-2 mb-1">
-                <Users className="w-4 h-4 text-indigo-500" />
-                <p className="text-xs text-indigo-600 font-medium">Calificados</p>
-              </div>
-              <p className="text-2xl font-bold text-indigo-700">{stats.total}</p>
-            </div>
-            <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-4 border border-blue-200">
-              <div className="flex items-center gap-2 mb-1">
-                <TrendingUp className="w-4 h-4 text-blue-500" />
-                <p className="text-xs text-blue-600 font-medium">Promedio</p>
-              </div>
-              <p className="text-2xl font-bold text-blue-700">{stats.promedio} <span className="text-sm font-normal text-blue-400">/ {stats.nota_maxima}</span></p>
-            </div>
-            <div className="bg-gradient-to-br from-emerald-50 to-emerald-100 rounded-xl p-4 border border-emerald-200">
-              <div className="flex items-center gap-2 mb-1">
-                <CheckCircle className="w-4 h-4 text-emerald-500" />
-                <p className="text-xs text-emerald-600 font-medium">Aprobados</p>
-              </div>
-              <p className="text-2xl font-bold text-emerald-700">{stats.tasa_aprobacion}%
-                <span className="text-sm font-normal text-emerald-400 ml-1">({stats.aprobados})</span>
-              </p>
-            </div>
-            <div className="bg-gradient-to-br from-red-50 to-red-100 rounded-xl p-4 border border-red-200">
-              <div className="flex items-center gap-2 mb-1">
-                <XCircle className="w-4 h-4 text-red-500" />
-                <p className="text-xs text-red-600 font-medium">Reprobados</p>
-              </div>
-              <p className="text-2xl font-bold text-red-700">{stats.reprobados}
-                <span className="text-sm font-normal text-red-400 ml-1">({(100 - stats.tasa_aprobacion).toFixed(1)}%)</span>
-              </p>
-            </div>
+            <StatCard icon={Users}       color="indigo"  label="Calificados"  value={stats.total}                                          delay={0}  />
+            <StatCard icon={TrendingUp}  color="blue"    label="Promedio"     value={`${stats.promedio} / ${stats.nota_maxima}`}           delay={60} />
+            <StatCard icon={CheckCircle} color="emerald" label="Aprobados"    value={`${stats.tasa_aprobacion}% (${stats.aprobados})`}     delay={120}/>
+            <StatCard icon={XCircle}     color="red"     label="Reprobados"   value={`${stats.reprobados} (${(100 - stats.tasa_aprobacion).toFixed(1)}%)`} delay={180}/>
           </div>
 
           {/* Second row: min/max/median */}
@@ -473,38 +625,56 @@ export default function ProfesorNotas() {
       ) : (
         <div className="space-y-3">
           {notas.map(n => {
-            const hasDetail = n.detalle_json?.preguntas?.length > 0;
+            const hasDetail    = n.detalle_json?.preguntas?.length > 0;
             const isAutoGraded = n.detalle_json?.calificacion_automatica;
-            const hasPending = n.detalle_json?.tiene_preguntas_abiertas;
-            const examContent = n.examen_contenido_json || {};
+            const hasPending   = n.detalle_json?.tiene_preguntas_abiertas;
+            const needsReview  = n.detalle_json?.requiere_revision_profesor;
+            const examContent  = n.examen_contenido_json || {};
             const respuestasMap = parseRespuestaMap(n.respuestas_json);
-            const examType = n.examen_tipo || n.detalle_json?.tipo || '';
+            const examType     = n.examen_tipo || n.detalle_json?.tipo || '';
+            const notaNum      = n.nota != null ? parseFloat(n.nota) : null;
 
+            const isHighlighted = n.id === highlightNotaId;
             return (
-              <div key={n.id} className="card">
+              <div
+                key={n.id}
+                ref={isHighlighted ? highlightRef : null}
+                className={`card transition-all duration-300
+                  ${needsReview ? 'border-amber-200 bg-amber-50/30' : ''}
+                  ${isHighlighted ? 'ring-2 ring-indigo-400 border-indigo-300' : ''}
+                `}
+              >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-lg font-extrabold
-                      ${parseFloat(n.nota) >= 3.0 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
-                      {n.nota}
+                      ${needsReview   ? 'bg-amber-100 text-amber-700'
+                        : notaNum == null  ? 'bg-gray-100 text-gray-400'
+                        : notaNum >= 3.0   ? 'bg-emerald-100 text-emerald-700'
+                                          : 'bg-red-100 text-red-700'}`}>
+                      {needsReview ? <AlertTriangle className="w-5 h-5" /> : (n.nota ?? '—')}
                     </div>
                     <div>
                       <p className="font-semibold text-gray-900 text-sm">
                         {n.estudiante_nombre ? `${n.estudiante_nombre} ${n.estudiante_apellido || ''}`.trim() : n.estudiante_id}
                       </p>
-                      <div className="flex items-center gap-2 mt-0.5">
+                      <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
                         <span className="text-xs text-gray-400">
                           {format(new Date(n.created_at), 'dd/MM/yyyy HH:mm')}
                         </span>
-                        {n.detalle_json?.nota_maxima && (
+                        {!needsReview && n.detalle_json?.nota_maxima && (
                           <span className="text-xs text-gray-400">/ {n.detalle_json.nota_maxima}</span>
+                        )}
+                        {needsReview && (
+                          <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-amber-100 text-amber-700 rounded border border-amber-200 flex items-center gap-0.5">
+                            <AlertTriangle className="w-2.5 h-2.5" /> Revisar OCR
+                          </span>
                         )}
                         {examType && (
                           <span className="px-1.5 py-0.5 text-[10px] font-medium bg-violet-100 text-violet-700 rounded uppercase">
                             {String(examType).replaceAll('_', ' ')}
                           </span>
                         )}
-                        {isAutoGraded && (
+                        {isAutoGraded && !needsReview && (
                           <span className="px-1.5 py-0.5 text-[10px] font-medium bg-blue-100 text-blue-700 rounded">Auto</span>
                         )}
                         {hasPending && (
@@ -521,7 +691,7 @@ export default function ProfesorNotas() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1">
-                    {hasDetail && (
+                    {(hasDetail || needsReview) && (
                       <button onClick={() => toggleExpand(n.id)}
                         className="p-2 rounded text-gray-500 hover:bg-gray-100" title="Ver detalle">
                         {expanded === n.id ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
@@ -538,6 +708,16 @@ export default function ProfesorNotas() {
                       </>
                     ) : (
                       <>
+                        <button
+                          onClick={() => sendFeedback(n.id, n.estudiante_nombre || 'estudiante')}
+                          disabled={sendingFeedback === n.id}
+                          title="Enviar retroalimentación por email/WhatsApp"
+                          className="p-2 rounded text-emerald-600 hover:bg-emerald-50 disabled:opacity-50"
+                        >
+                          {sendingFeedback === n.id
+                            ? <Loader2 className="w-4 h-4 animate-spin" />
+                            : <Send className="w-4 h-4" />}
+                        </button>
                         <button onClick={() => startEdit(n)} className="p-2 rounded text-blue-600 hover:bg-blue-50">
                           <Edit3 className="w-4 h-4" />
                         </button>
@@ -561,6 +741,31 @@ export default function ProfesorNotas() {
                       value={editValues.retroalimentacion}
                       onChange={e => setEditValues(p => ({ ...p, retroalimentacion: e.target.value }))}
                       placeholder="Retroalimentación..." />
+                  </div>
+                )}
+
+                {/* OCR review — show extracted text so professor can grade manually */}
+                {expanded === n.id && needsReview && (
+                  <div className="mt-3 border-t border-amber-100 pt-3">
+                    <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 mb-3">
+                      <p className="text-xs font-semibold text-amber-800 mb-1 flex items-center gap-1.5">
+                        <AlertTriangle className="w-3.5 h-3.5" /> Segunda valoración requerida
+                      </p>
+                      <p className="text-xs text-amber-700">
+                        {n.detalle_json?.motivo_revision || 'OCR con baja confianza'}
+                      </p>
+                      <p className="text-xs text-amber-600 mt-1">
+                        Usa el botón <strong>Editar</strong> (lápiz) para ingresar la nota manualmente después de revisar el texto.
+                      </p>
+                    </div>
+                    {(n.texto_extraido || n.detalle_json?.texto_extraido_preview) && (
+                      <div>
+                        <p className="text-[10px] font-semibold text-gray-500 uppercase mb-1">Texto extraído por OCR</p>
+                        <pre className="text-xs text-gray-700 bg-gray-50 rounded-lg px-3 py-2.5 whitespace-pre-wrap border border-gray-200 max-h-56 overflow-y-auto">
+                          {n.texto_extraido || n.detalle_json?.texto_extraido_preview}
+                        </pre>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -687,6 +892,76 @@ export default function ProfesorNotas() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* ═══════ MODAL: NOTA MANUAL ═══════ */}
+      {showManualModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-lg font-bold text-gray-900">Registrar nota manual</h2>
+              <button onClick={() => setShowManualModal(false)} className="p-2 rounded-lg hover:bg-gray-100 text-gray-500">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs text-gray-500 mb-5">
+              Para estudiantes que entregaron en papel. Si ya tiene nota, cierra este modal y edítala directamente en la lista.
+            </p>
+            <div className="space-y-4">
+              <div>
+                <label className="input-label">Estudiante</label>
+                {allStudents.length > 0 ? (
+                  <select
+                    className="input-field"
+                    value={manualForm.estudianteId}
+                    onChange={e => setManualForm(p => ({ ...p, estudianteId: e.target.value }))}
+                  >
+                    <option value="">Seleccionar estudiante…</option>
+                    {allStudents
+                      .filter(s => !notas.find(n => String(n.estudiante_id) === String(s.id)))
+                      .map(s => (
+                        <option key={s.id} value={s.id}>
+                          {s.nombre} {s.apellido} – {s.documento}
+                        </option>
+                      ))}
+                  </select>
+                ) : (
+                  <p className="text-xs text-gray-400 mt-1">Cargando lista de estudiantes…</p>
+                )}
+              </div>
+              <div>
+                <label className="input-label">Nota <span className="text-gray-400 font-normal">(0.0 – 5.0)</span></label>
+                <input
+                  type="number" step="0.01" min="0" max="5" placeholder="Ej: 3.5"
+                  className="input-field"
+                  value={manualForm.nota}
+                  onChange={e => setManualForm(p => ({ ...p, nota: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="input-label">Retroalimentación <span className="text-gray-400 font-normal">(opcional)</span></label>
+                <textarea
+                  rows={3} placeholder="Comentarios sobre el desempeño del estudiante…"
+                  className="input-field text-sm"
+                  value={manualForm.retroalimentacion}
+                  onChange={e => setManualForm(p => ({ ...p, retroalimentacion: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button onClick={() => setShowManualModal(false)}
+                className="flex-1 btn-md bg-white text-gray-700 border border-gray-300 hover:bg-gray-50">
+                Cancelar
+              </button>
+              <button onClick={createManualNota}
+                disabled={savingManual || !manualForm.estudianteId || !manualForm.nota}
+                className="flex-1 btn-md bg-profesor-600 text-white hover:bg-profesor-700 disabled:opacity-60">
+                {savingManual ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                {savingManual ? 'Guardando…' : 'Guardar nota'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

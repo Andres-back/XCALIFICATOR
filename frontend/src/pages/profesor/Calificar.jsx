@@ -4,7 +4,7 @@ import api from '../../api';
 import toast from 'react-hot-toast';
 import {
   Upload, Loader2, CheckCircle, Monitor, Camera,
-  User, Clock, Award, ChevronRight, RefreshCw,
+  User, Clock, Award, ChevronRight, RefreshCw, AlertTriangle,
 } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
 import MathText from '../../components/MathText';
@@ -15,7 +15,7 @@ function Tab({ active, icon: Icon, label, onClick }) {
     <button onClick={onClick}
       className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold rounded-t-xl border-b-2 transition-all
         ${active
-          ? 'border-indigo-600 text-indigo-700 bg-white shadow-sm'
+          ? 'border-profesor-600 text-profesor-700 bg-white shadow-sm'
           : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}>
       <Icon className="w-4 h-4" /> {label}
     </button>
@@ -25,15 +25,55 @@ function Tab({ active, icon: Icon, label, onClick }) {
 /* ─── Grading Result Card ─── */
 function ResultCard({ result }) {
   if (!result) return null;
+
+  const requiereRevision = result.detalle_json?.requiere_revision_profesor;
+  const ocrQuality      = result.detalle_json?.ocr_quality;
+  const ocrMotivo       = result.detalle_json?.motivo_revision || result.detalle_json?.ocr_motivo;
+  const textoPreview    = result.detalle_json?.texto_extraido_preview || result.texto_extraido;
+
   return (
     <div className="card mt-6 animate-fadeIn">
       <h2 className="font-semibold text-gray-900 mb-4">Resultado</h2>
-      <div className="flex items-center gap-4 mb-4">
-        <div className="text-4xl font-extrabold text-indigo-600">{result.nota}</div>
-        <div className="text-sm text-gray-400">/ {result.detalle_json?.nota_maxima || 5.0}</div>
-      </div>
 
-      {result.detalle_json?.preguntas && (
+      {/* ── LOW confidence: review required ── */}
+      {requiereRevision && (
+        <div className="mb-4 p-3 bg-amber-50 border border-amber-300 rounded-xl flex gap-3">
+          <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-semibold text-amber-800">Segunda valoración requerida</p>
+            {ocrMotivo && (
+              <p className="text-xs text-amber-700 mt-0.5">{ocrMotivo}</p>
+            )}
+            <p className="text-xs text-amber-600 mt-1">
+              La nota quedó <strong>pendiente</strong>. Revisa el texto extraído abajo y
+              califica manualmente desde la pestaña <em>Notas</em>.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* ── MEDIUM confidence: soft warning ── */}
+      {!requiereRevision && ocrQuality === 'media' && (
+        <div className="mb-4 p-2.5 bg-yellow-50 border border-yellow-200 rounded-xl flex gap-2">
+          <AlertTriangle className="w-4 h-4 text-yellow-600 shrink-0 mt-0.5" />
+          <p className="text-xs text-yellow-700">
+            {ocrMotivo || 'Confianza OCR media — se recomienda verificar la calificación'}
+          </p>
+        </div>
+      )}
+
+      {/* ── Grade display (only when not pending review) ── */}
+      {requiereRevision ? (
+        <p className="text-sm text-gray-500 italic mb-3">Nota pendiente de revisión manual</p>
+      ) : (
+        <div className="flex items-center gap-4 mb-4">
+          <div className="text-4xl font-extrabold text-profesor-600">{result.nota}</div>
+          <div className="text-sm text-gray-400">/ {result.detalle_json?.nota_maxima || 5.0}</div>
+        </div>
+      )}
+
+      {/* ── Per-question breakdown ── */}
+      {!requiereRevision && result.detalle_json?.preguntas && (
         <div className="space-y-2">
           {result.detalle_json.preguntas.map((p, i) => (
             <div key={i} className={`p-3 rounded-lg border ${p.correcto
@@ -50,11 +90,24 @@ function ResultCard({ result }) {
         </div>
       )}
 
-      {result.retroalimentacion && (
+      {/* ── General feedback (only when graded) ── */}
+      {!requiereRevision && result.retroalimentacion && (
         <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
           <h3 className="text-sm font-medium text-blue-800 mb-1">Retroalimentación General</h3>
           <MathText text={result.retroalimentacion} className="text-xs text-blue-700 whitespace-pre-line" />
         </div>
+      )}
+
+      {/* ── Extracted text preview (always shown so professor can verify) ── */}
+      {textoPreview && (
+        <details className="mt-4">
+          <summary className="text-xs font-medium text-gray-500 cursor-pointer select-none hover:text-gray-700">
+            Ver texto extraído por OCR
+          </summary>
+          <pre className="mt-2 p-3 bg-gray-50 rounded-lg text-xs text-gray-600 whitespace-pre-wrap border border-gray-200 max-h-48 overflow-y-auto">
+            {textoPreview}
+          </pre>
+        </details>
       )}
     </div>
   );
@@ -155,14 +208,25 @@ export default function Calificar() {
   const handleGradeAll = async () => {
     const pending = submissions.filter(s => !s.ya_calificado);
     if (!pending.length) { toast.error('Todas las respuestas ya están calificadas'); return; }
+    let ok = 0;
+    const failed = [];
     for (const sub of pending) {
       setGradingId(sub.estudiante_id);
       try {
         await api.post(`/grading/grade-online/${examenId}/${sub.estudiante_id}`);
-      } catch { /* continue */ }
+        ok++;
+      } catch (err) {
+        failed.push(sub.estudiante_nombre || sub.estudiante_id);
+      }
     }
     setGradingId(null);
-    toast.success(`${pending.length} respuestas calificadas`);
+    if (failed.length === 0) {
+      toast.success(`${ok} ${ok === 1 ? 'respuesta calificada' : 'respuestas calificadas'} ✓`);
+    } else if (ok > 0) {
+      toast(`${ok} calificadas, ${failed.length} con error: ${failed.join(', ')}`, { icon: '⚠️' });
+    } else {
+      toast.error(`No se pudo calificar ninguna respuesta`);
+    }
     loadSubmissions();
   };
 
@@ -206,7 +270,7 @@ export default function Calificar() {
               </button>
               {submissions.some(s => !s.ya_calificado) && (<>
                 <button onClick={handleGradeAll} disabled={!!gradingId}
-                  className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition disabled:opacity-60">
+                  className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-profesor-600 rounded-lg hover:bg-profesor-700 transition disabled:opacity-60">
                   <Award className="w-3.5 h-3.5" /> Calificar Todas
                 </button>
                 <span className="text-[10px] text-gray-400 hidden md:inline self-center">Obj. automáticas · Abiertas con IA</span>
@@ -232,8 +296,10 @@ export default function Calificar() {
                   className="flex items-center justify-between p-4 bg-white rounded-xl border border-gray-200 hover:shadow-sm transition">
                   <div className="flex items-center gap-3">
                     <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold
-                      ${sub.ya_calificado ? 'bg-emerald-100 text-emerald-700' : 'bg-indigo-100 text-indigo-700'}`}>
-                      <User className="w-5 h-5" />
+                      ${sub.requiere_revision ? 'bg-amber-100 text-amber-700'
+                        : sub.ya_calificado   ? 'bg-emerald-100 text-emerald-700'
+                                              : 'bg-indigo-100 text-indigo-700'}`}>
+                      {sub.requiere_revision ? <AlertTriangle className="w-5 h-5" /> : <User className="w-5 h-5" />}
                     </div>
                     <div>
                       <p className="font-semibold text-gray-900 text-sm">{sub.estudiante_nombre}</p>
@@ -246,7 +312,11 @@ export default function Calificar() {
                     </div>
                   </div>
                   <div>
-                    {sub.ya_calificado ? (
+                    {sub.requiere_revision ? (
+                      <span className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-amber-700 bg-amber-50 rounded-lg border border-amber-300">
+                        <AlertTriangle className="w-3.5 h-3.5" /> Revisar OCR
+                      </span>
+                    ) : sub.ya_calificado ? (
                       <div className="flex items-center gap-2">
                         {sub.nota != null && (
                           <span className="text-sm font-bold text-indigo-700 bg-indigo-50 px-2 py-1 rounded-lg">
@@ -268,7 +338,7 @@ export default function Calificar() {
                     ) : (
                       <button onClick={() => handleGradeOnline(sub.estudiante_id)}
                         disabled={!!gradingId}
-                        className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-violet-600 rounded-lg hover:bg-violet-700 transition disabled:opacity-60">
+                        className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-profesor-600 rounded-lg hover:bg-profesor-700 transition disabled:opacity-60">
                         {gradingId === sub.estudiante_id ? (
                           <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Calificando...</>
                         ) : (
@@ -310,7 +380,7 @@ export default function Calificar() {
                 <input {...getInputProps()} />
                 <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2" />
                 {file ? (
-                  <p className="text-sm text-indigo-600 font-medium">{file.name}</p>
+                  <p className="text-sm text-profesor-600 font-medium">{file.name}</p>
                 ) : (
                   <p className="text-sm text-gray-500">
                     Arrastra una imagen o haz clic para seleccionar
