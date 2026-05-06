@@ -45,6 +45,22 @@ function PresentationCard({ pres, onDelete }) {
   const colors = COLOR_CLASSES[meta.color] || COLOR_CLASSES.profesor;
   const thumb = pres.thumbnails?.[0];
   const created = pres.created_at ? new Date(pres.created_at) : null;
+  const [openingEditor, setOpeningEditor] = useState(false);
+
+  const handleOpenEditor = async () => {
+    if (!pres.edit_url) return;
+    setOpeningEditor(true);
+    try {
+      const res = await api.get('/presentaciones/presenton-token');
+      const token = res.data.token;
+      document.cookie = `presenton_session=${token}; path=/; SameSite=Lax; max-age=86400`;
+    } catch {
+      // Si falla la obtención del token, el usuario verá el login de Presenton
+    } finally {
+      setOpeningEditor(false);
+    }
+    window.open(pres.edit_url, '_blank', 'noopener,noreferrer');
+  };
 
   return (
     <article className="
@@ -117,15 +133,17 @@ function PresentationCard({ pres, onDelete }) {
             </a>
           )}
           {pres.edit_url && (
-            <a
-              href={pres.edit_url}
-              target="_blank"
-              rel="noopener noreferrer"
+            <button
+              type="button"
+              onClick={handleOpenEditor}
+              disabled={openingEditor}
               title="Abrir editor de Presenton"
-              className="inline-flex items-center justify-center gap-1.5 border border-gray-300 hover:bg-gray-50 text-gray-600 rounded-lg p-2 transition-colors"
+              className="inline-flex items-center justify-center gap-1.5 border border-gray-300 hover:bg-gray-50 text-gray-600 rounded-lg p-2 transition-colors disabled:opacity-60"
             >
-              <ExternalLink className="w-3.5 h-3.5" />
-            </a>
+              {openingEditor
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : <ExternalLink className="w-3.5 h-3.5" />}
+            </button>
           )}
           <button
             type="button"

@@ -488,7 +488,7 @@ export default function ProfesorHerramientas() {
     } else if (h.tipo === 'emparejar' && c.emparejar) {
       const pares = c.emparejar.pares || c.emparejar || [];
       body = `<table class="match"><thead><tr><th>Columna A</th><th>Columna B</th></tr></thead><tbody>${
-        pares.map((p, i) => `<tr><td>${i + 1}. ${renderMathForPrint(p.concepto || p.columna_a || '')}</td><td>${String.fromCharCode(65 + i)}. ${renderMathForPrint(p.definicion || p.columna_b || '')}</td></tr>`).join('')
+        pares.map((p, i) => `<tr><td>${i + 1}. ${renderMathForPrint(p.izquierda || p.concepto || p.columna_a || '')}</td><td>${String.fromCharCode(65 + i)}. ${renderMathForPrint(p.derecha || p.definicion || p.columna_b || '')}</td></tr>`).join('')
       }</tbody></table>`;
       if (ocrEnabled) {
         body += `<div class="ocr-mini"><h3>Respuestas OCR</h3><p>Formato sugerido por linea: ${ocrPrefix}1: A, ${ocrPrefix}2: C, ...</p>${pares.map((_, i) => `<div class="resp-line"><span class="resp-label">${ocrPrefix}${i + 1}:</span><span class="resp-fill"></span></div>`).join('')}</div>`;
@@ -1456,20 +1456,20 @@ export default function ProfesorHerramientas() {
                     {(editForm.contenido_json.emparejar.pares || editForm.contenido_json.emparejar || []).map((p, i) => (
                       <div key={i} className="flex gap-2">
                         <input type="text" className="input-field text-xs flex-1"
-                          value={p.concepto || p.columna_a || ''}
+                          value={p.izquierda || p.concepto || p.columna_a || ''}
                           placeholder="Columna A"
                           onChange={e => {
                             const pares = [...(editForm.contenido_json.emparejar.pares || editForm.contenido_json.emparejar)];
-                            pares[i] = { ...pares[i], concepto: e.target.value, columna_a: e.target.value };
+                            pares[i] = { ...pares[i], izquierda: e.target.value, concepto: e.target.value, columna_a: e.target.value };
                             const emp = editForm.contenido_json.emparejar.pares ? { ...editForm.contenido_json.emparejar, pares } : pares;
                             setEditForm(pr => ({ ...pr, contenido_json: { ...pr.contenido_json, emparejar: emp } }));
                           }} />
                         <input type="text" className="input-field text-xs flex-1"
-                          value={p.definicion || p.columna_b || ''}
+                          value={p.derecha || p.definicion || p.columna_b || ''}
                           placeholder="Columna B"
                           onChange={e => {
                             const pares = [...(editForm.contenido_json.emparejar.pares || editForm.contenido_json.emparejar)];
-                            pares[i] = { ...pares[i], definicion: e.target.value, columna_b: e.target.value };
+                            pares[i] = { ...pares[i], derecha: e.target.value, definicion: e.target.value, columna_b: e.target.value };
                             const emp = editForm.contenido_json.emparejar.pares ? { ...editForm.contenido_json.emparejar, pares } : pares;
                             setEditForm(pr => ({ ...pr, contenido_json: { ...pr.contenido_json, emparejar: emp } }));
                           }} />
