@@ -11,3 +11,18 @@ pgdata/
 uploads/
 *.log
 Volatil/
+
+# Herramientas de análisis (salidas generadas, no código fuente)
+frontend/eslint-report.json
+frontend/.jscpd-report/
+
+# Assets duplicados en raíz (los originales viven en frontend/public/)
+icono.png
+login.mp4
+mascota_estudiando.png
+
+# Servicio externo Presenton (repo independiente)
+presenton/
+
+# Artefactos de sesiones de IA
+.claude/
