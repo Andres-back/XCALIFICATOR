@@ -26,3 +26,16 @@ presenton/
 
 # Artefactos de sesiones de IA
 .claude/
+
+# Generated artifacts and temporary review material
+.playwright-cli/
+DEBUG/
+CONTEXTO/
+output/
+outputs/
+tmp_*.diff
+scan-frontend.ps1
+scripts/check_api_contracts.cjs
+
+# Local SSL keys
+nginx/ssl/*.key
