@@ -35,20 +35,11 @@ export default function Cuento({ cuento, titulo }) {
   const personajes = cuento.personajes || [];
   const paragraphs = texto.split('\n\n').filter(p => p.trim());
 
-  // ── URL migration (old image.pollinations.ai → gen.pollinations.ai) ──
-  const POLLINATIONS_KEY = 'sk_E6l6TqFX76iKPEZ6qzXLd8lrDBk88wKo';
-  const migrateUrl = (url) => {
-    if (!url) return '';
-    let u = url.replace('https://image.pollinations.ai/prompt/', 'https://gen.pollinations.ai/image/');
-    if (!u.includes('key=')) u += `&key=${POLLINATIONS_KEY}`;
-    return u;
-  };
-
-  // Resolve URLs – new cuentos have both, old ones only have imagen_url
+  // Resolve URLs â€“ new cuentos have both, old ones only have imagen_url
   const rawColor = cuento.imagen_url_color || cuento.imagen_url || '';
   const rawBW    = cuento.imagen_url_colorear || '';
-  const urlColor = migrateUrl(rawColor);
-  const urlBW    = migrateUrl(rawBW);
+  const urlColor = rawColor;
+  const urlBW    = rawBW;
 
   const hasColorImage = !!urlColor;
   const hasBWImage    = !!urlBW;
@@ -65,7 +56,7 @@ export default function Cuento({ cuento, titulo }) {
     else                       { setErrorBW(false);    setLoadedBW(false);    setRetryBW(c => c + 1); }
   }, [imageMode]);
 
-  /* ── Print entire cuento (uses color illustration) ── */
+  /* â”€â”€ Print entire cuento (uses color illustration) â”€â”€ */
   const handlePrint = () => {
     const imgUrl = effectiveColorUrl || effectiveBWUrl;
     const safeTitle = escapeHtml(titulo || 'Cuento');
@@ -90,9 +81,9 @@ export default function Cuento({ cuento, titulo }) {
 </style></head><body>
   <h1>${safeTitle}</h1>
   ${personajes.length ? `<p class="personajes">Personajes: ${safePersonajes}</p>` : ''}
-  ${imgUrl ? `<div class="img-c"><img src="${safeImgUrl}" alt="Ilustración" /></div>` : ''}
+  ${imgUrl ? `<div class="img-c"><img src="${safeImgUrl}" alt="IlustraciÃ³n" /></div>` : ''}
   ${safeParagraphs}
-  <div class="moraleja"><strong>✨ Moraleja:</strong> ${safeMoraleja}</div>
+  <div class="moraleja"><strong>âœ¨ Moraleja:</strong> ${safeMoraleja}</div>
 </body></html>`);
     pw.document.close();
     if (imgUrl) {
@@ -103,16 +94,16 @@ export default function Cuento({ cuento, titulo }) {
     } else { setTimeout(() => pw.print(), 300); }
   };
 
-  /* ── Print ONLY the coloring page (B&W image) ── */
+  /* â”€â”€ Print ONLY the coloring page (B&W image) â”€â”€ */
   const handlePrintColoringPage = () => {
     const imgUrl = effectiveBWUrl || effectiveColorUrl;
     if (!imgUrl) return;
-    const safeTitle = escapeHtml(titulo || 'Página para colorear');
+    const safeTitle = escapeHtml(titulo || 'PÃ¡gina para colorear');
     const safeImgUrl = escapeHtml(imgUrl);
 
     const pw = window.open('', '_blank');
     if (!pw) return;
-    pw.document.write(`<!DOCTYPE html><html><head><title>Página para Colorear - ${safeTitle}</title>
+    pw.document.write(`<!DOCTYPE html><html><head><title>PÃ¡gina para Colorear - ${safeTitle}</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   html,body{width:100%;height:100%}
@@ -121,8 +112,8 @@ export default function Cuento({ cuento, titulo }) {
   img{max-width:100%;max-height:calc(100vh - 60px);object-fit:contain;border-radius:8px}
   @media print{body{padding:5mm}h2{font-size:20px}}
 </style></head><body>
-  <h2>🎨 ${safeTitle}</h2>
-  <img src="${safeImgUrl}" alt="Página para colorear" />
+  <h2>ðŸŽ¨ ${safeTitle}</h2>
+  <img src="${safeImgUrl}" alt="PÃ¡gina para colorear" />
 </body></html>`);
     pw.document.close();
     const img = new Image();
@@ -133,7 +124,7 @@ export default function Cuento({ cuento, titulo }) {
 
   const anyImage = hasColorImage || hasBWImage;
 
-  /* ── Render helper for a single image panel ── */
+  /* â”€â”€ Render helper for a single image panel â”€â”€ */
   const renderImagePanel = (url, loaded, error, setLoaded, setError, retryKey, loadingIcon, loadingText) => (
     <>
       {!loaded && !error && (
@@ -159,7 +150,7 @@ export default function Cuento({ cuento, titulo }) {
       <img
         key={retryKey}
         src={url}
-        alt={imageMode === 'colorear' ? 'Página para colorear' : 'Ilustración a color'}
+        alt={imageMode === 'colorear' ? 'PÃ¡gina para colorear' : 'IlustraciÃ³n a color'}
         crossOrigin="anonymous"
         className={`w-full max-h-[28rem] object-contain transition-opacity duration-500 ${loaded ? 'opacity-100' : 'opacity-0 absolute'}`}
         onLoad={() => setLoaded(true)}
@@ -221,7 +212,7 @@ export default function Cuento({ cuento, titulo }) {
                 effectiveColorUrl, loadedColor, errorColor, setLoadedColor, setErrorColor,
                 `color-${retryColor}`,
                 <ImageIcon className="w-12 h-12 text-gray-300 mx-auto" />,
-                'Generando ilustración a color…'
+                'Generando ilustraciÃ³n a colorâ€¦'
               )
             }
             {/* B&W panel (only in dual mode + colorear) */}
@@ -230,7 +221,7 @@ export default function Cuento({ cuento, titulo }) {
                 effectiveBWUrl, loadedBW, errorBW, setLoadedBW, setErrorBW,
                 `bw-${retryBW}`,
                 <Paintbrush className="w-12 h-12 text-gray-300 mx-auto" />,
-                'Generando página para colorear…'
+                'Generando pÃ¡gina para colorearâ€¦'
               )
             }
 
@@ -238,7 +229,7 @@ export default function Cuento({ cuento, titulo }) {
             {currentLoaded && (
               <div className="absolute bottom-2 right-2">
                 <span className="px-2 py-1 bg-black/40 text-white text-[10px] rounded-lg backdrop-blur-sm flex items-center gap-1">
-                  <Palette className="w-3 h-3" /> Pollinations
+                  <Palette className="w-3 h-3" /> Imagen IA
                 </span>
               </div>
             )}
@@ -292,7 +283,7 @@ export default function Cuento({ cuento, titulo }) {
         {currentUrl && currentLoaded && (
           <a href={currentUrl} target="_blank" rel="noopener noreferrer"
             className="flex items-center gap-2 px-4 py-2 bg-violet-100 text-violet-700 rounded-xl text-sm font-medium hover:bg-violet-200 transition">
-            <Download className="w-4 h-4" /> Descargar {imageMode === 'colorear' ? 'para colorear' : 'ilustración'}
+            <Download className="w-4 h-4" /> Descargar {imageMode === 'colorear' ? 'para colorear' : 'ilustraciÃ³n'}
           </a>
         )}
       </div>

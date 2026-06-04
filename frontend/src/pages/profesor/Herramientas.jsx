@@ -1274,7 +1274,7 @@ export default function ProfesorHerramientas() {
                     <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl">
                       <p className="text-xs text-rose-700">
                         <span className="font-semibold">📖 Generador de cuentos:</span> Se genera un cuento educativo con moraleja, personajes y
-                        una ilustración generada por IA (Pollinations) que puede usarse como página para colorear.
+                        una ilustración generada por IA cuando el proveedor interno de imágenes esté configurado.
                       </p>
                     </div>
                   </div>

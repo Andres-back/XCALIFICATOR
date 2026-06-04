@@ -790,22 +790,6 @@ async def generate_coloring_prompt(descripcion: str, allow_letters: bool = False
     return _require_content(chat.choices[0].message.content, "generate_coloring_prompt")
 
 
-def get_pollinations_image_url(prompt: str, model: str = "flux") -> str:
-    """Build a Pollinations image URL (gen.pollinations.ai) for the given prompt.
-
-    Args:
-        prompt: Text description of the image.
-        model:  Pollinations model name — 'flux' (Flux Schnell), 'zimage' (Z-Image Turbo), etc.
-    """
-    import urllib.parse
-    import random
-    from app.core.config import get_settings
-    encoded = urllib.parse.quote(prompt)
-    seed = random.randint(1, 99999)
-    key = get_settings().POLLINATIONS_API_KEY
-    return f"https://gen.pollinations.ai/image/{encoded}?model={model}&width=768&height=768&nologo=true&seed={seed}&key={key}"
-
-
 async def classify_writing(text_sample: str) -> str:
     """Classify if text is handwritten or printed."""
     chat = client.chat.completions.create(

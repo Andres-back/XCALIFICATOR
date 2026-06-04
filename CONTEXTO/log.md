@@ -31,5 +31,5 @@
 
 - Modulo: presentaciones y herramientas docentes.
 - Cambio: se eliminaron los bancos de imagenes stock del flujo de presentaciones.
-- Nueva regla: las diapositivas usan imagenes generadas por IA mediante URL de generacion (`gen.pollinations.ai`) y `POLLINATIONS_API_KEY` si esta configurada.
+- Nueva regla: las diapositivas no usan bancos stock ni URLs externas hardcodeadas; quedan preparadas para integrarse con el proveedor interno de imagenes.
 - Despliegue: se retiraron las variables de bancos stock y proveedor externo de imagenes de plantillas y Docker Compose.

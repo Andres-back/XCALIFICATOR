@@ -20,7 +20,7 @@ from app.schemas.schemas import (
 )
 from app.services.groq_service import (
     generate_exam, generate_sopa_letras, generate_crucigrama,
-    generate_emparejar, generate_cuento, get_pollinations_image_url,
+    generate_emparejar, generate_cuento,
     generate_coloring_prompt,
 )
 from app.services.google_slides_service import GoogleSlidesService
@@ -438,22 +438,18 @@ async def generate_herramienta(
                 moraleja_tema=params_config["moraleja_tema"],
             )
             cuento_data = raw.get("cuento", {})
-            # Generate illustration using Pollinations — color + coloring page
             image_prompt = cuento_data.get("image_prompt", "")
-            imagen_url_color = ""
-            imagen_url_colorear = ""
-            if image_prompt:
-                imagen_url_color = get_pollinations_image_url(
-                    image_prompt + ", children's book illustration, vibrant colors, watercolor style, detailed, kid-friendly",
-                    model="flux",
-                )
-                imagen_url_colorear = get_pollinations_image_url(
-                    image_prompt + ", coloring book page, black and white only, thick clean outlines, no color, no shading, no gradients, white background, line drawing, printable",
-                    model="zimage",
-                )
-            cuento_data["imagen_url"] = imagen_url_color
-            cuento_data["imagen_url_color"] = imagen_url_color
-            cuento_data["imagen_url_colorear"] = imagen_url_colorear
+            cuento_data["imagen_url"] = ""
+            cuento_data["imagen_url_color"] = ""
+            cuento_data["imagen_url_colorear"] = ""
+            cuento_data["image_prompt_color"] = (
+                image_prompt + ", children's book illustration, vibrant colors, watercolor style, detailed, kid-friendly"
+                if image_prompt else ""
+            )
+            cuento_data["image_prompt_colorear"] = (
+                image_prompt + ", coloring book page, black and white only, thick clean outlines, no color, no shading, white background, line drawing, printable"
+                if image_prompt else ""
+            )
             contenido = {
                 "titulo": raw.get("titulo", titulo or tema),
                 "preguntas": [],
@@ -481,13 +477,13 @@ async def generate_herramienta(
                     "no color, no shading, no gradients, white background, line art, printable, "
                     "kid-friendly, no text, no words, no letters, no title"
                 )
-            imagen_url = get_pollinations_image_url(image_prompt, model="flux")
             contenido = {
                 "titulo": titulo or f"Para Colorear: {tema}",
                 "preguntas": [],
                 "para_colorear": {
                     "descripcion": desc,
-                    "imagen_url": imagen_url,
+                    "imagen_url": "",
+                    "image_prompt": image_prompt,
                     "modo_educativo_letras": letter_activity,
                 },
             }

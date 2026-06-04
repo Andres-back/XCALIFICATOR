@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import random
 import re
-import urllib.parse
 from typing import Any
 
 import httpx
@@ -19,18 +17,6 @@ settings = get_settings()
 
 _GROQ_MODEL = "llama-3.3-70b-versatile"
 _ALLOWED_MODES = {"auto", "cloud", "local"}
-
-
-def _generated_image_url(prompt: str, *, width: int = 1024, height: int = 768) -> str:
-    clean_prompt = str(prompt or "educacion, aula, material didactico").strip()
-    encoded = urllib.parse.quote(clean_prompt[:900])
-    seed = random.randint(1, 999999)
-    key = str(settings.POLLINATIONS_API_KEY or "").strip()
-    key_param = f"&key={urllib.parse.quote(key)}" if key else ""
-    return (
-        f"https://gen.pollinations.ai/image/{encoded}"
-        f"?model=flux&width={width}&height={height}&nologo=true&seed={seed}{key_param}"
-    )
 
 
 def _extract_json_object(raw_text: str) -> dict[str, Any]:
@@ -307,7 +293,7 @@ class PresentationService:
         ollama_url = str(input_payload.get("ollama_url") or settings.OLLAMA_URL or "").strip()
         ollama_model = str(input_payload.get("ollama_model") or settings.OLLAMA_PRESENTATION_MODEL or "").strip()
 
-        use_generated_images = bool(input_payload.get("use_generated_images", True))
+        use_generated_images = bool(input_payload.get("use_generated_images", False))
 
         export_google_slides = bool(input_payload.get("export_google_slides"))
 
@@ -347,11 +333,11 @@ class PresentationService:
         if use_generated_images:
             for slide in slides:
                 image_prompt = str(slide.get("image_query") or slide.get("title") or topic).strip()
-                slide["image_url"] = _generated_image_url(
+                slide["image_prompt"] = (
                     f"Ilustracion educativa clara para diapositiva: {image_prompt}. "
                     f"Tema: {topic}. Estilo limpio, apto para clase, sin texto dentro de la imagen."
                 )
-                slide["image_provider"] = "ai_generation"
+                slide["image_provider"] = "pending_internal_image_api"
 
         slides_markdown = _slides_to_markdown(slides)
 

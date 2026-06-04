@@ -38,9 +38,6 @@ class Settings(BaseSettings):
     WHAPI_API_URL: str = "https://gate.whapi.cloud"
     WHAPI_TOKEN: str = ""
 
-    # Pollinations (image generation)
-    POLLINATIONS_API_KEY: str = ""
-
     # Ollama/local AI
     OLLAMA_URL: str = ""
     OLLAMA_API_KEY: str = ""
