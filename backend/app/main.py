@@ -12,6 +12,8 @@ from app.core.database import AsyncSessionLocal
 from app.core.redis import check_redis_health
 from app.routers import auth, admin, materias, examenes, grading, generation, chat, notifications
 from app.routers import periodos, herramientas, asistencia, reportes, grupos, tesis, presentaciones
+from app.routers import telegram as telegram_router
+from app.services.telegram_bot import get_telegram_bot
 
 app = FastAPI(
     title="XCalificator API",
@@ -55,6 +57,8 @@ app.include_router(reportes.router, prefix="/api")
 app.include_router(grupos.router, prefix="/api")
 app.include_router(tesis.router, prefix="/api")
 app.include_router(presentaciones.router, prefix="/api")
+app.include_router(telegram_router.router, prefix="/api")
+app.include_router(telegram_router.notifications_router, prefix="/api")
 
 
 async def check_db_health() -> dict:
@@ -96,3 +100,22 @@ async def health_check():
         status_code=status.HTTP_200_OK if dependencies_ok else status.HTTP_503_SERVICE_UNAVAILABLE,
         content=response,
     )
+
+
+@app.on_event("startup")
+async def startup_telegram_bot():
+    """Start the Telegram bot (webhook or polling) if configured."""
+    bot = get_telegram_bot()
+    if not bot.enabled:
+        return
+    if bot.settings.TELEGRAM_WEBHOOK_URL:
+        await bot.set_webhook(bot.settings.TELEGRAM_WEBHOOK_URL)
+    else:
+        import asyncio
+        bot._polling_task = asyncio.create_task(bot.start_polling())
+
+
+@app.on_event("shutdown")
+async def shutdown_telegram_bot():
+    bot = get_telegram_bot()
+    await bot.stop_polling()

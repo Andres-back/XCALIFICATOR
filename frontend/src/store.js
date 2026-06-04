@@ -38,22 +38,6 @@ const useAuthStore = create((set) => ({
     }
   },
 
-  googleLogin: async (token) => {
-    set({ loading: true });
-    try {
-      const res = await api.post('/auth/google', { token });
-      const { access_token, refresh_token, user } = res.data;
-      localStorage.setItem('access_token', access_token);
-      localStorage.setItem('refresh_token', refresh_token);
-      localStorage.setItem('user', JSON.stringify(user));
-      set({ user, isAuthenticated: true, loading: false });
-      return user;
-    } catch (error) {
-      set({ loading: false });
-      throw error;
-    }
-  },
-
   logout: async () => {
     try { await api.post('/auth/logout'); } catch {}
     localStorage.clear();

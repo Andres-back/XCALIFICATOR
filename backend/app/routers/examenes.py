@@ -13,7 +13,7 @@ from app.schemas.schemas import (
     RespuestaOnlineCreate, RespuestaOnlineOut,
 )
 from app.services.nota_service import upsert_nota
-from app.services.notification_service import notify_enrolled_students, send_email, send_whatsapp
+from app.services.notification_service import notify_enrolled_students, send_email, send_telegram
 import json as _json
 import logging
 
@@ -1047,13 +1047,13 @@ async def send_feedback_to_student(
         )
         db.add(notif)
 
-    if pref and pref.acepta_whatsapp and student.celular:
-        sent = await send_whatsapp(student.celular, "retroalimentacion", context)
+    if pref and pref.acepta_telegram and student.telegram_chat_id:
+        sent = await send_telegram(student.telegram_chat_id, "retroalimentacion", context)
         if sent:
-            sent_channels.append("whatsapp")
+            sent_channels.append("telegram")
         notif = Notificacion(
-            user_id=nota.estudiante_id, tipo="retroalimentacion", canal="whatsapp",
-            mensaje=f"WhatsApp retroalimentación: {examen_titulo}", enviado=sent,
+            user_id=nota.estudiante_id, tipo="retroalimentacion", canal="telegram",
+            mensaje=f"Telegram retroalimentación: {examen_titulo}", enviado=sent,
             fecha_envio=datetime.now(tz.utc) if sent else None,
         )
         db.add(notif)

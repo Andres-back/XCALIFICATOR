@@ -106,7 +106,7 @@ EMAIL_TEMPLATES = {
     """),
 }
 
-WHATSAPP_TEMPLATES = {
+TELEGRAM_TEMPLATES = {
     "nota_publicada": "📝 *XCalificator* - Nueva calificación\nHola {nombre}, se publicó tu nota en *{examen}*: {nota}/{nota_maxima}. Revisa la retroalimentación en la plataforma.",
     "examen_asignado": "📋 *XCalificator* - Nuevo examen\nHola {nombre}, se asignó el examen *{examen}* en *{materia}*.",
     "examen_proximo": "⏰ *XCalificator* - Recordatorio\nHola {nombre}, tienes un examen en 24h: *{examen}* de *{materia}*.",
@@ -190,12 +190,12 @@ async def notify_enrolled_students(
             )
             db_session.add(notif)
 
-        # WhatsApp
-        if pref and pref.acepta_whatsapp and user.celular:
-            sent = await send_whatsapp(user.celular, template_name, ctx)
+        # Telegram
+        if pref and pref.acepta_telegram and user.telegram_chat_id:
+            sent = await send_telegram(user.telegram_chat_id, template_name, ctx)
             notif = Notificacion(
-                user_id=est_id, tipo=template_name, canal="whatsapp",
-                mensaje=f"WhatsApp: {template_name}", enviado=sent,
+                user_id=est_id, tipo=template_name, canal="telegram",
+                mensaje=f"Telegram: {template_name}", enviado=sent,
                 fecha_envio=datetime.now(timezone.utc) if sent else None,
             )
             db_session.add(notif)
@@ -203,45 +203,31 @@ async def notify_enrolled_students(
     await db_session.commit()
 
 
-async def send_whatsapp(to_number: str, template_name: str, context: dict) -> bool:
-    """Send WhatsApp message via Whapi (gratuito).
-    
-    Whapi usa una API REST simple. Solo necesitas un token.
-    Registro gratis en https://whapi.cloud
-    El número debe incluir código de país sin '+', ej: '593991234567'
-    """
-    if not settings.WHAPI_TOKEN:
-        print("Whapi: Token no configurado, omitiendo envío WhatsApp")
+async def send_telegram(chat_id: str, template_name: str, context: dict) -> bool:
+    """Send a Telegram message via the bot. Returns True on success."""
+    if not settings.TELEGRAM_BOT_TOKEN:
         return False
 
-    template = WHATSAPP_TEMPLATES.get(template_name)
+    template = TELEGRAM_TEMPLATES.get(template_name)
     if not template:
         return False
 
     body = template.format(**context)
 
-    # Normalizar número: quitar +, espacios, guiones
-    clean_number = to_number.replace("+", "").replace(" ", "").replace("-", "")
-
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.post(
-                f"{settings.WHAPI_API_URL}/messages/text",
-                headers={
-                    "Authorization": f"Bearer {settings.WHAPI_TOKEN}",
-                    "Content-Type": "application/json",
-                },
+                f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage",
                 json={
-                    "to": f"{clean_number}@s.whatsapp.net",
-                    "body": body,
+                    "chat_id": chat_id,
+                    "text": body,
+                    "parse_mode": "Markdown",
                 },
             )
-            if response.status_code in (200, 201):
-                print(f"WhatsApp enviado a {clean_number}")
+            if response.status_code == 200:
                 return True
-            else:
-                print(f"Error Whapi [{response.status_code}]: {response.text}")
-                return False
+            print(f"Error Telegram [{response.status_code}]: {response.text[:300]}")
+            return False
     except Exception as e:
-        print(f"Error enviando WhatsApp: {e}")
+        print(f"Error enviando Telegram: {e}")
         return False

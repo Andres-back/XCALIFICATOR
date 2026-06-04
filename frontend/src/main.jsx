@@ -1,6 +1,5 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { GoogleOAuthProvider } from '@react-oauth/google';
 import App from './App';
 import './index.css';
 
@@ -11,13 +10,7 @@ console.error = (...args) => {
   origWarn.apply(console, args);
 };
 
-const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-
-const appTree = (
-  <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
-    <App />
-  </GoogleOAuthProvider>
-);
+const appTree = <App />;
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   import.meta.env.DEV ? appTree : <React.StrictMode>{appTree}</React.StrictMode>

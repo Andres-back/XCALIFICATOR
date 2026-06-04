@@ -90,9 +90,15 @@ CREATE TABLE preferencias_notif (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id         UUID REFERENCES users(id) ON DELETE CASCADE UNIQUE,
   acepta_email    BOOLEAN DEFAULT TRUE,
-  acepta_whatsapp BOOLEAN DEFAULT FALSE,
+  acepta_telegram BOOLEAN DEFAULT FALSE,
   updated_at      TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Telegram linking columns on users (aditivo)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_chat_id VARCHAR(50);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_link_code VARCHAR(10);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_link_code_expires TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_users_telegram_chat_id ON users(telegram_chat_id);
 
 CREATE TABLE notificaciones (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),

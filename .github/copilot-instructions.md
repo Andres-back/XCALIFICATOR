@@ -21,7 +21,7 @@
 | OCR (microservicio) | PaddleOCR vía contenedor en `http://paddleocr:8001` | — |
 | HTTP async | httpx | 0.27.0 |
 | Email | aiosmtplib | 3.0.1 |
-| Notif WhatsApp | Whapi (API REST externa) | — |
+| Notif Telegram | Telegram Bot API (bot con @BotFather) | TELEGRAM_BOT_TOKEN |
 | Imágenes IA | Pollinations.ai (gen.pollinations.ai) | — |
 
 ### Frontend
@@ -66,7 +66,7 @@ GROQ_API_KEY=gsk_...
 JWT_SECRET / JWT_EXPIRY=3600
 GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET
 SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS
-WHAPI_API_URL / WHAPI_TOKEN
+TELEGRAM_BOT_TOKEN / TELEGRAM_BOT_USERNAME / TELEGRAM_WEBHOOK_URL
 VITE_GOOGLE_CLIENT_ID
 ```
 
@@ -157,8 +157,9 @@ Todos los IDs son UUID generado en Python (`default=uuid.uuid4`). Timestamps con
 | `MiembroGrupo` | `miembros_grupo` | id, grupo_id→GrupoActividad, estudiante_id→User, es_lider, aceptado; UNIQUE(grupo_id, estudiante_id) |
 | `APIUsageLog` | `api_usage_logs` | id, model, task, prompt_tokens, completion_tokens, total_tokens |
 | `AuditLog` | `audit_logs` | id, user_id→User (nullable), accion, detalle (JSONB), ip |
-| `PreferenciaNotif` | `preferencias_notif` | id, user_id (UNIQUE), acepta_email, acepta_whatsapp |
-| `Notificacion` | `notificaciones` | id, user_id, tipo, canal (email/whatsapp), mensaje, enviado, fecha_envio |
+| `PreferenciaNotif` | `preferencias_notif` | id, user_id (UNIQUE), acepta_email, acepta_telegram |
+| `Notificacion` | `notificaciones` | id, user_id, tipo, canal (email/telegram), mensaje, enviado, fecha_envio |
+| `User` (campos telegram) | `users` | telegram_chat_id, telegram_link_code, telegram_link_code_expires |
 
 ---
 
@@ -198,7 +199,7 @@ Todos requieren rol profesor/admin. Rate limit: 10 req/min.
 - `POST /sopa-letras` — Sopa de letras IA
 - `POST /crucigrama` — Crucigrama IA
 - `POST /emparejar` — Actividad de emparejar IA
-- `POST /cuento` — Cuento educativo + imagen (Pollinations)
+- `POST /cuento` — Cuento educativo (sin imagen por ahora)
 - `POST /para-colorear` — Página para colorear + imagen B&W
 
 ### Calificación (`/api/grading`)

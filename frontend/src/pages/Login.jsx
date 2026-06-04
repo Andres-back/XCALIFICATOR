@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { GoogleLogin } from '@react-oauth/google';
 import useAuthStore from '../store';
 import toast from 'react-hot-toast';
 import { Eye, EyeOff, LogIn, Sparkles } from 'lucide-react';
@@ -9,10 +8,8 @@ export default function Login() {
   const [correo, setCorreo] = useState('');
   const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
-  const [isBrave, setIsBrave] = useState(false);
-  const { login, googleLogin, loading, isAuthenticated, user } = useAuthStore();
+  const { login, loading, isAuthenticated, user } = useAuthStore();
   const navigate = useNavigate();
-  const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
 
   // Redirect if already logged in
   useEffect(() => {
@@ -22,32 +19,6 @@ export default function Login() {
     }
   }, [isAuthenticated, user, navigate]);
 
-  useEffect(() => {
-    let mounted = true;
-
-    const detectBrave = async () => {
-      try {
-        const braveApi = typeof navigator !== 'undefined' ? navigator.brave : null;
-        const braveDetected = !!(braveApi && typeof braveApi.isBrave === 'function' && await braveApi.isBrave());
-        if (mounted) setIsBrave(braveDetected);
-      } catch {
-        if (mounted) setIsBrave(false);
-      }
-    };
-
-    detectBrave();
-    return () => { mounted = false; };
-  }, []);
-
-  const handleGoogleSuccess = async (credentialResponse) => {
-    try {
-      const user = await googleLogin(credentialResponse.credential);
-      toast.success(`¡Bienvenido, ${user.nombre}! 🎉`);
-      navigate('/');
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Error con Google');
-    }
-  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -92,15 +63,15 @@ export default function Login() {
               <h1 className="text-4xl font-extrabold text-white tracking-tight">XCalificator</h1>
               <Sparkles className="w-6 h-6 text-yellow-300" />
             </div>
-            <p className="text-primary-100 text-lg font-medium mb-2">Plataforma Educativa con IA</p>
+            <p className="text-primary-100 text-lg font-semibold mb-2">Aprender hoy, liderar mañana</p>
             <p className="text-primary-200/80 text-sm max-w-sm leading-relaxed">
-              Genera exámenes, califica automáticamente y obtén retroalimentación inteligente.
+              Cada esfuerzo cuenta: estudia con propósito, mejora con evidencia y avanza con confianza.
             </p>
           </div>
 
-          {/* Features pills */}
+          {/* Study motto pills */}
           <div className="flex flex-wrap justify-center gap-2 mt-8">
-            {['Exámenes con IA', 'Calificación OCR', 'Chat Inteligente'].map((feature) => (
+            {['Disciplina', 'Claridad', 'Progreso'].map((feature) => (
               <span key={feature} className="px-4 py-1.5 bg-white/10 backdrop-blur-sm text-white/90 text-xs font-medium rounded-full border border-white/20">
                 {feature}
               </span>
@@ -192,39 +163,6 @@ export default function Login() {
                 )}
               </button>
             </form>
-
-            {/* Divider */}
-            <div className="flex items-center my-6">
-              <div className="flex-1 border-t border-gray-200" />
-              <span className="px-4 text-xs text-gray-400 font-medium">O CONTINÚA CON</span>
-              <div className="flex-1 border-t border-gray-200" />
-            </div>
-
-            {/* Google button */}
-            <div className="flex justify-center">
-              <GoogleLogin
-                onSuccess={handleGoogleSuccess}
-                onError={() => {
-                  toast.error(
-                    `Google bloqueó el origen ${currentOrigin || '(desconocido)'} . `
-                    + 'Agrega ese origen en Google Cloud Console > OAuth 2.0 > Orígenes autorizados de JavaScript.'
-                  );
-                }}
-                shape="rectangular"
-                size="large"
-                width={380}
-                text="continue_with"
-                locale="es"
-              />
-            </div>
-            <p className="mt-2 text-[11px] text-center text-gray-500 break-all">
-              Origen actual para Google OAuth: <span className="font-semibold">{currentOrigin || '(desconocido)'}</span>
-            </p>
-            {isBrave && (
-              <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
-                Brave detectado: si aparece origin_mismatch, desactiva Shields para este sitio y verifica que este origen exacto este registrado en Google Cloud Console.
-              </div>
-            )}
 
             {/* Register link */}
             <div className="mt-6 text-center">

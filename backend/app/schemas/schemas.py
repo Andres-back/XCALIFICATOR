@@ -5,6 +5,11 @@ from uuid import UUID
 from pydantic import BaseModel, EmailStr, field_validator
 
 
+ALLOWED_EMAIL_DOMAINS = ("gmail.com", "hotmail.com")
+CELULAR_DIGITS_ONLY = re.compile(r"^\d{7,15}$")
+DOCUMENTO_DIGITS_ONLY = re.compile(r"^\d{5,20}$")
+
+
 # --- Auth ---
 class UserRegister(BaseModel):
     nombre: str
@@ -13,7 +18,7 @@ class UserRegister(BaseModel):
     correo: EmailStr
     celular: Optional[str] = None
     password: str
-    acepta_whatsapp: Optional[bool] = False
+    acepta_telegram: Optional[bool] = False
 
     @field_validator("nombre", "apellido")
     @classmethod
@@ -27,9 +32,31 @@ class UserRegister(BaseModel):
     @field_validator("documento")
     @classmethod
     def validate_documento(cls, v: str) -> str:
-        if not re.match(r"^\d+$", v):
-            raise ValueError("Solo se permiten números")
-        return v.strip()
+        cleaned = v.strip()
+        if not DOCUMENTO_DIGITS_ONLY.match(cleaned):
+            raise ValueError("Solo se permiten números (5-20 dígitos)")
+        return cleaned
+
+    @field_validator("correo")
+    @classmethod
+    def validate_correo_domain(cls, v: str) -> str:
+        cleaned = v.strip().lower()
+        domain = cleaned.split("@", 1)[-1] if "@" in cleaned else ""
+        if domain not in ALLOWED_EMAIL_DOMAINS:
+            raise ValueError(
+                f"Solo se aceptan correos @gmail.com o @hotmail.com (recibido: @{domain})"
+            )
+        return cleaned
+
+    @field_validator("celular")
+    @classmethod
+    def validate_celular(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v.strip() == "":
+            return None
+        cleaned = re.sub(r"[\s\-\(\)\+]", "", v).strip()
+        if not CELULAR_DIGITS_ONLY.match(cleaned):
+            raise ValueError("Celular: solo números, 7-15 dígitos, sin espacios ni guiones")
+        return cleaned
 
     @field_validator("password")
     @classmethod
@@ -46,10 +73,6 @@ class UserRegister(BaseModel):
 class UserLogin(BaseModel):
     correo: EmailStr
     password: str
-
-
-class GoogleLoginRequest(BaseModel):
-    token: str
 
 
 class TokenResponse(BaseModel):
@@ -86,6 +109,16 @@ class UserUpdate(BaseModel):
     apellido: Optional[str] = None
     celular: Optional[str] = None
 
+    @field_validator("celular")
+    @classmethod
+    def validate_celular(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v.strip() == "":
+            return None
+        cleaned = re.sub(r"[\s\-\(\)\+]", "", v).strip()
+        if not CELULAR_DIGITS_ONLY.match(cleaned):
+            raise ValueError("Celular: solo números, 7-15 dígitos, sin espacios ni guiones")
+        return cleaned
+
 
 class AdminUserCreate(BaseModel):
     nombre: str
@@ -96,6 +129,44 @@ class AdminUserCreate(BaseModel):
     password: str
     rol: str = "estudiante"
     grado: Optional[str] = None
+
+    @field_validator("nombre", "apellido")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        if len(v.strip()) < 2:
+            raise ValueError("Mínimo 2 caracteres")
+        if not re.match(r"^[a-záéíóúñüA-ZÁÉÍÓÚÑÜ\s]+$", v):
+            raise ValueError("Solo se permiten letras")
+        return v.strip()
+
+    @field_validator("documento")
+    @classmethod
+    def validate_documento(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not DOCUMENTO_DIGITS_ONLY.match(cleaned):
+            raise ValueError("Solo se permiten números (5-20 dígitos)")
+        return cleaned
+
+    @field_validator("correo")
+    @classmethod
+    def validate_correo_domain(cls, v: str) -> str:
+        cleaned = v.strip().lower()
+        domain = cleaned.split("@", 1)[-1] if "@" in cleaned else ""
+        if domain not in ALLOWED_EMAIL_DOMAINS:
+            raise ValueError(
+                f"Solo se aceptan correos @gmail.com o @hotmail.com (recibido: @{domain})"
+            )
+        return cleaned
+
+    @field_validator("celular")
+    @classmethod
+    def validate_celular(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v.strip() == "":
+            return None
+        cleaned = re.sub(r"[\s\-\(\)\+]", "", v).strip()
+        if not CELULAR_DIGITS_ONLY.match(cleaned):
+            raise ValueError("Celular: solo números, 7-15 dígitos, sin espacios ni guiones")
+        return cleaned
 
 
 class AdminUserUpdate(BaseModel):
@@ -399,12 +470,14 @@ class ChatHistoryOut(BaseModel):
 # --- Notifications ---
 class PreferenciaNotifUpdate(BaseModel):
     acepta_email: Optional[bool] = None
-    acepta_whatsapp: Optional[bool] = None
+    acepta_telegram: Optional[bool] = None
 
 
 class PreferenciaNotifOut(BaseModel):
     acepta_email: bool
-    acepta_whatsapp: bool
+    acepta_telegram: bool
+    telegram_chat_id: Optional[str] = None
+    telegram_linked: bool = False
 
     class Config:
         from_attributes = True

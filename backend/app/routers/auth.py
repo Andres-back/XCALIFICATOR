@@ -2,8 +2,6 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 from datetime import datetime, timezone
-from google.oauth2 import id_token
-from google.auth.transport import requests as google_requests
 
 from app.core.database import get_db
 from app.core.ai_provider_config import (
@@ -16,11 +14,10 @@ from app.core.security import (
     create_access_token, create_refresh_token, decode_token,
     create_email_confirm_token,
 )
-from app.core.config import get_settings
 from app.core.dependencies import get_current_user, get_client_ip, get_user_agent
 from app.models.models import User, Sesion, PreferenciaNotif
 from app.schemas.schemas import (
-    UserRegister, UserLogin, GoogleLoginRequest,
+    UserRegister, UserLogin,
     TokenResponse, UserOut, RefreshTokenRequest, UserUpdate,
     ChangePasswordRequest, ChangeOwnPasswordRequest,
     LocalAIConfigOut, LocalAIConfigUpdate, LocalOllamaModelsOut,
@@ -28,7 +25,6 @@ from app.schemas.schemas import (
 from app.services.notification_service import send_email
 
 router = APIRouter(prefix="/auth", tags=["Autenticación"])
-settings = get_settings()
 
 
 async def _close_user_sessions(db: AsyncSession, user_id):
@@ -69,7 +65,7 @@ async def register(
     pref = PreferenciaNotif(
         user_id=user.id,
         acepta_email=True,
-        acepta_whatsapp=data.acepta_whatsapp or False,
+        acepta_telegram=data.acepta_telegram or False,
     )
     db.add(pref)
 
@@ -86,7 +82,7 @@ async def register(
     # Send email confirmation asynchronously
     try:
         confirm_token = create_email_confirm_token(str(user.id))
-        confirm_link = f"http://localhost/api/auth/confirm-email?token={confirm_token}"
+        confirm_link = f"http://localhost/api/auth/confirm-emailtoken={confirm_token}"
         await send_email(
             to=user.correo,
             subject="Confirma tu correo - XCalificator",
@@ -140,7 +136,7 @@ async def resend_confirmation(
         return {"detail": "El correo ya fue confirmado"}
 
     confirm_token = create_email_confirm_token(str(current_user.id))
-    confirm_link = f"http://localhost/api/auth/confirm-email?token={confirm_token}"
+    confirm_link = f"http://localhost/api/auth/confirm-emailtoken={confirm_token}"
     sent = await send_email(
         to=current_user.correo,
         subject="Confirma tu correo - XCalificator",
@@ -178,74 +174,6 @@ async def login(
     )
     db.add(sesion)
     await db.commit()
-
-    access_token = create_access_token({"sub": str(user.id), "rol": user.rol})
-    refresh_token = create_refresh_token({"sub": str(user.id)})
-
-    return TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        user=UserOut.model_validate(user),
-    )
-
-
-@router.post("/google", response_model=TokenResponse)
-async def google_login(
-    data: GoogleLoginRequest,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-):
-    try:
-        idinfo = id_token.verify_oauth2_token(
-            data.token,
-            google_requests.Request(),
-            settings.GOOGLE_CLIENT_ID,
-        )
-    except Exception:
-        raise HTTPException(status_code=401, detail="Token de Google inválido")
-
-    google_id = idinfo["sub"]
-    email = idinfo.get("email", "")
-    nombre = idinfo.get("given_name", "")
-    apellido = idinfo.get("family_name", "")
-
-    # Check if user exists
-    result = await db.execute(
-        select(User).where((User.google_id == google_id) | (User.correo == email))
-    )
-    user = result.scalar_one_or_none()
-
-    if not user:
-        # Auto-create user
-        user = User(
-            nombre=nombre or "Usuario",
-            apellido=apellido or "Google",
-            documento=f"G-{google_id[:12]}",
-            correo=email,
-            google_id=google_id,
-            rol="estudiante",
-        )
-        db.add(user)
-        await db.flush()
-        pref = PreferenciaNotif(user_id=user.id, acepta_email=True)
-        db.add(pref)
-    elif not user.google_id:
-        user.google_id = google_id
-
-    if not user.activo:
-        raise HTTPException(status_code=403, detail="Usuario deshabilitado")
-
-    # Close previous open sessions for google login
-    await _close_user_sessions(db, user.id)
-
-    sesion = Sesion(
-        user_id=user.id,
-        ip=get_client_ip(request),
-        dispositivo=get_user_agent(request),
-    )
-    db.add(sesion)
-    await db.commit()
-    await db.refresh(user)
 
     access_token = create_access_token({"sub": str(user.id), "rol": user.rol})
     refresh_token = create_refresh_token({"sub": str(user.id)})
@@ -315,7 +243,7 @@ async def change_own_password(
     if not current_user.password_hash:
         raise HTTPException(
             status_code=400,
-            detail="Tu cuenta no tiene contraseña local configurada. Inicia sesión con Google o solicita restablecimiento.",
+            detail="Tu cuenta no tiene contraseña local configurada. Solicita restablecimiento de contraseña.",
         )
 
     if not verify_password(data.current_password, current_user.password_hash):

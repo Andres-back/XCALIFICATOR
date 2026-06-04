@@ -86,7 +86,7 @@ const api = axios.create({
 // Request interceptor - add auth token and pre-refresh when token is expired
 api.interceptors.request.use(async (config) => {
   const url = String(config?.url || '');
-  if (url.includes('/auth/login') || url.includes('/auth/register') || url.includes('/auth/google') || url.includes('/auth/refresh')) {
+  if (url.includes('/auth/login') || url.includes('/auth/register') || url.includes('/auth/refresh')) {
     return config;
   }
 

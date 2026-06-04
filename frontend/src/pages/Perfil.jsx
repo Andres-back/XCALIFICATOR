@@ -16,7 +16,8 @@ import {
 
 export default function Perfil() {
   const { user, updateUser } = useAuthStore();
-  const [prefs, setPrefs] = useState({ acepta_email: true, acepta_whatsapp: false });
+  const [prefs, setPrefs] = useState({ acepta_email: true, acepta_telegram: false, telegram_chat_id: null });
+  const [tgLink, setTgLink] = useState({ loading: false, code: null, expiresAt: null, error: null });
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({ nombre: '', apellido: '', celular: '' });
   const [saving, setSaving] = useState(false);
@@ -291,17 +292,81 @@ export default function Perfil() {
             />
           </label>
           <label className="flex items-center justify-between">
-            <span className="text-sm text-gray-700">Notificaciones por WhatsApp</span>
+            <span className="text-sm text-gray-700">Notificaciones por Telegram</span>
             <input
-              type="checkbox" checked={prefs.acepta_whatsapp}
-              onChange={(e) => updatePrefs('acepta_whatsapp', e.target.checked)}
-              className="rounded border-gray-300 text-primary-600"
+              type="checkbox"
+              checked={prefs.acepta_telegram}
+              onChange={(e) => updatePrefs('acepta_telegram', e.target.checked)}
+              disabled={!prefs.telegram_chat_id}
+              className="rounded border-gray-300 text-primary-600 disabled:opacity-50"
             />
           </label>
-          {prefs.acepta_whatsapp && (
+          {prefs.acepta_telegram && !prefs.telegram_chat_id && (
             <p className="text-xs text-amber-600 bg-amber-50 p-2 rounded">
-              Las notificaciones WhatsApp se enviarán al número registrado en tu perfil.
+              Vincula tu cuenta de Telegram abajo para activar las notificaciones.
             </p>
+          )}
+        </div>
+
+        {/* Telegram linking */}
+        <div className="mt-4 pt-4 border-t border-gray-200">
+          <h3 className="text-sm font-semibold text-gray-800 mb-2">Vincular Telegram</h3>
+          {prefs.telegram_chat_id ? (
+            <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-sm text-green-800">
+              ✅ Telegram vinculado. Recibirás notificaciones en tu cuenta.
+            </div>
+          ) : tgLink.code ? (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-2 text-sm">
+              <p className="text-gray-700">
+                Envía este código al bot desde Telegram. Expira{' '}
+                <span className="font-mono font-semibold">
+                  {new Date(tgLink.expiresAt).toLocaleTimeString()}
+                </span>.
+              </p>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 bg-white border border-blue-200 rounded px-3 py-2 font-mono text-center text-lg font-bold tracking-widest">
+                  {tgLink.code}
+                </code>
+                <a
+                  href={`https://t.me/${import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'xcalificator_bot'}?start=${tgLink.code}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn-primary text-sm px-3 py-2 whitespace-nowrap"
+                >
+                  Abrir Telegram
+                </a>
+              </div>
+              <p className="text-xs text-gray-500">
+                Si Telegram no se abre, busca el bot manualmente y envía: <code>/start {tgLink.code}</code>
+              </p>
+              {tgLink.error && <p className="text-xs text-red-600">{tgLink.error}</p>}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <button
+                onClick={async () => {
+                  setTgLink({ loading: true, code: null, expiresAt: null, error: null });
+                  try {
+                    const res = await api.post('/notifications/telegram/request-code');
+                    setTgLink({
+                      loading: false,
+                      code: res.data.code,
+                      expiresAt: res.data.expires_at,
+                      error: null,
+                    });
+                  } catch (err) {
+                    setTgLink({ loading: false, code: null, expiresAt: null, error: err.response?.data?.detail || 'Error' });
+                  }
+                }}
+                disabled={tgLink.loading || !form.celular}
+                className="btn-secondary text-sm flex items-center gap-2"
+              >
+                {tgLink.loading ? 'Generando...' : 'Generar código de vinculación'}
+              </button>
+              {!form.celular && (
+                <p className="text-xs text-gray-500">Agrega tu celular arriba primero.</p>
+              )}
+            </div>
           )}
         </div>
       </div>

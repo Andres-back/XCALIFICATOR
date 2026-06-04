@@ -20,9 +20,7 @@ class Settings(BaseSettings):
     JWT_EXPIRY: int = 3600
     JWT_REFRESH_EXPIRY: int = 604800  # 7 days
 
-    # Google OAuth
-    GOOGLE_CLIENT_ID: str = ""
-    GOOGLE_CLIENT_SECRET: str = ""
+    # Google Slides export (optional, not used for login)
     GOOGLE_SERVICE_ACCOUNT_JSON: str = ""
     GOOGLE_SLIDES_EXPORT_ENABLED: bool = False
     GOOGLE_SLIDES_PARENT_FOLDER_ID: str = ""
@@ -34,9 +32,10 @@ class Settings(BaseSettings):
     SMTP_USER: str = ""
     SMTP_PASS: str = ""
 
-    # Whapi (WhatsApp API gratuita)
-    WHAPI_API_URL: str = "https://gate.whapi.cloud"
-    WHAPI_TOKEN: str = ""
+    # Telegram Bot (notificaciones)
+    TELEGRAM_BOT_TOKEN: str = ""
+    TELEGRAM_BOT_USERNAME: str = ""
+    TELEGRAM_WEBHOOK_URL: str = ""
 
     # Ollama/local AI
     OLLAMA_URL: str = ""

@@ -7,7 +7,7 @@ import { GraduationCap, Eye, EyeOff } from 'lucide-react';
 export default function Register() {
   const [form, setForm] = useState({
     nombre: '', apellido: '', documento: '', correo: '',
-    celular: '', password: '', confirmPassword: '', acepta_whatsapp: false,
+    celular: '', password: '', confirmPassword: '', acepta_telegram: false,
   });
   const [showPass, setShowPass] = useState(false);
   const [errors, setErrors] = useState({});
@@ -20,7 +20,14 @@ export default function Register() {
     if (!/^[a-záéíóúñüA-ZÁÉÍÓÚÑÜ\s]+$/.test(form.nombre)) errs.nombre = 'Solo letras';
     if (form.apellido.trim().length < 2) errs.apellido = 'Mínimo 2 caracteres';
     if (!/^[a-záéíóúñüA-ZÁÉÍÓÚÑÜ\s]+$/.test(form.apellido)) errs.apellido = 'Solo letras';
-    if (!/^\d+$/.test(form.documento)) errs.documento = 'Solo números';
+    if (!/^\d{5,20}$/.test(form.documento)) errs.documento = 'Solo números (5-20 dígitos)';
+    const correoDomain = (form.correo.split('@')[1] || '').toLowerCase();
+    if (form.correo && !['gmail.com', 'hotmail.com'].includes(correoDomain)) {
+      errs.correo = 'Solo se aceptan correos @gmail.com o @hotmail.com';
+    }
+    if (form.celular && !/^\d{7,15}$/.test(form.celular)) {
+      errs.celular = 'Solo números, 7-15 dígitos (sin espacios ni guiones)';
+    }
     const pwErrors = [];
     if (form.password.length < 8) pwErrors.push('Mínimo 8 caracteres');
     if (!/[A-Z]/.test(form.password)) pwErrors.push('1 mayúscula');
@@ -86,9 +93,12 @@ export default function Register() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Documento *</label>
               <input
                 type="text" value={form.documento}
-                onChange={(e) => update('documento', e.target.value)}
+                onChange={(e) => update('documento', e.target.value.replace(/\D/g, ''))}
                 className={`input-field ${errors.documento ? 'border-red-400' : ''}`}
-                placeholder="Solo números"
+                placeholder="Solo números (5-20 dígitos)"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={20}
                 required
               />
               {errors.documento && <p className="text-red-500 text-xs mt-1">{errors.documento}</p>}
@@ -99,18 +109,25 @@ export default function Register() {
               <input
                 type="email" value={form.correo}
                 onChange={(e) => update('correo', e.target.value)}
-                className="input-field" required
+                className={`input-field ${errors.correo ? 'border-red-400' : ''}`}
+                placeholder="tunombre@gmail.com o @hotmail.com"
+                required
               />
+              {errors.correo && <p className="text-red-500 text-xs mt-1">{errors.correo}</p>}
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Celular</label>
               <input
-                type="text" value={form.celular}
-                onChange={(e) => update('celular', e.target.value)}
-                className="input-field"
-                placeholder="+57 300 000 0000"
+                type="tel" value={form.celular}
+                onChange={(e) => update('celular', e.target.value.replace(/\D/g, ''))}
+                className={`input-field ${errors.celular ? 'border-red-400' : ''}`}
+                placeholder="573001234567 (solo números, con código de país)"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={15}
               />
+              {errors.celular && <p className="text-red-500 text-xs mt-1">{errors.celular}</p>}
             </div>
 
             <div>
@@ -147,11 +164,11 @@ export default function Register() {
             {form.celular && (
               <label className="flex items-center gap-2 text-sm text-gray-700">
                 <input
-                  type="checkbox" checked={form.acepta_whatsapp}
-                  onChange={(e) => update('acepta_whatsapp', e.target.checked)}
+                  type="checkbox" checked={form.acepta_telegram}
+                  onChange={(e) => update('acepta_telegram', e.target.checked)}
                   className="rounded border-gray-300"
                 />
-                ¿Deseas recibir notificaciones por WhatsApp?
+                ¿Deseas recibir notificaciones por Telegram? (lo vincularás desde tu perfil)
               </label>
             )}
 

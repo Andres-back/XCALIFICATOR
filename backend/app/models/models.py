@@ -26,6 +26,11 @@ class User(Base):
     correo_verificado = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+    # Telegram linking (vincular por celular)
+    telegram_chat_id = Column(String(50), nullable=True, index=True)
+    telegram_link_code = Column(String(10), nullable=True)
+    telegram_link_code_expires = Column(DateTime(timezone=True), nullable=True)
+
     # Relationships
     sesiones = relationship("Sesion", back_populates="user", cascade="all, delete-orphan")
     materias = relationship("Materia", back_populates="profesor")
@@ -139,7 +144,7 @@ class PreferenciaNotif(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), unique=True)
     acepta_email = Column(Boolean, default=True)
-    acepta_whatsapp = Column(Boolean, default=False)
+    acepta_telegram = Column(Boolean, default=False)
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     user = relationship("User", back_populates="preferencia_notif")

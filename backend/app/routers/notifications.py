@@ -43,8 +43,8 @@ async def update_preferences(
 
     if data.acepta_email is not None:
         pref.acepta_email = data.acepta_email
-    if data.acepta_whatsapp is not None:
-        pref.acepta_whatsapp = data.acepta_whatsapp
+    if data.acepta_telegram is not None:
+        pref.acepta_telegram = data.acepta_telegram
 
     await db.commit()
     await db.refresh(pref)
