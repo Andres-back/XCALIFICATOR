@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../../api';
 import toast from 'react-hot-toast';
-import * as XLSX from 'xlsx';
 import {
   BarChart3, Printer, Loader2, BookOpen, Users,
   Award, TrendingUp, TrendingDown, AlertTriangle, Filter, CalendarDays, FileSpreadsheet,
@@ -18,10 +17,26 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
-function sanitizeSheetName(value) {
-  const base = String(value || 'Hoja').replace(/[\\/*?:\[\]]/g, ' ').trim();
-  if (!base) return 'Hoja';
-  return base.slice(0, 31);
+function downloadCsv(filename, rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return;
+  const headers = Object.keys(rows[0]);
+  const escapeCsv = (value) => {
+    const text = value == null ? '' : String(value);
+    return `"${text.replace(/"/g, '""')}"`;
+  };
+  const csv = [
+    headers.map(escapeCsv).join(','),
+    ...rows.map((row) => headers.map((header) => escapeCsv(row[header])).join(',')),
+  ].join('\n');
+  const blob = new Blob([`\ufeff${csv}`], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 function toNumber(value, fallback = 0) {
@@ -295,44 +310,35 @@ export default function ProfesorReportes() {
       return;
     }
 
-    const wb = XLSX.utils.book_new();
-    const usedSheetNames = new Set();
-
-    const appendSheet = (sheetName, rows) => {
-      if (!Array.isArray(rows) || rows.length === 0) return;
-
-      let base = sanitizeSheetName(sheetName);
-      let finalName = base;
-      let i = 1;
-
-      while (usedSheetNames.has(finalName)) {
-        const suffix = `_${i}`;
-        finalName = `${base.slice(0, Math.max(1, 31 - suffix.length))}${suffix}`;
-        i += 1;
-      }
-
-      usedSheetNames.add(finalName);
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), finalName);
-    };
-
-    appendSheet('Resumen Global', [
+    const rows = [
       {
+        Seccion: 'Resumen Global',
         Periodo: selectedPeriodoLabel,
+        Materia: '',
+        Puesto: '',
+        Estudiante: '',
+        Nota_Final: '',
+        Faltas: globalStats?.totalFaltas || 0,
+        Nota_Asistencia: '',
+        Nota_Participacion: '',
+        Actividad: '',
+        Tipo: '',
+        Promedio: Number(toNumber(globalStats?.promedioGlobal, 0).toFixed(2)),
+        Porcentaje: '',
+        Auto_Asignadas_1_0: '',
         Materias: globalStats?.materias || report.length,
         Registros: globalStats?.totalEstudiantes || 0,
-        Promedio_Global: Number(toNumber(globalStats?.promedioGlobal, 0).toFixed(2)),
-        Faltas_Totales: globalStats?.totalFaltas || 0,
         Mejor_Alumno: globalStats?.topGlobal?.nombre || '',
         Mejor_Nota: Number(toNumber(globalStats?.topGlobal?.nota_final_num, 0).toFixed(2)),
         Peor_Alumno: globalStats?.lowGlobal?.nombre || '',
         Peor_Nota: Number(toNumber(globalStats?.lowGlobal?.nota_final_num, 0).toFixed(2)),
       },
-    ]);
+    ];
 
-    const consolidadoRows = [];
     report.forEach((r) => {
       r.ranking.forEach((s, index) => {
-        consolidadoRows.push({
+        rows.push({
+          Seccion: 'Consolidado',
           Periodo: selectedPeriodoLabel,
           Materia: r.materia?.nombre || 'Materia',
           Puesto: index + 1,
@@ -341,36 +347,52 @@ export default function ProfesorReportes() {
           Faltas: toNumber(s.faltas_num, 0),
           Nota_Asistencia: Number(toNumber(s.asistencia_nota_num, 0).toFixed(2)),
           Nota_Participacion: Number(toNumber(s.participacion_num, 0).toFixed(2)),
+          Actividad: '',
+          Tipo: '',
+          Promedio: '',
+          Porcentaje: '',
+          Auto_Asignadas_1_0: '',
+          Materias: '',
+          Registros: '',
+          Mejor_Alumno: '',
+          Mejor_Nota: '',
+          Peor_Alumno: '',
+          Peor_Nota: '',
         });
       });
     });
-    appendSheet('Consolidado', consolidadoRows);
 
     report.forEach((r) => {
       const materiaNombre = r.materia?.nombre || 'Materia';
-      const materiaRows = r.ranking.map((s, index) => ({
-        Puesto: index + 1,
-        Estudiante: s.nombre,
-        Nota_Final: Number(toNumber(s.nota_final_num, 0).toFixed(2)),
-        Faltas: toNumber(s.faltas_num, 0),
-        Nota_Asistencia: Number(toNumber(s.asistencia_nota_num, 0).toFixed(2)),
-        Nota_Participacion: Number(toNumber(s.participacion_num, 0).toFixed(2)),
-      }));
-      appendSheet(materiaNombre, materiaRows);
-
-      const actividadRows = r.actividadesResumen.map((a) => ({
-        Actividad: a.titulo,
-        Tipo: (a.tipo || 'examen').replace('_', ' '),
-        Promedio: Number(toNumber(a.promedio, 0).toFixed(2)),
-        Porcentaje: `${a.porcentaje}%`,
-        Auto_Asignadas_1_0: toNumber(a.auto_asignadas, 0),
-      }));
-      appendSheet(`${materiaNombre} Activ`, actividadRows);
+      r.actividadesResumen.forEach((a) => {
+        rows.push({
+          Seccion: 'Actividad',
+          Periodo: selectedPeriodoLabel,
+          Materia: materiaNombre,
+          Puesto: '',
+          Estudiante: '',
+          Nota_Final: '',
+          Faltas: '',
+          Nota_Asistencia: '',
+          Nota_Participacion: '',
+          Actividad: a.titulo,
+          Tipo: (a.tipo || 'examen').replace('_', ' '),
+          Promedio: Number(toNumber(a.promedio, 0).toFixed(2)),
+          Porcentaje: `${a.porcentaje}%`,
+          Auto_Asignadas_1_0: toNumber(a.auto_asignadas, 0),
+          Materias: '',
+          Registros: '',
+          Mejor_Alumno: '',
+          Mejor_Nota: '',
+          Peor_Alumno: '',
+          Peor_Nota: '',
+        });
+      });
     });
 
     const periodoTag = String(selectedPeriodoLabel || 'periodo').toLowerCase().replace(/\s+/g, '-');
     const dateTag = new Date().toISOString().slice(0, 10);
-    XLSX.writeFile(wb, `reporte-multimateria-${periodoTag}-${dateTag}.xlsx`);
+    downloadCsv(`reporte-multimateria-${periodoTag}-${dateTag}.csv`, rows);
   };
 
   const handlePrint = () => {

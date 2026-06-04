@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import api from '../../api';
 import toast from 'react-hot-toast';
-import * as XLSX from 'xlsx';
 import {
   BarChart3, Save, Loader2, Send, Settings2, Hand, FileSpreadsheet,
 } from 'lucide-react';
@@ -25,6 +24,28 @@ function toFixedSafe(value, decimals = 2) {
   const n = Number(value);
   if (!Number.isFinite(n)) return 0;
   return n.toFixed(decimals);
+}
+
+function downloadCsv(filename, rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return;
+  const headers = Object.keys(rows[0]);
+  const escapeCsv = (value) => {
+    const text = value == null ? '' : String(value);
+    return `"${text.replace(/"/g, '""')}"`;
+  };
+  const csv = [
+    headers.map(escapeCsv).join(','),
+    ...rows.map((row) => headers.map((header) => escapeCsv(row[header])).join(',')),
+  ].join('\n');
+  const blob = new Blob([`\ufeff${csv}`], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 export default function MateriaReportes({ materiaId, materiaNombre }) {
@@ -247,15 +268,11 @@ export default function MateriaReportes({ materiaId, materiaNombre }) {
       })),
     ];
 
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(notasRows), 'Notas');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumenRows), 'Resumen');
-
     const safeMateria = String(materiaNombre || 'materia').toLowerCase().replace(/\s+/g, '-');
     const safePeriodo = String(reporte.periodo?.nombre || 'periodo').toLowerCase().replace(/\s+/g, '-');
     const dateTag = new Date().toISOString().slice(0, 10);
 
-    XLSX.writeFile(wb, `reporte-notas-${safeMateria}-${safePeriodo}-${dateTag}.xlsx`);
+    downloadCsv(`reporte-notas-${safeMateria}-${safePeriodo}-${dateTag}.csv`, [...resumenRows, ...notasRows]);
   };
 
   if (loading) return (

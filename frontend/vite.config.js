@@ -11,6 +11,7 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 3000,
+    allowedHosts: ['.trycloudflare.com', 'localhost', '127.0.0.1'],
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
     },

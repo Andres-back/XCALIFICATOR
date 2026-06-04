@@ -501,7 +501,7 @@ export default function AdminDashboard() {
                 <p className="text-xs text-gray-400">Aún no hay datos.</p>
               ) : (
                 <ul className="space-y-3">
-                  {presStats.por_subtipo.map((s) => {
+                  {presStats.por_subtipo.map((s, i) => {
                     const max = Math.max(...presStats.por_subtipo.map((x) => x.count), 1);
                     const pct = (s.count / max) * 100;
                     const colorMap = {
@@ -511,7 +511,7 @@ export default function AdminDashboard() {
                     };
                     const grad = colorMap[s.subtipo] || 'from-gray-300 to-gray-400';
                     return (
-                      <li key={s.subtipo}>
+                      <li key={`${s.subtipo || 'subtipo'}-${i}`}>
                         <div className="flex items-center justify-between mb-1">
                           <span className="text-xs font-medium text-gray-700">{s.label}</span>
                           <span className="text-xs font-bold text-gray-900">{s.count}</span>

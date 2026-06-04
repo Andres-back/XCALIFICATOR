@@ -77,10 +77,7 @@ services:
       - uploads:/app/uploads
 
   presenton:
-    build:
-      context: ./presenton
-      dockerfile: Dockerfile
-    image: presenton-local:latest
+    image: ghcr.io/presenton/presenton:latest
     container_name: xcalificator_presenton
     restart: unless-stopped
     ports:
@@ -91,13 +88,13 @@ services:
       CUSTOM_MODEL: ${PRESENTON_CUSTOM_MODEL:-meta-llama/llama-4-scout-17b-16e-instruct}
       CUSTOM_LLM_API_KEY: ${GROQ_API_KEY}
       IMAGE_PROVIDER: ${PRESENTON_IMAGE_PROVIDER:-pixabay}
-      PEXELS_API_KEY: ${PEXELS_API_KEY}
-      PIXABAY_API_KEY: ${PIXABAY_API_KEY}
+      PEXELS_API_KEY: ${PEXELS_API_KEY:-}
+      PIXABAY_API_KEY: ${PIXABAY_API_KEY:-}
       DISABLE_IMAGE_GENERATION: "false"
       APP_DATA_DIRECTORY: "/app_data"
       CAN_CHANGE_KEYS: "false"
       AUTH_USERNAME: ${PRESENTON_AUTH_USERNAME:-xcalificator}
-      AUTH_PASSWORD: ${PRESENTON_AUTH_PASSWORD:-XCalif2024Pres!}
+      AUTH_PASSWORD: ${PRESENTON_AUTH_PASSWORD:-xcalificator-dev-only}
       AUTH_OVERRIDE_FROM_ENV: "true"
     volumes:
       - presenton_data:/app_data
@@ -121,8 +118,8 @@ services:
     ports:
       - "5050:80"
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@xcalificator.com
-      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@xcalificator.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-xcalificator-dev-only}
     depends_on:
       - postgres
     profiles:

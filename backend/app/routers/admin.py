@@ -822,6 +822,9 @@ class AIConfigUpdate(BaseModel):
     chat_model: Optional[str] = None
     ollama_url: Optional[str] = None
     ollama_api_key: Optional[str] = None
+    ollama_cloud_url: Optional[str] = None
+    ollama_cloud_api_key: Optional[str] = None
+    ollama_cloud_ocr_model: Optional[str] = None
 
 
 @router.get("/groq-models")

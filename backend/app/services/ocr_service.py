@@ -1,5 +1,6 @@
 import io
 import base64
+import logging
 import cv2
 import numpy as np
 import httpx
@@ -10,8 +11,10 @@ from app.core.config import get_settings
 
 settings = get_settings()
 groq_client = Groq(api_key=settings.GROQ_API_KEY) if settings.GROQ_API_KEY else None
+logger = logging.getLogger(__name__)
 
 OCR_PROVIDER_OPTIONS = {"paddleocr", "groq_vision", "ollama_vision"}
+DEFAULT_OLLAMA_OCR_MODEL = "gemma3"
 DEFAULT_GROQ_OCR_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 
 
@@ -147,7 +150,8 @@ async def _ocr_with_provider(
         selected_model = model or DEFAULT_GROQ_OCR_MODEL
         return await ocr_with_groq_vision(image_bytes, selected_model)
     if provider == "ollama_vision":
-        return await ocr_with_ollama_vision(image_bytes, model, ollama_url, ollama_api_key)
+        selected_model = model or DEFAULT_OLLAMA_OCR_MODEL
+        return await ocr_with_ollama_vision(image_bytes, selected_model, ollama_url, ollama_api_key)
     raise ValueError(f"Proveedor OCR no soportado: {provider}")
 
 
@@ -175,11 +179,14 @@ async def _ocr_with_fallback(image_bytes: bytes, provider_config: dict | None = 
     errors = []
     for provider, model in attempts:
         try:
+            logger.info("OCR attempt with %s model=%s", provider, model or "default")
             text = await _ocr_with_provider(image_bytes, provider, model, ollama_url, ollama_api_key)
             if isinstance(text, str) and text.strip():
+                logger.info("OCR succeeded with %s model=%s", provider, model or "default")
                 return text
             errors.append(f"{provider}({model or 'sin_modelo'}): texto vacío")
         except Exception as exc:
+            logger.warning("OCR attempt failed with %s model=%s: %s", provider, model or "default", exc)
             errors.append(f"{provider}({model or 'sin_modelo'}): {str(exc)}")
 
     raise RuntimeError("No fue posible extraer texto con OCR configurado. " + " | ".join(errors))

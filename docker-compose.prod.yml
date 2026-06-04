@@ -1,0 +1,140 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: xcalificator_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER requerido}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD requerido}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB requerido}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - xcalificator-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: xcalificator_redis
+    restart: always
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD requerido}
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD requerido}"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - xcalificator-net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    container_name: xcalificator_backend
+    restart: always
+    env_file:
+      - ${ENV_FILE:-.env}
+    volumes:
+      - uploads:/app/uploads
+      - presenton_data:/presenton_data:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - xcalificator-net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        VITE_API_URL: ${VITE_API_URL:-}
+        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
+    container_name: xcalificator_frontend
+    restart: always
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - xcalificator-net
+
+  paddleocr:
+    build:
+      context: ./paddleocr
+      dockerfile: Dockerfile
+    container_name: xcalificator_paddleocr
+    restart: always
+    volumes:
+      - uploads:/app/uploads
+    networks:
+      - xcalificator-net
+
+  presenton:
+    image: ghcr.io/presenton/presenton:latest
+    container_name: xcalificator_presenton
+    restart: always
+    environment:
+      LLM: ${PRESENTON_LLM:-custom}
+      CUSTOM_LLM_URL: ${PRESENTON_CUSTOM_LLM_URL:-https://api.groq.com/openai/v1}
+      CUSTOM_MODEL: ${PRESENTON_CUSTOM_MODEL:-meta-llama/llama-4-scout-17b-16e-instruct}
+      CUSTOM_LLM_API_KEY: ${GROQ_API_KEY:?GROQ_API_KEY requerido}
+      IMAGE_PROVIDER: ${PRESENTON_IMAGE_PROVIDER:-pixabay}
+      PEXELS_API_KEY: ${PEXELS_API_KEY:-}
+      PIXABAY_API_KEY: ${PIXABAY_API_KEY:-}
+      DISABLE_IMAGE_GENERATION: ${PRESENTON_DISABLE_IMAGE_GENERATION:-false}
+      APP_DATA_DIRECTORY: /app_data
+      CAN_CHANGE_KEYS: "false"
+      AUTH_USERNAME: ${PRESENTON_AUTH_USERNAME:-xcalificator}
+      AUTH_PASSWORD: ${PRESENTON_AUTH_PASSWORD:?PRESENTON_AUTH_PASSWORD requerido}
+      AUTH_OVERRIDE_FROM_ENV: "true"
+    volumes:
+      - presenton_data:/app_data
+    networks:
+      - xcalificator-net
+
+  nginx:
+    image: nginx:alpine
+    container_name: xcalificator_nginx
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/${NGINX_CONF:-nginx.prod.conf}:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+      presenton:
+        condition: service_started
+    networks:
+      - xcalificator-net
+
+volumes:
+  pgdata:
+  redisdata:
+  uploads:
+  presenton_data:
+
+networks:
+  xcalificator-net:
+    driver: bridge

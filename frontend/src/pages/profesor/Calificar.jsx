@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useParams } from 'react-router-dom';
+import { useLocation, useParams } from 'react-router-dom';
 import api from '../../api';
 import toast from 'react-hot-toast';
 import {
@@ -116,7 +116,9 @@ function ResultCard({ result }) {
 /* ═════════════  MAIN COMPONENT  ═════════════ */
 export default function Calificar() {
   const { examenId } = useParams();
-  const [tab, setTab] = useState('online');       // 'online' | 'ocr'
+  const location = useLocation();
+  const defaultTab = location.pathname.includes('/calificar/imagenes') ? 'ocr' : 'online';
+  const [tab, setTab] = useState(defaultTab);       // 'online' | 'ocr'
   const [students, setStudents] = useState([]);
   const [examTitle, setExamTitle] = useState('');
 
@@ -131,6 +133,10 @@ export default function Calificar() {
   const [subsLoading, setSubsLoading] = useState(false);
   const [gradingId, setGradingId] = useState(null);   // currently grading student id
   const [onlineResult, setOnlineResult] = useState(null);
+
+  useEffect(() => {
+    setTab(defaultTab);
+  }, [defaultTab]);
 
   /* Load exam info + students */
   useEffect(() => {
@@ -181,6 +187,7 @@ export default function Calificar() {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
       setOcrResult(res.data);
+      loadSubmissions();
       toast.success('Examen calificado exitosamente');
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Error calificando');
@@ -305,6 +312,11 @@ export default function Calificar() {
                       <p className="font-semibold text-gray-900 text-sm">{sub.estudiante_nombre}</p>
                       <div className="flex items-center gap-3 text-xs text-gray-500 mt-0.5">
                         <span>{sub.estudiante_documento}</span>
+                        {sub.tipo_entrega === 'ocr_presencial' && (
+                          <span className="flex items-center gap-1 text-emerald-700">
+                            <Camera className="w-3 h-3" /> OCR presencial
+                          </span>
+                        )}
                         <span className="flex items-center gap-1">
                           <Clock className="w-3 h-3" /> {fmtDate(sub.enviado_at)}
                         </span>
@@ -361,6 +373,10 @@ export default function Calificar() {
       {tab === 'ocr' && (
         <div className="space-y-4">
           <div className="card space-y-4">
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+              OCR por vision: Ollama procesa primero; si falla o no devuelve texto, Groq Cloud responde como respaldo.
+            </div>
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Estudiante</label>
               <select className="input-field" value={selectedStudent}
@@ -377,13 +393,13 @@ export default function Calificar() {
               <div {...getRootProps()}
                 className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors
                   ${isDragActive ? 'border-indigo-500 bg-indigo-50' : 'border-gray-300 hover:border-gray-400'}`}>
-                <input {...getInputProps()} />
+                <input {...getInputProps({ capture: 'environment' })} />
                 <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2" />
                 {file ? (
                   <p className="text-sm text-profesor-600 font-medium">{file.name}</p>
                 ) : (
                   <p className="text-sm text-gray-500">
-                    Arrastra una imagen o haz clic para seleccionar
+                    Toma una foto, arrastra una imagen o haz clic para seleccionar
                     <br /><span className="text-xs">JPG, PNG o PDF (máx 10MB)</span>
                   </p>
                 )}

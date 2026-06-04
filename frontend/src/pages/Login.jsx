@@ -212,7 +212,7 @@ export default function Login() {
                 }}
                 shape="rectangular"
                 size="large"
-                width="380"
+                width={380}
                 text="continue_with"
                 locale="es"
               />

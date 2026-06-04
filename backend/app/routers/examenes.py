@@ -21,6 +21,29 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/examenes", tags=["Exámenes"])
 
 
+def _parse_optional_datetime(value):
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        normalized = raw.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(normalized)
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+        for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M"):
+            try:
+                return datetime.strptime(raw, fmt).replace(tzinfo=timezone.utc)
+            except ValueError:
+                continue
+    raise HTTPException(status_code=400, detail="Formato de fecha invalido")
+
+
 async def _assert_materia_access(
     db: AsyncSession,
     materia_id: str,
@@ -667,6 +690,36 @@ async def get_examen_stats(
     }
 
 
+@router.get("/notas/materia/{materia_id}", response_model=list[NotaOut])
+async def get_notas_materia(
+    materia_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("profesor", "admin")),
+):
+    await _assert_materia_access(db, materia_id, current_user)
+
+    result = await db.execute(
+        select(Nota)
+        .join(Examen, Nota.examen_id == Examen.id)
+        .options(selectinload(Nota.estudiante), selectinload(Nota.examen))
+        .where(Examen.materia_id == materia_id)
+        .order_by(Nota.created_at.desc())
+    )
+
+    out = []
+    for n in result.scalars().all():
+        d = NotaOut.model_validate(n)
+        if n.estudiante:
+            d.estudiante_nombre = n.estudiante.nombre
+            d.estudiante_apellido = n.estudiante.apellido
+        if n.examen:
+            d.examen_titulo = n.examen.titulo
+            d.examen_tipo = n.examen.tipo
+            d.examen_contenido_json = n.examen.contenido_json
+        out.append(d)
+    return out
+
+
 @router.get("/mis-respuestas")
 async def get_my_responses(
     db: AsyncSession = Depends(get_db),
@@ -819,6 +872,8 @@ async def get_respuestas_online(
             "estudiante_nombre": f"{est.nombre} {est.apellido}" if est else "Desconocido",
             "estudiante_documento": est.documento if est else "",
             "examen_id": str(r.examen_id),
+            "tipo_entrega": (r.respuestas_json or {}).get("tipo_entrega", "online"),
+            "origen": (r.respuestas_json or {}).get("origen", "estudiante_online"),
             "enviado_at": r.enviado_at.isoformat() if r.enviado_at else None,
             "ya_calificado": estado_calificacion != "sin_nota",
             "tiene_nota": tiene_nota,
@@ -927,20 +982,8 @@ async def update_examen(
         if field in allowed_fields:
             if field in {"contenido_json", "clave_respuestas"}:
                 value = normalize_latex_payload(value)
-            if field in date_fields and value:
-                # Parse date string to proper datetime
-                try:
-                    if isinstance(value, str):
-                        # Handle "2025-12-31T23:59" from datetime-local input
-                        value = value.replace("T", " ")
-                        for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M"):
-                            try:
-                                value = datetime.strptime(value, fmt).replace(tzinfo=timezone.utc)
-                                break
-                            except ValueError:
-                                continue
-                except Exception:
-                    pass
+            if field in date_fields:
+                value = _parse_optional_datetime(value)
             setattr(examen, field, value)
 
     await db.commit()

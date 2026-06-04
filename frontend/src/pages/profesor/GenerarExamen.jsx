@@ -153,7 +153,10 @@ export default function GenerarExamen({ materiaId: propMateriaId, embedded = fal
             if (form.fecha_activacion) updatePayload.fecha_activacion = new Date(form.fecha_activacion).toISOString();
             await api.patch(`/examenes/${latest.id}`, updatePayload);
           }
-        } catch {}
+        } catch (err) {
+          toast.error(err.response?.data?.detail || 'El examen se generó, pero no se pudieron guardar fechas/publicación');
+          throw err;
+        }
       }
 
       toast.success('¡Examen generado exitosamente!');

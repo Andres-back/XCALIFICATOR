@@ -129,6 +129,11 @@ export default function App() {
             <Layout><ProfesorCalificar /></Layout>
           </ProtectedRoute>
         } />
+        <Route path="/profesor/calificar/imagenes/:examenId" element={
+          <ProtectedRoute roles={['profesor', 'admin']}>
+            <Layout><ProfesorCalificar /></Layout>
+          </ProtectedRoute>
+        } />
         <Route path="/profesor/notas/:examenId" element={
           <ProtectedRoute roles={['profesor', 'admin']}>
             <Layout><ProfesorNotas /></Layout>

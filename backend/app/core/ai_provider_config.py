@@ -33,6 +33,9 @@ DEFAULT_CONFIG: dict = {
     "chat_model": "meta-llama/llama-4-scout-17b-16e-instruct",
     "ollama_url": "http://host.docker.internal:11434",
     "ollama_api_key": "",
+    "ollama_cloud_url": "https://ollama.com",
+    "ollama_cloud_api_key": "",
+    "ollama_cloud_ocr_model": "qwen3-vl:235b-cloud",
     "updated_at": None,
     "updated_by": None,
 }
@@ -45,6 +48,9 @@ _INHERIT_IF_EMPTY_KEYS = {
     "chat_model",
     "ollama_url",
     "ollama_api_key",
+    "ollama_cloud_url",
+    "ollama_cloud_api_key",
+    "ollama_cloud_ocr_model",
 }
 
 
@@ -107,6 +113,9 @@ def normalize_ai_config(raw: dict | None) -> dict:
     cfg["chat_model"] = _normalize_text(cfg.get("chat_model")) or DEFAULT_CONFIG["chat_model"]
     cfg["ollama_url"] = _normalize_text(cfg.get("ollama_url")) or DEFAULT_CONFIG["ollama_url"]
     cfg["ollama_api_key"] = _normalize_text(cfg.get("ollama_api_key")) or ""
+    cfg["ollama_cloud_url"] = _normalize_text(cfg.get("ollama_cloud_url")) or DEFAULT_CONFIG["ollama_cloud_url"]
+    cfg["ollama_cloud_api_key"] = _normalize_text(cfg.get("ollama_cloud_api_key")) or ""
+    cfg["ollama_cloud_ocr_model"] = _normalize_text(cfg.get("ollama_cloud_ocr_model")) or DEFAULT_CONFIG["ollama_cloud_ocr_model"]
     return cfg
 
 
@@ -126,6 +135,9 @@ async def ensure_ai_provider_table(db: AsyncSession) -> None:
             chat_model VARCHAR(120),
             ollama_url VARCHAR(255) NOT NULL DEFAULT 'http://host.docker.internal:11434',
             ollama_api_key VARCHAR(255),
+            ollama_cloud_url VARCHAR(255) DEFAULT 'https://ollama.com',
+            ollama_cloud_api_key VARCHAR(255),
+            ollama_cloud_ocr_model VARCHAR(120) DEFAULT 'qwen3-vl:235b-cloud',
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
             CHECK (id = 1)
@@ -149,6 +161,27 @@ async def ensure_ai_provider_table(db: AsyncSession) -> None:
 
     await db.execute(text(
         """
+        ALTER TABLE IF EXISTS ai_global_config
+        ADD COLUMN IF NOT EXISTS ollama_cloud_url VARCHAR(255) DEFAULT 'https://ollama.com'
+        """
+    ))
+
+    await db.execute(text(
+        """
+        ALTER TABLE IF EXISTS ai_global_config
+        ADD COLUMN IF NOT EXISTS ollama_cloud_api_key VARCHAR(255)
+        """
+    ))
+
+    await db.execute(text(
+        """
+        ALTER TABLE IF EXISTS ai_global_config
+        ADD COLUMN IF NOT EXISTS ollama_cloud_ocr_model VARCHAR(120) DEFAULT 'qwen3-vl:235b-cloud'
+        """
+    ))
+
+    await db.execute(text(
+        """
         CREATE TABLE IF NOT EXISTS profesor_ai_configs (
             profesor_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
             grading_provider VARCHAR(30) NOT NULL DEFAULT 'groq',
@@ -162,6 +195,9 @@ async def ensure_ai_provider_table(db: AsyncSession) -> None:
             chat_model VARCHAR(120),
             ollama_url VARCHAR(255) NOT NULL DEFAULT 'http://host.docker.internal:11434',
             ollama_api_key VARCHAR(255),
+            ollama_cloud_url VARCHAR(255) DEFAULT 'https://ollama.com',
+            ollama_cloud_api_key VARCHAR(255),
+            ollama_cloud_ocr_model VARCHAR(120) DEFAULT 'qwen3-vl:235b-cloud',
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_by UUID REFERENCES users(id) ON DELETE SET NULL
         )
@@ -183,6 +219,27 @@ async def ensure_ai_provider_table(db: AsyncSession) -> None:
         """
     ))
 
+    await db.execute(text(
+        """
+        ALTER TABLE IF EXISTS profesor_ai_configs
+        ADD COLUMN IF NOT EXISTS ollama_cloud_url VARCHAR(255) DEFAULT 'https://ollama.com'
+        """
+    ))
+
+    await db.execute(text(
+        """
+        ALTER TABLE IF EXISTS profesor_ai_configs
+        ADD COLUMN IF NOT EXISTS ollama_cloud_api_key VARCHAR(255)
+        """
+    ))
+
+    await db.execute(text(
+        """
+        ALTER TABLE IF EXISTS profesor_ai_configs
+        ADD COLUMN IF NOT EXISTS ollama_cloud_ocr_model VARCHAR(120) DEFAULT 'qwen3-vl:235b-cloud'
+        """
+    ))
+
 
 async def _get_global_ai_row(db: AsyncSession) -> dict | None:
     result = await db.execute(
@@ -200,6 +257,9 @@ async def _get_global_ai_row(db: AsyncSession) -> dict | None:
                 chat_model,
                 ollama_url,
                 ollama_api_key,
+                ollama_cloud_url,
+                ollama_cloud_api_key,
+                ollama_cloud_ocr_model,
                 updated_at,
                 updated_by
             FROM ai_global_config
@@ -241,6 +301,9 @@ async def upsert_global_ai_config(
                 chat_model,
                 ollama_url,
                 ollama_api_key,
+                ollama_cloud_url,
+                ollama_cloud_api_key,
+                ollama_cloud_ocr_model,
                 updated_at,
                 updated_by
             )
@@ -257,6 +320,9 @@ async def upsert_global_ai_config(
                 :chat_model,
                 :ollama_url,
                 :ollama_api_key,
+                :ollama_cloud_url,
+                :ollama_cloud_api_key,
+                :ollama_cloud_ocr_model,
                 NOW(),
                 :updated_by
             )
@@ -272,6 +338,9 @@ async def upsert_global_ai_config(
                 chat_model = EXCLUDED.chat_model,
                 ollama_url = EXCLUDED.ollama_url,
                 ollama_api_key = EXCLUDED.ollama_api_key,
+                ollama_cloud_url = EXCLUDED.ollama_cloud_url,
+                ollama_cloud_api_key = EXCLUDED.ollama_cloud_api_key,
+                ollama_cloud_ocr_model = EXCLUDED.ollama_cloud_ocr_model,
                 updated_at = NOW(),
                 updated_by = EXCLUDED.updated_by
             """
@@ -288,6 +357,9 @@ async def upsert_global_ai_config(
             "chat_model": normalized["chat_model"] or None,
             "ollama_url": normalized["ollama_url"],
             "ollama_api_key": normalized["ollama_api_key"] or None,
+            "ollama_cloud_url": normalized["ollama_cloud_url"],
+            "ollama_cloud_api_key": normalized["ollama_cloud_api_key"] or None,
+            "ollama_cloud_ocr_model": normalized["ollama_cloud_ocr_model"] or None,
             "updated_by": updated_by,
         },
     )
@@ -311,6 +383,9 @@ async def _get_profesor_ai_row(db: AsyncSession, profesor_id: str) -> dict | Non
                 chat_model,
                 ollama_url,
                 ollama_api_key,
+                ollama_cloud_url,
+                ollama_cloud_api_key,
+                ollama_cloud_ocr_model,
                 updated_at,
                 updated_by
             FROM profesor_ai_configs
@@ -383,6 +458,9 @@ async def upsert_profesor_ai_config(
                 chat_model,
                 ollama_url,
                 ollama_api_key,
+                ollama_cloud_url,
+                ollama_cloud_api_key,
+                ollama_cloud_ocr_model,
                 updated_at,
                 updated_by
             )
@@ -399,6 +477,9 @@ async def upsert_profesor_ai_config(
                 :chat_model,
                 :ollama_url,
                 :ollama_api_key,
+                :ollama_cloud_url,
+                :ollama_cloud_api_key,
+                :ollama_cloud_ocr_model,
                 NOW(),
                 :updated_by
             )
@@ -414,6 +495,9 @@ async def upsert_profesor_ai_config(
                 chat_model = EXCLUDED.chat_model,
                 ollama_url = EXCLUDED.ollama_url,
                 ollama_api_key = EXCLUDED.ollama_api_key,
+                ollama_cloud_url = EXCLUDED.ollama_cloud_url,
+                ollama_cloud_api_key = EXCLUDED.ollama_cloud_api_key,
+                ollama_cloud_ocr_model = EXCLUDED.ollama_cloud_ocr_model,
                 updated_at = NOW(),
                 updated_by = EXCLUDED.updated_by
             """
@@ -431,6 +515,9 @@ async def upsert_profesor_ai_config(
             "chat_model": normalized["chat_model"] or None,
             "ollama_url": normalized["ollama_url"],
             "ollama_api_key": normalized["ollama_api_key"] or None,
+            "ollama_cloud_url": normalized["ollama_cloud_url"],
+            "ollama_cloud_api_key": normalized["ollama_cloud_api_key"] or None,
+            "ollama_cloud_ocr_model": normalized["ollama_cloud_ocr_model"] or None,
             "updated_by": updated_by,
         },
     )

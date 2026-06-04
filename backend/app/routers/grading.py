@@ -1,6 +1,7 @@
 import os
 import uuid
 import logging
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -8,9 +9,13 @@ from app.core.database import get_db
 from app.core.dependencies import require_role
 from app.core.ai_provider_config import get_profesor_ai_config
 from app.core.config import get_settings
-from app.models.models import User, Examen, Nota, Materia, Matricula
+from app.models.models import User, Examen, Materia, Matricula, RespuestaOnline
 from app.services.nota_service import upsert_nota
-from app.services.ocr_service import process_exam_image
+from app.services.ocr_service import (
+    DEFAULT_GROQ_OCR_MODEL,
+    DEFAULT_OLLAMA_OCR_MODEL,
+    process_exam_image,
+)
 from app.services.groq_service import grade_exam_with_fallback
 from app.services.vision_grading_service import grade_interactive_with_vision
 from app.schemas.schemas import NotaOut
@@ -21,6 +26,92 @@ logger = logging.getLogger(__name__)
 
 ALLOWED_UPLOAD_TYPES = {"image/jpeg", "image/png", "image/jpg", "application/pdf"}
 ALLOWED_UPLOAD_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf"}
+
+
+def _build_image_ocr_config(ai_config: dict | None) -> dict:
+    """Build OCR config for image uploads: forces ollama_vision -> groq_vision.
+
+    Reads the configured ocr_model / ocr_fallback_model / ollama_url / ollama_api_key
+    directly from the effective (global + profesor) config. Falls back to env vars
+    (including OLLAMA_CLOUD_* for the new Ollama Cloud naming) and finally to safe
+    defaults. Auto-derives a Cloud URL when the configured model looks like a
+    Cloud model (:cloud suffix or known Cloud families).
+    """
+    cfg = dict(ai_config or {})
+    configured_provider = str(cfg.get("ocr_provider") or "").strip().lower()
+    configured_fallback = str(cfg.get("ocr_fallback_provider") or "").strip().lower()
+    configured_model = str(cfg.get("ocr_model") or "").strip()
+    configured_fallback_model = str(cfg.get("ocr_fallback_model") or "").strip()
+
+    profesor_ollama_model = ""
+    if configured_provider == "ollama_vision":
+        profesor_ollama_model = configured_model
+    elif configured_fallback == "ollama_vision":
+        profesor_ollama_model = configured_fallback_model
+
+    configured_groq_model = ""
+    if configured_provider == "groq_vision":
+        configured_groq_model = configured_model
+    elif configured_fallback == "groq_vision":
+        configured_groq_model = configured_fallback_model
+
+    # 1) Ollama OCR model: use whatever the profesor/global configured.
+    #    Do NOT depend on the original ocr_provider value — the user may have
+    #    set ollama_vision as the model provider while keeping paddleocr as a
+    #    primary tag for non-image paths.
+    ocr_model = (
+        profesor_ollama_model
+        or str(settings.OLLAMA_CLOUD_OCR_MODEL or "").strip()
+        or str(settings.OCR_OLLAMA_MODEL or "").strip()
+        or DEFAULT_OLLAMA_OCR_MODEL
+    )
+
+    # 2) Fallback model (Groq vision) — keep prior precedence but always return
+    #    a non-empty value so the fallback chain is always usable.
+    fallback_model = (
+        configured_groq_model
+        or str(settings.OCR_GROQ_FALLBACK_MODEL or "").strip()
+        or DEFAULT_GROQ_OCR_MODEL
+    )
+
+    # 3) Ollama URL — explicit DB value wins; then Cloud env; then local env;
+    #    then auto-derive Cloud if the model is a known Cloud family.
+    configured_url = str(cfg.get("ollama_url") or "").strip()
+    env_local_url = str(settings.OLLAMA_URL or "").strip()
+    env_cloud_url = str(settings.OLLAMA_CLOUD_URL or "").strip()
+
+    if configured_url and configured_url != "http://host.docker.internal:11434":
+        ollama_url = configured_url
+    elif env_cloud_url:
+        ollama_url = env_cloud_url
+    elif env_local_url:
+        ollama_url = env_local_url
+    else:
+        # Auto-derive: if the model looks like a Cloud model, default to Ollama Cloud.
+        is_cloud_model = (
+            ":cloud" in ocr_model.lower()
+            or ocr_model.lower().startswith("qwen")
+            or ocr_model.lower().startswith("deepseek")
+        )
+        ollama_url = "https://ollama.com" if is_cloud_model else "http://host.docker.internal:11434"
+
+    # 4) Ollama API key — explicit DB value wins; then Cloud env; then local env.
+    configured_key = str(cfg.get("ollama_api_key") or "").strip()
+    ollama_api_key = (
+        configured_key
+        or str(settings.OLLAMA_CLOUD_API_KEY or "").strip()
+        or str(settings.OLLAMA_API_KEY or "").strip()
+    )
+
+    cfg.update({
+        "ocr_provider": "ollama_vision",
+        "ocr_model": ocr_model,
+        "ocr_fallback_provider": "groq_vision",
+        "ocr_fallback_model": fallback_model,
+        "ollama_url": ollama_url.rstrip("/"),
+        "ollama_api_key": ollama_api_key,
+    })
+    return cfg
 
 
 async def _assert_examen_access(
@@ -59,6 +150,67 @@ async def _assert_student_enrolled(
         raise HTTPException(status_code=400, detail="El estudiante no está inscrito en la materia del examen")
 
 # ──────── SMART GRADING HELPERS ────────
+
+async def _upsert_presential_ocr_submission(
+    db: AsyncSession,
+    *,
+    estudiante_id: str,
+    examen_id: str,
+    captured_by: str,
+    filename: str,
+    content_type: str | None,
+    file_size: int,
+    file_url: str,
+    ocr_result: dict,
+    grading_result: dict,
+    image_ocr_config: dict,
+) -> RespuestaOnline:
+    payload = {
+        "tipo_entrega": "ocr_presencial",
+        "origen": "profesor_foto",
+        "capturado_por": captured_by,
+        "archivo": {
+            "nombre": filename,
+            "url": file_url,
+            "content_type": content_type,
+            "size_bytes": file_size,
+        },
+        "ocr": {
+            "provider_order": ["ollama_vision", "groq_vision"],
+            "model": image_ocr_config.get("ocr_model"),
+            "fallback_model": image_ocr_config.get("ocr_fallback_model"),
+            "quality": ocr_result.get("ocr_quality"),
+            "motivo": ocr_result.get("ocr_motivo"),
+            "tipo_escritura": ocr_result.get("tipo_escritura"),
+            "texto_extraido_preview": (ocr_result.get("texto_extraido") or "")[:600],
+        },
+        "preguntas": ocr_result.get("preguntas") or [],
+        "calificacion": {
+            "nota_total": grading_result.get("nota_total"),
+            "nota_maxima": grading_result.get("nota_maxima"),
+            "estado": "requiere_revision" if grading_result.get("requiere_revision_profesor") else "calificada",
+        },
+    }
+
+    result = await db.execute(
+        select(RespuestaOnline).where(
+            RespuestaOnline.estudiante_id == estudiante_id,
+            RespuestaOnline.examen_id == examen_id,
+        )
+    )
+    respuesta = result.scalar_one_or_none()
+    if respuesta is None:
+        respuesta = RespuestaOnline(
+            estudiante_id=estudiante_id,
+            examen_id=examen_id,
+            respuestas_json=payload,
+        )
+        db.add(respuesta)
+    else:
+        respuesta.respuestas_json = payload
+        respuesta.enviado_at = datetime.now(timezone.utc)
+    return respuesta
+
 
 def _normalize(s: str) -> str:
     """Normalize a string for comparison."""
@@ -348,6 +500,7 @@ async def grade_uploaded_exam(
         db,
         str(materia.profesor_id) if getattr(materia, "profesor_id", None) else None,
     )
+    image_ocr_config = _build_image_ocr_config(ai_config)
 
     ocr_result = {"texto_extraido": "", "preguntas": [], "tipo_escritura": "desconocido"}
     grading_result = {
@@ -362,7 +515,7 @@ async def grade_uploaded_exam(
     if needs_ocr:
         # OCR Pipeline
         try:
-            ocr_result = await process_exam_image(file_bytes, filename, ai_config)
+            ocr_result = await process_exam_image(file_bytes, filename, image_ocr_config)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error en OCR: {str(e)}")
 
@@ -375,16 +528,38 @@ async def grade_uploaded_exam(
                 "OCR quality LOW for exam %s / student %s: %s",
                 examen_id, estudiante_id, ocr_motivo,
             )
-            nota_revision = Nota(
+            revision_detail = {
+                "requiere_revision_profesor": True,
+                "motivo_revision": ocr_motivo,
+                "ocr_quality": "baja",
+                "ocr_provider_order": ["ollama_vision", "groq_vision"],
+                "ocr_model": image_ocr_config.get("ocr_model"),
+                "ocr_fallback_model": image_ocr_config.get("ocr_fallback_model"),
+                "texto_extraido_preview": ocr_result["texto_extraido"][:600],
+            }
+            await _upsert_presential_ocr_submission(
+                db,
                 estudiante_id=estudiante_id,
                 examen_id=examen_id,
-                nota=None,   # Pending — professor must review and grade manually
-                detalle_json={
+                captured_by=str(current_user.id),
+                filename=filename,
+                content_type=file.content_type,
+                file_size=len(file_bytes),
+                file_url=f"/uploads/{file_id}{ext}",
+                ocr_result=ocr_result,
+                grading_result={
+                    "nota_total": None,
+                    "nota_maxima": 0.0,
                     "requiere_revision_profesor": True,
-                    "motivo_revision": ocr_motivo,
-                    "ocr_quality": "baja",
-                    "texto_extraido_preview": ocr_result["texto_extraido"][:600],
                 },
+                image_ocr_config=image_ocr_config,
+            )
+            nota_revision = await upsert_nota(
+                db,
+                estudiante_id=estudiante_id,
+                examen_id=examen_id,
+                nota_val=None,
+                detalle_json=revision_detail,
                 retroalimentacion=(
                     "Calificación pendiente de revisión manual — "
                     "el OCR no pudo leer el examen con suficiente confianza."
@@ -392,7 +567,6 @@ async def grade_uploaded_exam(
                 imagen_procesada_url=f"/uploads/{file_id}{ext}",
                 texto_extraido=ocr_result["texto_extraido"],
             )
-            db.add(nota_revision)
             await db.commit()
             await db.refresh(nota_revision)
             return NotaOut.model_validate(nota_revision)
@@ -482,10 +656,27 @@ async def grade_uploaded_exam(
 
     # Annotate grading result with OCR quality metadata (medium quality)
     if needs_ocr:
+        grading_result["ocr_provider_order"] = ["ollama_vision", "groq_vision"]
+        grading_result["ocr_model"] = image_ocr_config.get("ocr_model")
+        grading_result["ocr_fallback_model"] = image_ocr_config.get("ocr_fallback_model")
         ocr_q = ocr_result.get("ocr_quality", "alta")
         if ocr_q == "media":
             grading_result["ocr_quality"] = ocr_q
             grading_result["ocr_motivo"] = ocr_result.get("ocr_motivo", "")
+
+    await _upsert_presential_ocr_submission(
+        db,
+        estudiante_id=estudiante_id,
+        examen_id=examen_id,
+        captured_by=str(current_user.id),
+        filename=filename,
+        content_type=file.content_type,
+        file_size=len(file_bytes),
+        file_url=f"/uploads/{file_id}{ext}",
+        ocr_result=ocr_result,
+        grading_result=grading_result,
+        image_ocr_config=image_ocr_config,
+    )
 
     # Save nota (single row per student+exam)
     nota = await upsert_nota(
