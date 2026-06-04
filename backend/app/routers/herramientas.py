@@ -514,8 +514,7 @@ async def generate_herramienta(
                 or settings.OLLAMA_PRESENTATION_MODEL
                 or ai_cfg.get("grading_model")
                 or "",
-                "usar_imagenes_pexels": bool(data.usar_imagenes_pexels),
-                "imagenes_pexels_por_slide": data.imagenes_pexels_por_slide or 1,
+                "usar_imagenes_generadas": True,
                 "exportar_google_slides": bool(data.exportar_google_slides),
                 "instrucciones_presentacion": data.instrucciones_presentacion or "",
             }
@@ -538,8 +537,7 @@ async def generate_herramienta(
                     "web_search": params_config["busqueda_web"],
                     "export_as": params_config["formato_exportacion"],
                     "instructions": params_config["instrucciones_presentacion"],
-                    "use_pexels_images": params_config["usar_imagenes_pexels"],
-                    "pexels_images_per_slide": params_config["imagenes_pexels_por_slide"],
+                    "use_generated_images": params_config["usar_imagenes_generadas"],
                     "export_google_slides": params_config["exportar_google_slides"],
                     "ollama_url": params_config["ollama_url_presentacion"],
                     "ollama_model": params_config["ollama_model_presentacion"],
@@ -825,8 +823,7 @@ async def regenerate_presentacion_herramienta(
         "web_search": bool(data.web_search),
         "export_as": data.export_as or params_cfg.get("formato_exportacion") or "pptx",
         "instructions": data.instructions or params_cfg.get("instrucciones_presentacion") or "",
-        "use_pexels_images": bool(data.use_pexels_images),
-        "pexels_images_per_slide": data.pexels_images_per_slide or 1,
+        "use_generated_images": True,
         "export_google_slides": bool(data.export_google_slides),
         "ollama_url": data.ollama_url or params_cfg.get("ollama_url_presentacion") or ai_cfg.get("ollama_url") or "",
         "ollama_model": data.ollama_model
@@ -901,8 +898,7 @@ async def regenerate_presentacion_herramienta(
         "modo_presentacion": generation_payload["mode"],
         "ollama_url_presentacion": generation_payload["ollama_url"],
         "ollama_model_presentacion": generation_payload["ollama_model"],
-        "usar_imagenes_pexels": generation_payload["use_pexels_images"],
-        "imagenes_pexels_por_slide": generation_payload["pexels_images_per_slide"],
+        "usar_imagenes_generadas": generation_payload["use_generated_images"],
         "exportar_google_slides": generation_payload["export_google_slides"],
         "instrucciones_presentacion": generation_payload["instructions"],
     }

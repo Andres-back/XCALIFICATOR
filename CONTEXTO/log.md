@@ -26,3 +26,10 @@
 - Persistencia final:
   - `respuestas_online`: evidencia de entrega presencial, archivo, modelo VLM usado, calidad OCR y preguntas extraidas.
   - `notas`: calificacion, retroalimentacion, detalle JSON, imagen procesada y texto extraido.
+
+## 2026-06-04 - Imagenes de presentaciones sin bancos stock
+
+- Modulo: presentaciones y herramientas docentes.
+- Cambio: se eliminaron los bancos de imagenes stock del flujo de presentaciones.
+- Nueva regla: las diapositivas usan imagenes generadas por IA mediante URL de generacion (`gen.pollinations.ai`) y `POLLINATIONS_API_KEY` si esta configurada.
+- Despliegue: se retiraron las variables de bancos stock y proveedor externo de imagenes de plantillas y Docker Compose.

@@ -5,6 +5,7 @@
 | `/profesor/calificar/:examenId` | `/api/grading/upload` | POST | `examenes`, `materias`, `matriculas`, `notas` | OCR por imagen funcional |
 | `/profesor/calificar/imagenes/:examenId` | `/api/grading/upload` | POST | `examenes`, `materias`, `matriculas`, `notas` | Alias directo a OCR |
 | `/profesor/calificar/:examenId` | `/api/examenes/{examen_id}/respuestas-online` | GET | `respuestas_online`, `notas`, `users` | Control de entregas online y OCR presencial |
+| `/profesor/presentacion` | `/api/presentaciones/clase` | POST | `herramientas`, `uploads` | Presentaciones con imagenes generadas por IA |
 
 ## Contrato OCR imagen
 

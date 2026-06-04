@@ -40,8 +40,6 @@ class Settings(BaseSettings):
 
     # Pollinations (image generation)
     POLLINATIONS_API_KEY: str = ""
-    PEXELS_API_KEY: str = ""
-    PIXABAY_API_KEY: str = ""
 
     # Ollama/local AI
     OLLAMA_URL: str = ""
@@ -64,7 +62,6 @@ class Settings(BaseSettings):
     PRESENTON_URL: str = "http://presenton:80"
     PRESENTON_PUBLIC_URL: str = "http://localhost:5001"
     PRESENTON_TIMEOUT: int = 240  # seconds
-    PRESENTON_IMAGE_PROVIDER: str = "pixabay"
     PRESENTON_AUTH_USERNAME: str = "xcalificator"
     PRESENTON_AUTH_PASSWORD: str = "xcalificator-dev-only"
 

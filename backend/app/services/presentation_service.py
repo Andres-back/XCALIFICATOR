@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import re
+import urllib.parse
 from typing import Any
 
 import httpx
@@ -10,8 +12,6 @@ from groq import Groq
 
 from app.core.config import get_settings
 from app.services.google_slides_service import GoogleSlidesService
-from app.services.pexels_service import PexelsService
-from app.services.pixabay_service import PixabayService
 from app.services.presenton_service import PresentonService
 
 
@@ -19,6 +19,18 @@ settings = get_settings()
 
 _GROQ_MODEL = "llama-3.3-70b-versatile"
 _ALLOWED_MODES = {"auto", "cloud", "local"}
+
+
+def _generated_image_url(prompt: str, *, width: int = 1024, height: int = 768) -> str:
+    clean_prompt = str(prompt or "educacion, aula, material didactico").strip()
+    encoded = urllib.parse.quote(clean_prompt[:900])
+    seed = random.randint(1, 999999)
+    key = str(settings.POLLINATIONS_API_KEY or "").strip()
+    key_param = f"&key={urllib.parse.quote(key)}" if key else ""
+    return (
+        f"https://gen.pollinations.ai/image/{encoded}"
+        f"?model=flux&width={width}&height={height}&nologo=true&seed={seed}{key_param}"
+    )
 
 
 def _extract_json_object(raw_text: str) -> dict[str, Any]:
@@ -295,14 +307,7 @@ class PresentationService:
         ollama_url = str(input_payload.get("ollama_url") or settings.OLLAMA_URL or "").strip()
         ollama_model = str(input_payload.get("ollama_model") or settings.OLLAMA_PRESENTATION_MODEL or "").strip()
 
-        use_stock_images = bool(input_payload.get("use_stock_images", input_payload.get("use_pexels_images", True)))
-        images_per_slide = int(input_payload.get("stock_images_per_slide") or input_payload.get("pexels_images_per_slide") or 1)
-        images_per_slide = max(1, min(images_per_slide, 5))
-        image_provider = str(
-            input_payload.get("image_provider")
-            or settings.PRESENTON_IMAGE_PROVIDER
-            or "pixabay"
-        ).strip().lower()
+        use_generated_images = bool(input_payload.get("use_generated_images", True))
 
         export_google_slides = bool(input_payload.get("export_google_slides"))
 
@@ -339,17 +344,14 @@ class PresentationService:
 
         slides = _coerce_slides(planning_payload, n_slides)
 
-        if use_stock_images:
-            image_client = (
-                PixabayService(api_key=str(input_payload.get("pixabay_api_key") or "").strip() or None)
-                if image_provider == "pixabay"
-                else PexelsService(api_key=str(input_payload.get("pexels_api_key") or "").strip() or None)
-            )
+        if use_generated_images:
             for slide in slides:
-                image_query = str(slide.get("image_query") or slide.get("title") or topic).strip()
-                image_url = await image_client.search_image(image_query, per_page=images_per_slide)
-                if image_url:
-                    slide["image_url"] = image_url
+                image_prompt = str(slide.get("image_query") or slide.get("title") or topic).strip()
+                slide["image_url"] = _generated_image_url(
+                    f"Ilustracion educativa clara para diapositiva: {image_prompt}. "
+                    f"Tema: {topic}. Estilo limpio, apto para clase, sin texto dentro de la imagen."
+                )
+                slide["image_provider"] = "ai_generation"
 
         slides_markdown = _slides_to_markdown(slides)
 
@@ -395,6 +397,7 @@ class PresentationService:
             "provider_mode_requested": mode,
             "provider_mode_used": provider_mode_used,
             "provider_used": provider_used,
+            "image_provider": "ai_generation" if use_generated_images else "none",
             "n_slides": n_slides,
             "language": language,
             "tone": tone,

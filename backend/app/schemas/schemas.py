@@ -223,8 +223,7 @@ class PresentacionRegenerateRequest(BaseModel):
     web_search: bool = False
     export_as: Optional[str] = None
     instructions: Optional[str] = None
-    use_pexels_images: bool = False
-    pexels_images_per_slide: Optional[int] = None
+    use_generated_images: bool = True
     export_google_slides: bool = False
     ollama_url: Optional[str] = None
     ollama_model: Optional[str] = None
