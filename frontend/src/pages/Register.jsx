@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import useAuthStore from '../store';
 import toast from 'react-hot-toast';
 import { GraduationCap, Eye, EyeOff } from 'lucide-react';
+import ThemeToggle from '../components/ThemeToggle';
 
 export default function Register() {
   const [form, setForm] = useState({
@@ -54,119 +55,122 @@ export default function Register() {
   const update = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary-50 to-blue-100 px-4 py-8">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary-50 to-blue-100 dark:from-gray-950 dark:to-gray-900 px-4 py-8 relative">
+      <div className="absolute top-4 right-4">
+        <ThemeToggle className="bg-white/80 border border-gray-200 text-gray-600 hover:bg-gray-100 dark:bg-gray-800/80 dark:border-gray-700 dark:text-gray-300" />
+      </div>
       <div className="w-full max-w-lg">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary-600 mb-4">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary-600 dark:bg-accent-600 mb-4">
             <GraduationCap className="w-10 h-10 text-white" />
           </div>
-          <h1 className="text-3xl font-bold text-gray-900">Crear Cuenta</h1>
-          <p className="text-gray-500 mt-1">Únete a XCalificator</p>
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Crear Cuenta</h1>
+          <p className="text-gray-500 dark:text-gray-400 mt-1">Únete a XCalificator</p>
         </div>
 
-        <div className="card">
+        <div className="card bg-white dark:bg-gray-900 border border-surface-border dark:border-gray-800">
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Nombre *</label>
+                <label className="input-label">Nombre *</label>
                 <input
                   type="text" value={form.nombre}
                   onChange={(e) => update('nombre', e.target.value)}
-                  className={`input-field ${errors.nombre ? 'border-red-400' : ''}`}
+                  className={`input-field ${errors.nombre ? 'input-field-error' : ''}`}
                   required
                 />
-                {errors.nombre && <p className="text-red-500 text-xs mt-1">{errors.nombre}</p>}
+                {errors.nombre && <p className="input-error">{errors.nombre}</p>}
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Apellido *</label>
+                <label className="input-label">Apellido *</label>
                 <input
                   type="text" value={form.apellido}
                   onChange={(e) => update('apellido', e.target.value)}
-                  className={`input-field ${errors.apellido ? 'border-red-400' : ''}`}
+                  className={`input-field ${errors.apellido ? 'input-field-error' : ''}`}
                   required
                 />
-                {errors.apellido && <p className="text-red-500 text-xs mt-1">{errors.apellido}</p>}
+                {errors.apellido && <p className="input-error">{errors.apellido}</p>}
               </div>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Documento *</label>
+              <label className="input-label">Documento *</label>
               <input
                 type="text" value={form.documento}
                 onChange={(e) => update('documento', e.target.value.replace(/\D/g, ''))}
-                className={`input-field ${errors.documento ? 'border-red-400' : ''}`}
+                className={`input-field ${errors.documento ? 'input-field-error' : ''}`}
                 placeholder="Solo números (5-20 dígitos)"
                 inputMode="numeric"
                 pattern="[0-9]*"
                 maxLength={20}
                 required
               />
-              {errors.documento && <p className="text-red-500 text-xs mt-1">{errors.documento}</p>}
+              {errors.documento && <p className="input-error">{errors.documento}</p>}
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Correo *</label>
+              <label className="input-label">Correo *</label>
               <input
                 type="email" value={form.correo}
                 onChange={(e) => update('correo', e.target.value)}
-                className={`input-field ${errors.correo ? 'border-red-400' : ''}`}
+                className={`input-field ${errors.correo ? 'input-field-error' : ''}`}
                 placeholder="tunombre@gmail.com o @hotmail.com"
                 required
               />
-              {errors.correo && <p className="text-red-500 text-xs mt-1">{errors.correo}</p>}
+              {errors.correo && <p className="input-error">{errors.correo}</p>}
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Celular</label>
+              <label className="input-label">Celular</label>
               <input
                 type="tel" value={form.celular}
                 onChange={(e) => update('celular', e.target.value.replace(/\D/g, ''))}
-                className={`input-field ${errors.celular ? 'border-red-400' : ''}`}
+                className={`input-field ${errors.celular ? 'input-field-error' : ''}`}
                 placeholder="573001234567 (solo números, con código de país)"
                 inputMode="numeric"
                 pattern="[0-9]*"
                 maxLength={15}
               />
-              {errors.celular && <p className="text-red-500 text-xs mt-1">{errors.celular}</p>}
+              {errors.celular && <p className="input-error">{errors.celular}</p>}
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Contraseña *</label>
+              <label className="input-label">Contraseña *</label>
               <div className="relative">
                 <input
                   type={showPass ? 'text' : 'password'}
                   value={form.password}
                   onChange={(e) => update('password', e.target.value)}
-                  className={`input-field pr-10 ${errors.password ? 'border-red-400' : ''}`}
+                  className={`input-field pr-10 ${errors.password ? 'input-field-error' : ''}`}
                   autoComplete="new-password"
                   required
                 />
-                <button type="button" onClick={() => setShowPass(!showPass)} className="absolute right-3 top-2.5 text-gray-400">
+                <button type="button" onClick={() => setShowPass(!showPass)} className="absolute right-3 top-2.5 text-gray-400 dark:text-gray-500">
                   {showPass ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                 </button>
               </div>
-              {errors.password && <p className="text-red-500 text-xs mt-1">{errors.password}</p>}
-              <p className="text-xs text-gray-400 mt-1">Mínimo 8 caracteres, 1 mayúscula, 1 número</p>
+              {errors.password && <p className="input-error">{errors.password}</p>}
+              <p className="input-hint">Mínimo 8 caracteres, 1 mayúscula, 1 número</p>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Confirmar Contraseña *</label>
+              <label className="input-label">Confirmar Contraseña *</label>
               <input
                 type="password" value={form.confirmPassword}
                 onChange={(e) => update('confirmPassword', e.target.value)}
-                className={`input-field ${errors.confirmPassword ? 'border-red-400' : ''}`}
+                className={`input-field ${errors.confirmPassword ? 'input-field-error' : ''}`}
                 autoComplete="new-password"
                 required
               />
-              {errors.confirmPassword && <p className="text-red-500 text-xs mt-1">{errors.confirmPassword}</p>}
+              {errors.confirmPassword && <p className="input-error">{errors.confirmPassword}</p>}
             </div>
 
             {form.celular && (
-              <label className="flex items-center gap-2 text-sm text-gray-700">
+              <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
                 <input
                   type="checkbox" checked={form.acepta_telegram}
                   onChange={(e) => update('acepta_telegram', e.target.checked)}
-                  className="rounded border-gray-300"
+                  className="rounded border-gray-300 dark:border-gray-600"
                 />
                 ¿Deseas recibir notificaciones por Telegram? (lo vincularás desde tu perfil)
               </label>

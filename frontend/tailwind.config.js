@@ -3,10 +3,38 @@ export default {
   content: [
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
+    "./src/index.css",
   ],
+  darkMode: 'class',
   theme: {
     extend: {
       colors: {
+        // ── Brand: naranja mango (CTA principal, energía, aprendizaje) ─
+        brand: {
+          50:  '#fff7ed',
+          100: '#ffedd5',
+          200: '#fed7aa',
+          300: '#fdba74',
+          400: '#fb923c',
+          500: '#f97316',
+          600: '#ea580c',
+          700: '#c2410c',
+          800: '#9a3412',
+          900: '#7c2d12',
+        },
+        // ── Accent: indigo (confianza, seriedad institucional) ───────
+        accent: {
+          50:  '#eef2ff',
+          100: '#e0e7ff',
+          200: '#c7d2fe',
+          300: '#a5b4fc',
+          400: '#818cf8',
+          500: '#6366f1',
+          600: '#4f46e5',
+          700: '#4338ca',
+          800: '#3730a3',
+          900: '#312e81',
+        },
         // ── Brand / shared primary ────────────────────────────────────
         primary: {
           50:  '#eff6ff',
@@ -127,6 +155,7 @@ export default {
         'admin-gradient':      'linear-gradient(135deg, #7c3aed 0%, #6d28d9 50%, #5b21b6 100%)',
         'profesor-gradient':   'linear-gradient(135deg, #4f46e5 0%, #4338ca 50%, #3730a3 100%)',
         'estudiante-gradient': 'linear-gradient(135deg, #059669 0%, #047857 50%, #065f46 100%)',
+        'brand-gradient':      'linear-gradient(135deg, #f97316 0%, #ea580c 50%, #c2410c 100%)',
         'shimmer-gradient':    'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.6) 50%, transparent 100%)',
       },
     },

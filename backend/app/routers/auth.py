@@ -82,7 +82,7 @@ async def register(
     # Send email confirmation asynchronously
     try:
         confirm_token = create_email_confirm_token(str(user.id))
-        confirm_link = f"http://localhost/api/auth/confirm-emailtoken={confirm_token}"
+        confirm_link = f"http://localhost/api/auth/confirm-email?token={confirm_token}"
         await send_email(
             to=user.correo,
             subject="Confirma tu correo - XCalificator",
@@ -136,7 +136,7 @@ async def resend_confirmation(
         return {"detail": "El correo ya fue confirmado"}
 
     confirm_token = create_email_confirm_token(str(current_user.id))
-    confirm_link = f"http://localhost/api/auth/confirm-emailtoken={confirm_token}"
+    confirm_link = f"http://localhost/api/auth/confirm-email?token={confirm_token}"
     sent = await send_email(
         to=current_user.correo,
         subject="Confirma tu correo - XCalificator",

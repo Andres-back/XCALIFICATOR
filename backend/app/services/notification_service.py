@@ -155,7 +155,10 @@ async def notify_enrolled_students(
     subject: str,
     context: dict,
 ):
-    """Notify all enrolled students of a materia via their preferred channels."""
+    """Notify all enrolled students of a materia via their preferred channels.
+
+    Optimizado: 2 queries en batch (Users + PreferenciaNotif) en vez de N+1.
+    """
     from sqlalchemy import select
     from app.models.models import Matricula, User, PreferenciaNotif, Notificacion
     from datetime import datetime, timezone
@@ -165,19 +168,28 @@ async def notify_enrolled_students(
     )
     estudiante_ids = [row[0] for row in result.all()]
 
+    if not estudiante_ids:
+        return
+
+    # Batch fetch Users (1 query)
+    users_result = await db_session.execute(
+        select(User).where(User.id.in_(estudiante_ids))
+    )
+    users = {u.id: u for u in users_result.scalars().all()}
+
+    # Batch fetch PreferenciaNotif (1 query)
+    prefs_result = await db_session.execute(
+        select(PreferenciaNotif).where(PreferenciaNotif.user_id.in_(estudiante_ids))
+    )
+    prefs = {p.user_id: p for p in prefs_result.scalars().all()}
+
+    now = datetime.now(timezone.utc)
     for est_id in estudiante_ids:
-        user_result = await db_session.execute(
-            select(User).where(User.id == est_id)
-        )
-        user = user_result.scalar_one_or_none()
+        user = users.get(est_id)
         if not user or not user.activo:
             continue
 
-        pref_result = await db_session.execute(
-            select(PreferenciaNotif).where(PreferenciaNotif.user_id == est_id)
-        )
-        pref = pref_result.scalar_one_or_none()
-
+        pref = prefs.get(est_id)
         ctx = {**context, "nombre": user.nombre}
 
         # Email
@@ -186,7 +198,7 @@ async def notify_enrolled_students(
             notif = Notificacion(
                 user_id=est_id, tipo=template_name, canal="email",
                 mensaje=subject, enviado=sent,
-                fecha_envio=datetime.now(timezone.utc) if sent else None,
+                fecha_envio=now if sent else None,
             )
             db_session.add(notif)
 
@@ -196,7 +208,7 @@ async def notify_enrolled_students(
             notif = Notificacion(
                 user_id=est_id, tipo=template_name, canal="telegram",
                 mensaje=f"Telegram: {template_name}", enviado=sent,
-                fecha_envio=datetime.now(timezone.utc) if sent else None,
+                fecha_envio=now if sent else None,
             )
             db_session.add(notif)
 
@@ -216,15 +228,31 @@ async def send_telegram(chat_id: str, template_name: str, context: dict) -> bool
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
+            # Escapar caracteres Markdown problemáticos para evitar 400 de Telegram
+            # (mejor: cambiar a HTML en templates, pero esto es safe fix)
+            safe_body = (
+                body.replace("_", "\\_")
+                    .replace("*", "\\*")
+                    .replace("`", "\\`")
+                    .replace("[", "\\[")
+            )
             response = await client.post(
                 f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage",
                 json={
                     "chat_id": chat_id,
-                    "text": body,
+                    "text": safe_body,
                     "parse_mode": "Markdown",
                 },
             )
             if response.status_code == 200:
+                # Telegram a veces devuelve 200 con {"ok": false}; validar
+                try:
+                    data = response.json()
+                    if not data.get("ok", False):
+                        print(f"Telegram rechazo el mensaje: {data.get('description', 'sin descripcion')}")
+                        return False
+                except Exception:
+                    pass
                 return True
             print(f"Error Telegram [{response.status_code}]: {response.text[:300]}")
             return False

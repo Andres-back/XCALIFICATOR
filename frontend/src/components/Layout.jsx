@@ -7,6 +7,7 @@ import {
   Settings, ChevronRight, Presentation, Cpu,
 } from 'lucide-react';
 import { useState } from 'react';
+import ThemeToggle from './ThemeToggle';
 
 // ── Nav items per role ────────────────────────────────────────────────────
 const NAV_ITEMS = {
@@ -39,38 +40,38 @@ const NAV_ITEMS = {
 const ROLE_THEME = {
   admin: {
     gradient:    'bg-admin-gradient',
-    activeItem:  'bg-admin-100 text-admin-700 font-semibold',
+    activeItem:  'bg-admin-100 text-admin-700 font-semibold dark:bg-admin-900/40 dark:text-admin-300',
     activeBar:   'bg-admin-500',
-    hoverItem:   'hover:bg-admin-50 hover:text-admin-700',
-    iconActive:  'text-admin-600',
-    avatar:      'bg-admin-100 text-admin-700',
+    hoverItem:   'hover:bg-admin-50 hover:text-admin-700 dark:hover:bg-admin-900/30 dark:hover:text-admin-300',
+    iconActive:  'text-admin-600 dark:text-admin-400',
+    avatar:      'bg-admin-100 text-admin-700 dark:bg-admin-900/50 dark:text-admin-300',
     badge:       'badge-admin',
     badgeLabel:  'Administrador',
-    ring:        'ring-admin-200',
+    ring:        'ring-admin-200 dark:ring-admin-800',
     glow:        'shadow-glow-violet',
   },
   profesor: {
     gradient:    'bg-profesor-gradient',
-    activeItem:  'bg-profesor-100 text-profesor-700 font-semibold',
+    activeItem:  'bg-profesor-100 text-profesor-700 font-semibold dark:bg-profesor-900/40 dark:text-profesor-300',
     activeBar:   'bg-profesor-500',
-    hoverItem:   'hover:bg-profesor-50 hover:text-profesor-700',
-    iconActive:  'text-profesor-600',
-    avatar:      'bg-profesor-100 text-profesor-700',
+    hoverItem:   'hover:bg-profesor-50 hover:text-profesor-700 dark:hover:bg-profesor-900/30 dark:hover:text-profesor-300',
+    iconActive:  'text-profesor-600 dark:text-profesor-400',
+    avatar:      'bg-profesor-100 text-profesor-700 dark:bg-profesor-900/50 dark:text-profesor-300',
     badge:       'badge-profesor',
     badgeLabel:  'Docente',
-    ring:        'ring-profesor-200',
+    ring:        'ring-profesor-200 dark:ring-profesor-800',
     glow:        'shadow-glow-indigo',
   },
   estudiante: {
     gradient:    'bg-estudiante-gradient',
-    activeItem:  'bg-estudiante-100 text-estudiante-700 font-semibold',
+    activeItem:  'bg-estudiante-100 text-estudiante-700 font-semibold dark:bg-estudiante-900/40 dark:text-estudiante-300',
     activeBar:   'bg-estudiante-500',
-    hoverItem:   'hover:bg-estudiante-50 hover:text-estudiante-700',
-    iconActive:  'text-estudiante-600',
-    avatar:      'bg-estudiante-100 text-estudiante-700',
+    hoverItem:   'hover:bg-estudiante-50 hover:text-estudiante-700 dark:hover:bg-estudiante-900/30 dark:hover:text-estudiante-300',
+    iconActive:  'text-estudiante-600 dark:text-estudiante-400',
+    avatar:      'bg-estudiante-100 text-estudiante-700 dark:bg-estudiante-900/50 dark:text-estudiante-300',
     badge:       'badge-estudiante',
     badgeLabel:  'Estudiante',
-    ring:        'ring-estudiante-200',
+    ring:        'ring-estudiante-200 dark:ring-estudiante-800',
     glow:        'shadow-glow-emerald',
   },
 };
@@ -117,13 +118,13 @@ function SidebarContent({ user, items, theme, location, onClose, onLogout }) {
       </div>
 
       {/* User chip */}
-      <div className="px-4 py-3 border-b border-gray-100">
-        <div className="flex items-center gap-3 px-2 py-2 rounded-xl bg-surface-muted">
+      <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-800">
+        <div className="flex items-center gap-3 px-2 py-2 rounded-xl bg-surface-muted dark:bg-gray-800/50">
           <div className={`w-8 h-8 rounded-full ${theme.avatar} flex items-center justify-center text-xs font-bold shrink-0`}>
             {ini}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold text-gray-900 truncate leading-tight">
+            <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate leading-tight">
               {user?.nombre} {user?.apellido}
             </p>
             <span className={`${theme.badge} mt-0.5`}>{theme.badgeLabel}</span>
@@ -138,21 +139,21 @@ function SidebarContent({ user, items, theme, location, onClose, onLogout }) {
           const active   = isItemActive(item, location.pathname);
 
           return (
-            <Link
-              key={item.path}
-              to={item.path}
-              onClick={onClose}
-              style={{ animationDelay: `${i * 40}ms` }}
-              className={`
-                animate-slide-in-left animate-fill-both
-                flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm
-                transition-all duration-150 relative group
-                ${active
-                  ? `${theme.activeItem}`
-                  : `text-gray-600 ${theme.hoverItem}`
-                }
-              `}
-            >
+              <Link
+                key={item.path}
+                to={item.path}
+                onClick={onClose}
+                style={{ animationDelay: `${i * 40}ms` }}
+                className={`
+                  animate-slide-in-left animate-fill-both
+                  flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm
+                  transition-all duration-150 relative group
+                  ${active
+                    ? `${theme.activeItem}`
+                    : `text-gray-600 dark:text-gray-300 ${theme.hoverItem}`
+                  }
+                `}
+              >
               {/* active left bar */}
               {active && (
                 <span className={`absolute left-0 top-2 bottom-2 w-0.5 rounded-r-full ${theme.activeBar}`} />
@@ -166,18 +167,18 @@ function SidebarContent({ user, items, theme, location, onClose, onLogout }) {
       </nav>
 
       {/* Bottom actions */}
-      <div className="px-3 py-3 border-t border-gray-100 space-y-0.5 shrink-0">
+      <div className="px-3 py-3 border-t border-gray-100 dark:border-gray-800 space-y-0.5 shrink-0">
         <Link
           to="/perfil"
           onClick={onClose}
-          className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-gray-600 hover:bg-gray-100 hover:text-gray-900 transition-colors"
+          className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white transition-colors"
         >
           <Settings className="w-4.5 h-4.5 text-gray-400" />
           Configuración
         </Link>
         <button
           onClick={onLogout}
-          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-red-600 hover:bg-red-50 transition-colors"
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
         >
           <LogOut className="w-4.5 h-4.5" />
           Cerrar Sesión
@@ -205,10 +206,10 @@ export default function Layout({ children }) {
   const ini = initials(user?.nombre, user?.apellido);
 
   return (
-    <div className="flex h-screen bg-surface overflow-hidden">
+    <div className="flex h-screen bg-surface dark:bg-gray-950 overflow-hidden">
 
       {/* ── Desktop sidebar ── */}
-      <aside className="hidden lg:flex flex-col w-64 shrink-0 border-r border-surface-border bg-white">
+      <aside className="hidden lg:flex flex-col w-64 shrink-0 border-r border-surface-border dark:border-gray-800 bg-white dark:bg-gray-900">
         <SidebarContent
           user={user}
           items={items}
@@ -230,7 +231,7 @@ export default function Layout({ children }) {
       {/* ── Mobile sidebar drawer ── */}
       <aside
         className={`
-          fixed inset-y-0 left-0 z-50 w-72 bg-white shadow-xl
+          fixed inset-y-0 left-0 z-50 w-72 bg-white dark:bg-gray-900 shadow-xl
           transform transition-transform duration-250 ease-out lg:hidden
           ${open ? 'translate-x-0' : '-translate-x-full'}
         `}
@@ -249,11 +250,11 @@ export default function Layout({ children }) {
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
 
         {/* Top bar */}
-        <header className="h-14 shrink-0 bg-white border-b border-surface-border flex items-center px-4 gap-4">
+        <header className="h-14 shrink-0 bg-white dark:bg-gray-900 border-b border-surface-border dark:border-gray-800 flex items-center px-4 gap-4">
           {/* Hamburger (mobile) */}
           <button
             onClick={() => setOpen(true)}
-            className="lg:hidden p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 transition-colors"
+            className="lg:hidden p-1.5 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
             aria-label="Abrir menú"
           >
             <Menu className="w-5 h-5" />
@@ -264,11 +265,12 @@ export default function Layout({ children }) {
 
           {/* User chip */}
           <div className="flex items-center gap-2.5">
+            <ThemeToggle className="bg-transparent border-0 hover:bg-gray-100 dark:hover:bg-gray-800" />
             <div className="text-right hidden sm:block">
-              <p className="text-sm font-semibold text-gray-900 leading-tight">
+              <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 leading-tight">
                 {user?.nombre} {user?.apellido}
               </p>
-              <p className="text-2xs text-gray-500">{theme.badgeLabel}</p>
+              <p className="text-2xs text-gray-500 dark:text-gray-400">{theme.badgeLabel}</p>
             </div>
             <div className={`w-9 h-9 rounded-full ${theme.avatar} flex items-center justify-center text-sm font-bold ring-2 ${theme.ring}`}>
               {ini}

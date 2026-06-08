@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import useAuthStore from '../store';
 import toast from 'react-hot-toast';
 import { Eye, EyeOff, LogIn, Sparkles } from 'lucide-react';
+import ThemeToggle from '../components/ThemeToggle';
 
 export default function Login() {
   const [correo, setCorreo] = useState('');
@@ -32,9 +33,9 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+    <div className="min-h-screen flex bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 dark:from-gray-950 dark:via-gray-950 dark:to-gray-900">
       {/* Left Panel - Mascot & Branding */}
-      <div className="hidden lg:flex lg:w-1/2 relative overflow-hidden bg-gradient-to-br from-primary-600 via-primary-700 to-indigo-800">
+      <div className="hidden lg:flex lg:w-1/2 relative overflow-hidden bg-gradient-to-br from-primary-600 via-primary-700 to-indigo-800 dark:from-accent-800 dark:via-accent-900 dark:to-gray-900">
         {/* Animated background shapes */}
         <div className="absolute inset-0">
           <div className="absolute top-10 left-10 w-72 h-72 bg-white/10 rounded-full blur-3xl animate-pulse" />
@@ -43,6 +44,11 @@ export default function Login() {
         </div>
 
         <div className="relative z-10 flex flex-col items-center justify-center w-full px-12">
+          {/* Theme toggle en login split */}
+          <div className="absolute top-4 right-4">
+            <ThemeToggle className="bg-white/10 border-white/20 text-white hover:bg-white/20" />
+          </div>
+
           {/* Mascot Video */}
           <div className="w-72 h-72 rounded-3xl overflow-hidden shadow-2xl mb-8 ring-4 ring-white/20 bg-white/10 backdrop-blur-sm">
             <video
@@ -63,8 +69,8 @@ export default function Login() {
               <h1 className="text-4xl font-extrabold text-white tracking-tight">XCalificator</h1>
               <Sparkles className="w-6 h-6 text-yellow-300" />
             </div>
-            <p className="text-primary-100 text-lg font-semibold mb-2">Aprender hoy, liderar mañana</p>
-            <p className="text-primary-200/80 text-sm max-w-sm leading-relaxed">
+            <p className="text-primary-100 dark:text-accent-100 text-lg font-semibold mb-2">Aprender hoy, liderar mañana</p>
+            <p className="text-primary-200/80 dark:text-accent-200/80 text-sm max-w-sm leading-relaxed">
               Cada esfuerzo cuenta: estudia con propósito, mejora con evidencia y avanza con confianza.
             </p>
           </div>
@@ -81,7 +87,11 @@ export default function Login() {
       </div>
 
       {/* Right Panel - Login Form */}
-      <div className="flex-1 flex items-center justify-center px-6 py-12">
+      <div className="flex-1 flex items-center justify-center px-6 py-12 relative">
+        {/* Theme toggle en mobile */}
+        <div className="absolute top-4 right-4 lg:hidden">
+          <ThemeToggle className="bg-white/80 border border-gray-200 text-gray-600 hover:bg-gray-100 dark:bg-gray-800/80 dark:border-gray-700 dark:text-gray-300" />
+        </div>
         <div className="w-full max-w-md">
           {/* Mobile logo */}
           <div className="lg:hidden text-center mb-8">
@@ -92,26 +102,26 @@ export default function Login() {
             </div>
             <div className="flex items-center justify-center gap-1.5">
               <img src="/icono.png" alt="XCalificator" className="w-8 h-8 rounded-lg" />
-              <h1 className="text-2xl font-bold text-gray-900">XCalificator</h1>
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">XCalificator</h1>
             </div>
-            <p className="text-gray-500 text-sm mt-1">Plataforma Educativa con IA</p>
+            <p className="text-gray-500 dark:text-gray-400 text-sm mt-1">Plataforma Educativa con IA</p>
           </div>
 
           {/* Form Card */}
-          <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-8">
+          <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl border border-gray-100 dark:border-gray-800 p-8">
             <div className="flex items-center gap-3 mb-6">
-              <div className="hidden lg:block w-10 h-10 rounded-xl overflow-hidden ring-2 ring-primary-100">
+              <div className="hidden lg:block w-10 h-10 rounded-xl overflow-hidden ring-2 ring-primary-100 dark:ring-primary-800">
                 <img src="/icono.png" alt="XCalificator" className="w-full h-full object-cover" />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-gray-900">Iniciar Sesión</h2>
-                <p className="text-sm text-gray-500">Ingresa a tu cuenta</p>
+                <h2 className="text-xl font-bold text-gray-900 dark:text-white">Iniciar Sesión</h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400">Ingresa a tu cuenta</p>
               </div>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-5">
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Correo electrónico</label>
+                <label className="input-label">Correo electrónico</label>
                 <input
                   type="email"
                   value={correo}
@@ -124,7 +134,7 @@ export default function Login() {
               </div>
 
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Contraseña</label>
+                <label className="input-label">Contraseña</label>
                 <div className="relative">
                   <input
                     type={showPass ? 'text' : 'password'}
@@ -138,7 +148,7 @@ export default function Login() {
                   <button
                     type="button"
                     onClick={() => setShowPass(!showPass)}
-                    className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600 transition-colors"
+                    className="absolute right-3 top-2.5 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
                   >
                     {showPass ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                   </button>
@@ -166,9 +176,9 @@ export default function Login() {
 
             {/* Register link */}
             <div className="mt-6 text-center">
-              <p className="text-sm text-gray-500">
+              <p className="text-sm text-gray-500 dark:text-gray-400">
                 ¿No tienes cuenta?{' '}
-                <Link to="/register" className="text-primary-600 font-semibold hover:text-primary-700 hover:underline transition-colors">
+                <Link to="/register" className="text-brand-600 dark:text-brand-400 font-semibold hover:text-brand-700 dark:hover:text-brand-300 hover:underline transition-colors">
                   Regístrate aquí
                 </Link>
               </p>
@@ -176,7 +186,7 @@ export default function Login() {
           </div>
 
           {/* Footer */}
-          <p className="text-center text-xs text-gray-400 mt-6">
+          <p className="text-center text-xs text-gray-400 dark:text-gray-500 mt-6">
             © 2026 XCalificator · Plataforma Educativa con Inteligencia Artificial
           </p>
         </div>

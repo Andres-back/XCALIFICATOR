@@ -3,6 +3,8 @@ import { Toaster } from 'react-hot-toast';
 import useAuthStore from './store';
 import Login from './pages/Login';
 import Register from './pages/Register';
+import Landing from './pages/Landing';
+import NotFound from './pages/NotFound';
 import AdminDashboard from './pages/admin/Dashboard';
 import AdminUsers from './pages/admin/Users';
 import AdminMaterias from './pages/admin/Materias';
@@ -48,7 +50,7 @@ function getHomeRoute(rol) {
 
 function HomeRedirect() {
   const { isAuthenticated, user } = useAuthStore();
-  if (!isAuthenticated) return <Navigate to="/login" />;
+  if (!isAuthenticated) return <Landing />;
   return <Navigate to={getHomeRoute(user?.rol)} />;
 }
 
@@ -210,8 +212,11 @@ export default function App() {
           </ProtectedRoute>
         } />
 
-        {/* 404 catch-all */}
-        <Route path="*" element={<Navigate to="/" />} />
+        {/* 404 */}
+        <Route path="/404" element={<NotFound />} />
+
+        {/* 404 catch-all (any unknown route) */}
+        <Route path="*" element={<Navigate to="/404" replace />} />
       </Routes>
     </BrowserRouter>
   );

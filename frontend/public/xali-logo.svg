@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 56" role="img" aria-label="XCalificator">
+  <defs>
+    <linearGradient id="brandGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"   stop-color="#fb923c"/>
+      <stop offset="100%" stop-color="#c2410c"/>
+    </linearGradient>
+  </defs>
+  <!-- Mark: rounded square with stylized X + checkmark (cap) -->
+  <g>
+    <rect x="2" y="6" width="44" height="44" rx="12" fill="url(#brandGrad)"/>
+    <!-- Cap mortarboard on top -->
+    <path d="M24 4 L40 12 L24 20 L8 12 Z" fill="#ffffff" opacity="0.95"/>
+    <rect x="22" y="14" width="4" height="14" fill="#ffffff" opacity="0.9"/>
+    <circle cx="24" cy="30" r="2.5" fill="#ffffff"/>
+    <!-- Subtle X mark in body -->
+    <path d="M14 28 L34 28 M14 32 L34 32" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" opacity="0.55"/>
+  </g>
+  <!-- Wordmark -->
+  <g font-family="'Plus Jakarta Sans','Inter',sans-serif" font-weight="800" fill="#0f172a">
+    <text x="56" y="36" font-size="22" letter-spacing="-0.5">
+      <tspan fill="url(#brandGrad)">X</tspan><tspan>Calificator</tspan>
+    </text>
+  </g>
+</svg>
