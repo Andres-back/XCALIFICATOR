@@ -1,12 +1,34 @@
 # Log del cerebro XCalificator
 
-> **Cerebro** (vault Obsidian): documentación canónica del sistema. Pantallas↔API↔tablas en [[Matriz pantalla endpoint tabla]]. Módulos detallados en [[Calificacion OCR por imagen]].
+> **Cerebro** (vault Obsidian): documentación canónica del sistema. Pantallas↔API↔tablas en [[Matriz pantalla endpoint tabla]]. Módulos detallados en [[Calificacion OCR por imagen]]. Reglamento: [[ARTICULO_28_Consejo_Academico]].
 
 > **Reglas del vault** (AGENTS.md, inferidas):
 > 1. Este vault NO contiene código fuente.
 > 2. Las notas documentan decisiones, contratos, y estado del proyecto.
 > 3. Los enlaces a archivos de código deben ser relativos y por nombre.
 > 4. Antes de cualquier cambio grande, actualizar este log.
+
+---
+
+## 2026-06-08 — Alineación con ARTÍCULO 28 y auditoría de cumplimiento
+
+- **Reglamento**: el documento de tesis debe cumplir [[ARTICULO_28_Consejo_Academico]] (Consejo Académico UNIMAYO, página 15/18).
+- **Auditoría**: [[auditoria_tesis_2026-06-08]] verifica la versión `outputs/tesis_xcalificator_apa_v3.docx` contra el reglamento.
+- **Estructura**: 18 de 18 secciones obligatorias presentes ✓
+- **Extensión**: ~23 páginas estimadas vs mínimo 50 (PÁRRAFO 1) — **faltan ~27 páginas**
+- **Gaps prioritarios**:
+  - **Resultados** (1443 chars) — necesita datos cuantitativos del piloto
+  - **Discusión** (1874 chars) — necesita triangulación con literatura
+  - **Conclusiones** (548 chars) — muy cortas
+  - **Marco referencial** (5035 chars) — expandir marco teórico
+  - **Anexos** (1708 chars) — expandir evidencias técnicas
+- **Datos del piloto disponibles en el sistema**:
+  - Tiempos: `GET /api/tesis/tiempos/resumen`
+  - Concordancia: `GET /api/tesis/concordancia/kappa`
+  - Encuesta Likert: `GET /api/tesis/encuestas/resumen`
+  - Cualitativo: `GET /api/tesis/cualitativo`
+  - Uso de API: `GET /api/admin/api-usage`
+- **Proceso regulatorio** (PÁRRAFO 2-5): no implementado en XCalificator; es externo al sistema (carpeta digital institucional + emails a CIECYT). El sistema puede **facilitar trazabilidad** pero no reemplaza el flujo formal.
 
 ---
 
