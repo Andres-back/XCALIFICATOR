@@ -44,11 +44,16 @@ Este vault documenta el sistema XCalificator — una plataforma educativa con IA
 ```
 CONTEXTO/
 ├── log.md                        # Estado cronológico del proyecto
+├── AGENTS.md                     # Este archivo (reglas)
 ├── 04_proyecto/
+│   ├── reglamentos/              # Normativa institucional
+│   │   └── ARTICULO_28_Consejo_Academico.md
 │   ├── contratos/                # UI ↔ API ↔ DB matrices
 │   │   └── Matriz pantalla endpoint tabla.md
-│   └── modulos/                  # Specs detalladas
-│       └── Calificacion OCR por imagen.md
+│   ├── modulos/                  # Specs detalladas
+│   │   └── Calificacion OCR por imagen.md
+│   └── auditorias/               # Revisiones periodicas del sistema/tesis
+│       └── auditoria_tesis_2026-06-08.md
 ├── 05_outputs/
 │   ├── informes/                 # Tesis en Word/PDF
 │   └── presentaciones/            # PPTs
