@@ -5,7 +5,7 @@
 ## Requisitos
 
 - Cuenta Cloudflare (ya tienes: `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` en `.env`)
-- Dominio en Cloudflare (`alexsters.works` — ya lo configuraste)
+- Dominio en Cloudflare (ej: `micolegio.com`)
 - Docker Compose (ya lo usas)
 
 ## Pasos
@@ -32,13 +32,11 @@
 
 1. En la misma pantalla, después de crear el tunnel, verás **Configure**
 2. En **Public Hostname**, agrega:
-   - **Subdomain**: `www` (o déjalo vacío para el dominio raíz)
-   - **Domain**: `alexsters.works`
+   - **Subdomain**: `www` (o déjalo vacío para raíz)
+   - **Domain**: `tudominio.com` (el que tengas en Cloudflare)
    - **Type**: `HTTP`
    - **URL**: `http://localhost:80` (apunta a nginx)
-3. Si quieres ambos (`alexsters.works` y `www.alexsters.works`), agrega dos hostnames:
-   - `alexsters.works` → `http://localhost:80`
-   - `www.alexsters.works` → `http://localhost:80`
+3. Si quieres raíz + www, agrega dos hostnames
 4. Click **Save tunnel**
 
 ### 3. Levantar el tunnel
@@ -57,15 +55,14 @@ docker logs xcalificator_cloudflared --tail 10
 
 ```bash
 # Esperar 30-60 segundos a que Cloudflare propague
-curl -I https://alexsters.works
-# Debe responder con: HTTP/2 200
-# server: cloudflare
+curl -I https://tudominio.com
+# Debe responder con: HTTP/2 200 - server: cloudflare
 ```
 
 ## Estructura del tráfico
 
 ```
-Usuario → https://alexsters.works
+Usuario → https://tudominio.com
               │
               ▼
          Cloudflare Edge (CDN + WAF + HTTPS)
@@ -83,7 +80,7 @@ Usuario → https://alexsters.works
 
 | Sin Tunnel | Con Tunnel |
 |---|---|
-| IP `13.140.128.33` visible públicamente | IP oculta por Cloudflare |
+| IP del VPS visible públicamente | IP oculta por Cloudflare |
 | HTTPS requiere certbot manual | HTTPS automático |
 | Puertos 80/443/3000 abiertos | Cero puertos abiertos |
 | DDoS manual | DDoS mitigation incluido |
