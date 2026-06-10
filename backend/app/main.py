@@ -24,10 +24,23 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
 )
 
-# CORS
+# CORS — allow local dev + production domain (from env or Cloudflare tunnel)
+CORS_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:80",
+    "http://localhost",
+]
+# Add domain from env var (ej: https://alexsters.works, https://xcalificator.app)
+if settings.PUBLIC_DOMAIN:
+    CORS_ORIGINS.append(settings.PUBLIC_DOMAIN)
+# Parse CORS_EXTRA from env (comma-separated)
+extra = (os.getenv("CORS_EXTRA_ORIGINS") or "").strip()
+if extra:
+    CORS_ORIGINS.extend(o.strip() for o in extra.split(",") if o.strip())
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:80", "http://localhost"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

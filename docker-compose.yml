@@ -108,6 +108,18 @@ services:
       - backend
       - frontend
 
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: xcalificator_cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - nginx
+    profiles:
+      - cloudflare
+
   pgadmin:
     image: dpage/pgadmin4
     container_name: xcalificator_pgadmin
