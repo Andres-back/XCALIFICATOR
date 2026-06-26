@@ -15,6 +15,8 @@
 
   body {
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    font-size: 16px;
+    line-height: 1.55;
     background-color: #f8fafc;
     color: #0f172a;
     transition: background-color 0.2s ease, color 0.2s ease;
@@ -32,6 +34,28 @@
     background-color: #030712;
     color: #f1f5f9;
   }
+
+  html.dark .dark-compat {
+    color: #e5e7eb;
+  }
+
+  /* Compatibility layer for older internal views that still use light-only utilities. */
+  html.dark :where(.dark-compat .bg-white) { background-color: #111827; }
+  html.dark :where(.dark-compat .bg-gray-50) { background-color: #1f2937; }
+  html.dark :where(.dark-compat .bg-gray-100) { background-color: #374151; }
+  html.dark :where(.dark-compat .bg-slate-50) { background-color: #1f2937; }
+  html.dark :where(.dark-compat .text-gray-900) { color: #f3f4f6; }
+  html.dark :where(.dark-compat .text-gray-800) { color: #e5e7eb; }
+  html.dark :where(.dark-compat .text-gray-700) { color: #d1d5db; }
+  html.dark :where(.dark-compat .text-gray-600) { color: #cbd5e1; }
+  html.dark :where(.dark-compat .text-gray-500) { color: #9ca3af; }
+  html.dark :where(.dark-compat .border-gray-50) { border-color: #1f2937; }
+  html.dark :where(.dark-compat .border-gray-100) { border-color: #1f2937; }
+  html.dark :where(.dark-compat .border-gray-200) { border-color: #374151; }
+  html.dark :where(.dark-compat .border-gray-300) { border-color: #4b5563; }
+  html.dark :where(.dark-compat .divide-gray-100 > :not([hidden]) ~ :not([hidden])) { border-color: #1f2937; }
+  html.dark :where(.dark-compat .hover\:bg-gray-50:hover) { background-color: #1f2937; }
+  html.dark :where(.dark-compat .hover\:bg-gray-100:hover) { background-color: #374151; }
 
   /* Scrollbar dark mode */
   html.dark ::-webkit-scrollbar-thumb        { background: #374151; }
@@ -63,13 +87,22 @@
   /* sizes */
   .btn-xs  { @apply btn text-xs  px-2.5 py-1.5; }
   .btn-sm  { @apply btn text-sm  px-3   py-2;   }
-  .btn-md  { @apply btn text-sm  px-4   py-2.5; }
+  .btn-md  { @apply btn text-base px-4   py-3;   }
   .btn-lg  { @apply btn text-base px-5  py-3;   }
+
+  .btn-md svg,
+  .btn-lg svg,
+  .btn-primary svg,
+  .btn-secondary svg,
+  .btn-ghost svg {
+    width: 1.15rem;
+    height: 1.15rem;
+  }
 
   /* variants */
   .btn-primary {
     @apply btn-md bg-primary-600 text-white
-           hover:bg-primary-700 active:scale-[0.98]
+           hover:bg-primary-700 hover:-translate-y-px active:translate-y-0 active:scale-[0.98]
            shadow-sm hover:shadow-md focus-visible:ring-primary-500;
   }
   .btn-secondary {
@@ -99,13 +132,13 @@
   }
   .btn-gradient {
     @apply btn-md text-white bg-gradient-to-r from-primary-600 to-indigo-600
-           hover:from-primary-700 hover:to-indigo-700 active:scale-[0.98]
-           shadow-md shadow-primary-500/20 focus-visible:ring-primary-500;
+           hover:from-primary-700 hover:to-indigo-700 hover:-translate-y-px active:translate-y-0 active:scale-[0.98]
+           shadow-md shadow-primary-500/20 hover:shadow-lg hover:shadow-primary-500/30 focus-visible:ring-primary-500;
   }
 
   /* ── Inputs ── */
   .input-field {
-    @apply w-full px-3 py-2.5 text-sm
+    @apply w-full px-4 py-3 text-base
            bg-white border border-gray-200 rounded-lg
            placeholder:text-gray-400 text-gray-900
            dark:bg-gray-800 dark:border-gray-700 dark:text-gray-100
@@ -124,14 +157,15 @@
   }
 
   .input-label {
-    @apply block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5;
+    @apply block text-base font-medium text-gray-700 dark:text-gray-300 mb-1.5;
   }
-  .input-hint  { @apply text-xs text-gray-500 dark:text-gray-400 mt-1; }
-  .input-error { @apply text-xs text-red-600 dark:text-red-400 mt-1; }
+  .input-hint  { @apply text-sm text-gray-500 dark:text-gray-400 mt-1; }
+  .input-error { @apply text-sm text-red-600 dark:text-red-400 mt-1; }
 
   /* ── Cards ── */
   .card {
-    @apply bg-white dark:bg-gray-900 rounded-xl border border-surface-border dark:border-gray-800 p-6 shadow-card;
+    @apply bg-white dark:bg-gray-900 rounded-xl border border-surface-border dark:border-gray-800 p-6 shadow-card
+           transition-shadow duration-200 hover:shadow-card-md;
   }
   .card-flat {
     @apply bg-white dark:bg-gray-900 rounded-xl border border-surface-border dark:border-gray-800 p-6;

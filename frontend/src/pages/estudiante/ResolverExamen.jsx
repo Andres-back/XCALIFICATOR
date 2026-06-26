@@ -343,20 +343,20 @@ export default function ResolverExamen() {
     <div className="max-w-4xl mx-auto">
       {/* Header Card */}
       <div className="bg-gradient-to-r from-primary-600 to-primary-800 rounded-2xl p-6 text-white mb-6 shadow-lg">
-        <div className="flex items-start justify-between">
-          <div>
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+          <div className="min-w-0">
             <button onClick={() => navigate('/estudiante')} className="flex items-center gap-1 text-white/70 hover:text-white text-xs mb-2 transition-colors">
               <ArrowLeft className="w-3 h-3" /> Volver al inicio
             </button>
-            <h1 className="text-2xl font-bold">{examen.titulo}</h1>
+            <h1 className="text-xl sm:text-2xl font-bold break-words">{examen.titulo}</h1>
             {examen.fecha_limite && (
               <p className="text-primary-200 text-sm mt-1 flex items-center gap-1">
-                <AlertTriangle className="w-3 h-3" />
+                <AlertTriangle className="w-3 h-3 shrink-0" />
                 Fecha límite: {new Date(examen.fecha_limite).toLocaleString()}
               </p>
             )}
           </div>
-          <div className="text-right">
+          <div className="text-left sm:text-right shrink-0">
             <div className="flex items-center gap-2 bg-white/10 rounded-xl px-4 py-2 backdrop-blur-sm">
               <Clock className="w-5 h-5" />
               <span className="text-xl font-mono font-bold">{formatTime(elapsed)}</span>
@@ -428,11 +428,11 @@ export default function ResolverExamen() {
               </div>
               {grupo.es_lider && (grupo.miembros?.length || 1) < (examen.max_integrantes || 4) && (
                 showInvite ? (
-                  <form onSubmit={inviteMember} className="flex gap-2">
-                    <input type="email" placeholder="Email del compañero" className="input-field flex-1 text-sm"
+                  <form onSubmit={inviteMember} className="flex flex-wrap gap-2">
+                    <input type="email" placeholder="Email del compañero" className="input-field flex-1 min-w-0 basis-full sm:basis-auto text-sm"
                       value={inviteEmail} onChange={e => setInviteEmail(e.target.value)} autoFocus />
-                    <button type="submit" className="btn-primary text-sm px-3">Agregar</button>
-                    <button type="button" onClick={() => setShowInvite(false)} className="btn-secondary text-sm px-3">Cancelar</button>
+                    <button type="submit" className="btn-primary flex-1 sm:flex-none text-sm px-3">Agregar</button>
+                    <button type="button" onClick={() => setShowInvite(false)} className="btn-secondary flex-1 sm:flex-none text-sm px-3">Cancelar</button>
                   </form>
                 ) : (
                   <button onClick={() => setShowInvite(true)} className="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1">
@@ -670,6 +670,25 @@ export default function ResolverExamen() {
             onComplete={(results) => {
               updateResp('emparejar', JSON.stringify(results));
               toast.success(`¡Emparejar completado! ${results.correct}/${results.total} correctas 🎉`);
+            }}
+          />
+        </div>
+      )}
+
+      {/* Unir Columnas */}
+      {examen.contenido_json?.unir_columnas?.pares && (
+        <div className="card mt-6">
+          <h2 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+            🔗 Unir Columnas
+          </h2>
+          <Emparejar
+            emparejar={examen.contenido_json.unir_columnas}
+            onChange={(matchesObj) => {
+              updateResp('unir_columnas', JSON.stringify(matchesObj));
+            }}
+            onComplete={(results) => {
+              updateResp('unir_columnas', JSON.stringify(results));
+              toast.success(`¡Unir columnas completado! ${results.correct}/${results.total} correctas 🎉`);
             }}
           />
         </div>

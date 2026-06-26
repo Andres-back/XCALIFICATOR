@@ -1,14 +1,14 @@
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from app.core.database import get_db
 from app.core.config import get_settings
-from app.core.dependencies import require_role
+from app.core.dependencies import require_role, get_client_ip
 from app.models.models import (
     User, Materia, Matricula, Examen, Nota,
     PeriodoAcademico, ConfigPorcentaje, Boletin, Asistencia,
-    NotaParticipacion, RespuestaOnline,
+    NotaParticipacion, RespuestaOnline, ReporteGenerado, AuditLog,
 )
 from app.schemas.schemas import ConfigPorcentajeCreate, ConfigPorcentajeOut, BoletinOut
 import uuid as _uuid
@@ -546,6 +546,123 @@ async def get_reporte_notas(
         ],
         "estudiantes": report,
     }
+
+
+@router.get("/generados/{materia_id}")
+async def list_reportes_generados(
+    materia_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("profesor", "admin")),
+):
+    await _assert_materia_access(db, materia_id, current_user)
+    result = await db.execute(
+        select(ReporteGenerado)
+        .where(ReporteGenerado.materia_id == materia_id)
+        .order_by(ReporteGenerado.created_at.desc())
+    )
+    items = result.scalars().all()
+    return [
+        {
+            "id": str(item.id),
+            "materia_id": str(item.materia_id),
+            "periodo_id": str(item.periodo_id),
+            "titulo": item.titulo,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+        }
+        for item in items
+    ]
+
+
+@router.post("/generados/{materia_id}/{periodo_id}", status_code=status.HTTP_201_CREATED)
+async def save_reporte_generado(
+    materia_id: str,
+    periodo_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("profesor", "admin")),
+):
+    await _assert_materia_access(db, materia_id, current_user)
+    contenido = await get_reporte_notas(materia_id, periodo_id, db, current_user)
+    created_at = datetime.now(timezone.utc)
+    titulo = f"Reporte generado el {created_at.strftime('%d/%m/%Y')}"
+    reporte = ReporteGenerado(
+        materia_id=materia_id,
+        periodo_id=periodo_id,
+        profesor_id=current_user.id,
+        titulo=titulo,
+        contenido_json=contenido,
+        created_at=created_at,
+    )
+    db.add(reporte)
+    db.add(AuditLog(
+        user_id=current_user.id,
+        accion="save_generated_report",
+        detalle={"materia_id": materia_id, "periodo_id": periodo_id, "titulo": titulo},
+        ip=get_client_ip(request),
+    ))
+    await db.commit()
+    await db.refresh(reporte)
+    return {
+        "id": str(reporte.id),
+        "materia_id": str(reporte.materia_id),
+        "periodo_id": str(reporte.periodo_id),
+        "titulo": reporte.titulo,
+        "contenido_json": reporte.contenido_json,
+        "created_at": reporte.created_at.isoformat() if reporte.created_at else None,
+    }
+
+
+@router.get("/generados/item/{reporte_id}")
+async def get_reporte_generado_item(
+    reporte_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("profesor", "admin")),
+):
+    result = await db.execute(select(ReporteGenerado).where(ReporteGenerado.id == reporte_id))
+    reporte = result.scalar_one_or_none()
+    if not reporte:
+        raise HTTPException(status_code=404, detail="Reporte guardado no encontrado")
+    await _assert_materia_access(db, str(reporte.materia_id), current_user)
+    db.add(AuditLog(
+        user_id=current_user.id,
+        accion="view_generated_report",
+        detalle={"reporte_id": reporte_id, "materia_id": str(reporte.materia_id)},
+        ip=get_client_ip(request),
+    ))
+    await db.commit()
+    return {
+        "id": str(reporte.id),
+        "materia_id": str(reporte.materia_id),
+        "periodo_id": str(reporte.periodo_id),
+        "titulo": reporte.titulo,
+        "contenido_json": reporte.contenido_json,
+        "created_at": reporte.created_at.isoformat() if reporte.created_at else None,
+    }
+
+
+@router.delete("/generados/item/{reporte_id}")
+async def delete_reporte_generado_item(
+    reporte_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("profesor", "admin")),
+):
+    result = await db.execute(select(ReporteGenerado).where(ReporteGenerado.id == reporte_id))
+    reporte = result.scalar_one_or_none()
+    if not reporte:
+        raise HTTPException(status_code=404, detail="Reporte guardado no encontrado")
+    await _assert_materia_access(db, str(reporte.materia_id), current_user)
+    materia_id = str(reporte.materia_id)
+    await db.delete(reporte)
+    db.add(AuditLog(
+        user_id=current_user.id,
+        accion="delete_generated_report",
+        detalle={"reporte_id": reporte_id, "materia_id": materia_id},
+        ip=get_client_ip(request),
+    ))
+    await db.commit()
+    return {"detail": "Reporte eliminado"}
 
 
 @router.get("/estudiante/{materia_id}/{periodo_id}/{estudiante_id}")

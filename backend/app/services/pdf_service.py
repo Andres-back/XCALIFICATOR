@@ -1,16 +1,20 @@
 import io
 import html
+import os
 import re
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch, mm
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
-    PageBreak, KeepTogether, HRFlowable
+    PageBreak, KeepTogether, HRFlowable, Image
 )
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.lib.colors import HexColor
+from app.core.config import get_settings
+
+settings = get_settings()
 
 # Brand colors
 PRIMARY = HexColor("#4F46E5")       # Indigo
@@ -178,6 +182,22 @@ def _to_pdf_markup(value: str) -> str:
     safe = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", safe)
     safe = safe.replace("\n", "<br/>")
     return re.sub(r"@@TXT_(\d+)@@", lambda m: placeholders[int(m.group(1))], safe)
+
+
+def _local_upload_path(url: str | None) -> str:
+    raw = str(url or "").strip()
+    if not raw.startswith("/uploads/"):
+        return ""
+    rel = raw[len("/uploads/"):].lstrip("/").replace("\\", "/")
+    root = os.path.abspath(settings.UPLOAD_DIR)
+    candidate = os.path.abspath(os.path.join(root, rel))
+    if not candidate.startswith(root):
+        return ""
+    if not os.path.exists(candidate):
+        return ""
+    if os.path.splitext(candidate)[1].lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
+        return ""
+    return candidate
 
 
 def _header_footer(canvas, doc, titulo):
@@ -348,11 +368,12 @@ def generate_exam_pdf(exam_data: dict, include_answers: bool = False) -> bytes:
 
     preguntas = exam_data.get("preguntas", [])
     metadata = exam_data.get("metadata", {}) if isinstance(exam_data, dict) else {}
-    ocr_cfg = metadata.get("ocr", {}) if isinstance(metadata, dict) else {}
-    ocr_enabled = bool(ocr_cfg.get("enabled", True))
-    ocr_prefix = str(ocr_cfg.get("prefijo") or "R").strip().upper()[:4] or "R"
-    ocr_answer_sheet = bool(ocr_cfg.get("hoja_respuestas", True))
-    ocr_open_lines = max(1, min(8, int(ocr_cfg.get("lineas_abiertas", 3) or 3)))
+    # "vision" is the current key; "ocr" kept for backwards compat with older saved tools
+    vision_cfg = metadata.get("vision", metadata.get("ocr", {})) if isinstance(metadata, dict) else {}
+    ocr_enabled = bool(vision_cfg.get("enabled", True))
+    ocr_prefix = str(vision_cfg.get("prefijo") or "R").strip().upper()[:4] or "R"
+    ocr_answer_sheet = bool(vision_cfg.get("hoja_respuestas", True))
+    ocr_open_lines = max(1, min(8, int(vision_cfg.get("lineas_abiertas", 3) or 3)))
     ocr_rows = []
 
     # Group questions by type for section headers
@@ -400,6 +421,21 @@ def generate_exam_pdf(exam_data: dict, include_answers: bool = False) -> bytes:
             f'<font color="{GRAY_700.hexval()}"><b>{html.escape(str(numero))}.</b></font>  {enunciado_markup}  {badge}',
             question_style
         ))
+
+        image_path = _local_upload_path(p.get("image_url"))
+        if image_path:
+            try:
+                q_img = Image(image_path)
+                max_w = min(340, doc.width - 48)
+                max_h = 180
+                scale = min(max_w / max(q_img.imageWidth, 1), max_h / max(q_img.imageHeight, 1), 1)
+                q_img.drawWidth = q_img.imageWidth * scale
+                q_img.drawHeight = q_img.imageHeight * scale
+                q_elements.append(q_img)
+                if p.get("image_alt"):
+                    q_elements.append(Paragraph(_to_pdf_markup(p.get("image_alt")), option_style))
+            except Exception:
+                q_elements.append(Paragraph("Imagen asociada no disponible para impresion.", option_style))
 
         if tipo == "seleccion_multiple":
             opciones = p.get("opciones", [])

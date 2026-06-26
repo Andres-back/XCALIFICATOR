@@ -6,7 +6,7 @@ import toast from 'react-hot-toast';
 import {
   BookOpen, Plus, ClipboardList, X,
   CheckCircle, TrendingUp, AlertCircle, Award,
-  ChevronRight, ScrollText, Sparkles,
+  ChevronRight, ScrollText, Sparkles, Camera,
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -47,7 +47,7 @@ export default function EstudianteHome() {
           try {
             const exRes = await api.get(`/examenes/materia/${m.id}`);
             examenesMap[m.id] = exRes.data.filter(e => {
-              if (!e.activo_online) return false;
+              if (!e.activo_online && !e.activo_fisico) return false;
               if (e.fecha_activacion && new Date(e.fecha_activacion) > new Date()) return false;
               return true;
             });
@@ -105,22 +105,22 @@ export default function EstudianteHome() {
   return (
     <div className="space-y-6">
       {/* Page header with greeting */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 rounded-2xl p-5 sm:p-6 bg-gradient-to-br from-estudiante-600 via-emerald-500 to-cyan-500 text-white shadow-card-md">
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold text-gray-900">
+          <h1 className="text-xl sm:text-2xl font-bold text-white">
             {greeting}{firstName ? `, ${firstName}` : ''} <span className="inline-block animate-bounce">👋</span>
           </h1>
-          <p className="text-sm text-gray-500 mt-1">
+          <p className="text-sm text-white/85 mt-1">
             {pendientes.length > 0
               ? `Tienes ${pendientes.length} examen${pendientes.length > 1 ? 'es' : ''} pendiente${pendientes.length > 1 ? 's' : ''} por resolver.`
               : '¡Todo al día! No tienes exámenes pendientes.'}
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <Link to="/estudiante/boletin" className="btn-secondary flex items-center gap-2 text-sm shrink-0">
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+          <Link to="/estudiante/boletin" className="inline-flex flex-1 sm:flex-none items-center justify-center gap-2 rounded-xl bg-white/95 px-4 py-3 text-sm font-semibold text-estudiante-700 shadow-sm hover:bg-white">
             <ScrollText className="w-4 h-4" /> Mi Boletín
           </Link>
-          <button onClick={() => setShowInscribir(true)} className="btn-primary flex items-center gap-2 text-sm shrink-0">
+          <button onClick={() => setShowInscribir(true)} className="inline-flex flex-1 sm:flex-none items-center justify-center gap-2 rounded-xl bg-gray-950/20 px-4 py-3 text-sm font-semibold text-white ring-1 ring-white/30 hover:bg-gray-950/30">
             <Plus className="w-4 h-4" /> Inscribirme
           </button>
         </div>
@@ -181,9 +181,9 @@ export default function EstudianteHome() {
               const pendientesMateria = examenesMateria.filter(ex => !respondidos.has(ex.id) && !(ex.fecha_limite && new Date(ex.fecha_limite) < new Date()));
 
               return (
-                <div key={m.id} className="bg-white rounded-xl border border-gray-200 overflow-hidden hover:shadow-lg transition-all duration-300 flex flex-col">
+                <div key={m.id} className="bg-white rounded-2xl border border-estudiante-100 overflow-hidden hover:shadow-lg transition-all duration-300 flex flex-col">
                   {/* Card header */}
-                  <div className="p-5 pb-3">
+                  <div className="p-5 pb-3 bg-gradient-to-br from-white to-estudiante-50/70">
                     <div className="flex items-start justify-between mb-3">
                       <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-primary-100 to-indigo-100 flex items-center justify-center shrink-0">
                         <BookOpen className="w-5 h-5 text-primary-700" />
@@ -215,16 +215,26 @@ export default function EstudianteHome() {
                   <div className="px-5 pb-4 flex-1">
                     {pendientesMateria.length > 0 ? (
                       <div className="space-y-2">
-                        {pendientesMateria.slice(0, 3).map(ex => (
-                          <Link key={ex.id} to={`/estudiante/examen/${ex.id}`}
-                            className="flex items-center justify-between p-2.5 rounded-lg bg-blue-50/60 hover:bg-blue-100/80 transition-colors group">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <ClipboardList className="w-4 h-4 text-primary-500 shrink-0" />
-                              <span className="text-sm text-gray-700 truncate">{ex.titulo}</span>
-                            </div>
-                            <ChevronRight className="w-4 h-4 text-gray-400 group-hover:text-primary-500 shrink-0" />
-                          </Link>
-                        ))}
+                        {pendientesMateria.slice(0, 3).map(ex => {
+                          const isFisico = !ex.activo_online && ex.activo_fisico;
+                          const href = isFisico ? `/estudiante/examen-foto/${ex.id}` : `/estudiante/examen/${ex.id}`;
+                          return (
+                            <Link key={ex.id} to={href}
+                              className="flex items-center justify-between p-2.5 rounded-lg bg-blue-50/60 hover:bg-blue-100/80 transition-colors group">
+                              <div className="flex items-center gap-2 min-w-0">
+                                {isFisico
+                                  ? <Camera className="w-4 h-4 text-amber-500 shrink-0" />
+                                  : <ClipboardList className="w-4 h-4 text-primary-500 shrink-0" />
+                                }
+                                <span className="text-sm text-gray-700 truncate">{ex.titulo}</span>
+                                {isFisico && (
+                                  <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded shrink-0">Foto</span>
+                                )}
+                              </div>
+                              <ChevronRight className="w-4 h-4 text-gray-400 group-hover:text-primary-500 shrink-0" />
+                            </Link>
+                          );
+                        })}
                         {pendientesMateria.length > 3 && (
                           <p className="text-xs text-gray-400 text-center">+{pendientesMateria.length - 3} más</p>
                         )}

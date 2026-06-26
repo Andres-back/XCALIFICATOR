@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import useAuthStore from '../store';
 import toast from 'react-hot-toast';
 import { Eye, EyeOff, LogIn, Sparkles } from 'lucide-react';
 import ThemeToggle from '../components/ThemeToggle';
+import usePageMotion from '../hooks/usePageMotion';
 
 export default function Login() {
   const [correo, setCorreo] = useState('');
@@ -11,6 +12,9 @@ export default function Login() {
   const [showPass, setShowPass] = useState(false);
   const { login, loading, isAuthenticated, user } = useAuthStore();
   const navigate = useNavigate();
+  const pageRef = useRef(null);
+
+  usePageMotion(pageRef, []);
 
   // Redirect if already logged in
   useEffect(() => {
@@ -33,7 +37,7 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 dark:from-gray-950 dark:via-gray-950 dark:to-gray-900">
+    <div ref={pageRef} className="min-h-screen flex bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 dark:from-gray-950 dark:via-gray-950 dark:to-gray-900">
       {/* Left Panel - Mascot & Branding */}
       <div className="hidden lg:flex lg:w-1/2 relative overflow-hidden bg-gradient-to-br from-primary-600 via-primary-700 to-indigo-800 dark:from-accent-800 dark:via-accent-900 dark:to-gray-900">
         {/* Animated background shapes */}

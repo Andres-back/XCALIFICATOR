@@ -5,7 +5,7 @@ import toast from 'react-hot-toast';
 import {
   FileText, ToggleLeft, ToggleRight, Trash2, Download, Award, X,
   FileSearch, Edit3, ClipboardCheck, BookOpen, Calendar, ChevronDown,
-  ChevronUp, Plus, Minus, Save, Loader2,
+  ChevronUp, Plus, Minus, Save, Loader2, Camera,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import MathText from '../../components/MathText';
@@ -17,6 +17,17 @@ const TIPO_LABELS = {
   emparejar:    'Emparejar',
   cuento:       'Cuento',
   para_colorear:'Para Colorear',
+  tarea_registrada: 'Tarea registrada',
+};
+
+const TIPO_COLORS = {
+  examen:       { border: 'border-l-indigo-500',  badge: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300' },
+  crucigrama:   { border: 'border-l-emerald-500', badge: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' },
+  sopa_letras:  { border: 'border-l-violet-500',  badge: 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300' },
+  emparejar:    { border: 'border-l-orange-500',  badge: 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300' },
+  cuento:       { border: 'border-l-pink-500',    badge: 'bg-pink-100 text-pink-700 dark:bg-pink-900/40 dark:text-pink-300' },
+  para_colorear:{ border: 'border-l-yellow-500',  badge: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300' },
+  tarea_registrada: { border: 'border-l-sky-500', badge: 'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300' },
 };
 
 export default function ProfesorExamenes({ materiaId: propMateriaId, embedded = false }) {
@@ -28,6 +39,7 @@ export default function ProfesorExamenes({ materiaId: propMateriaId, embedded = 
   const [answersModal, setAnswersModal] = useState({ show: false, data: null, titulo: '' });
   const [editModal, setEditModal] = useState({ show: false, examen: null, saving: false });
   const [downloadMenu, setDownloadMenu] = useState(null);
+  const [registerModal, setRegisterModal] = useState({ show: false, titulo: '', notaMaxima: '5.0', criterios: '', saving: false });
 
   const fetchExamenes = () => {
     api.get(`/examenes/materia/${materiaId}`)
@@ -61,6 +73,32 @@ export default function ProfesorExamenes({ materiaId: propMateriaId, embedded = 
       toast.success('Examen eliminado');
       fetchExamenes();
     } catch { toast.error('Error'); }
+  };
+
+  const registrarExamen = async () => {
+    if (!registerModal.titulo.trim() || !registerModal.criterios.trim()) {
+      toast.error('Escribe nombre y criterios');
+      return;
+    }
+    const notaMaxima = parseFloat(registerModal.notaMaxima);
+    if (!Number.isFinite(notaMaxima) || notaMaxima <= 0 || notaMaxima > 10) {
+      toast.error('La nota maxima debe estar entre 0.1 y 10');
+      return;
+    }
+    setRegisterModal((prev) => ({ ...prev, saving: true }));
+    try {
+      await api.post(`/examenes/registrar?materia_id=${materiaId}`, {
+        titulo: registerModal.titulo.trim(),
+        nota_maxima: notaMaxima,
+        criterios: registerModal.criterios.trim(),
+      });
+      toast.success('Examen registrado');
+      setRegisterModal({ show: false, titulo: '', notaMaxima: '5.0', criterios: '', saving: false });
+      fetchExamenes();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Error registrando examen');
+      setRegisterModal((prev) => ({ ...prev, saving: false }));
+    }
   };
 
   const downloadPdf = async (examenId, withAnswers) => {
@@ -164,6 +202,50 @@ export default function ProfesorExamenes({ materiaId: propMateriaId, embedded = 
       return { ...prev, examen: { ...prev.examen, preguntas } };
     });
   };
+  const setPreguntaImage = (pIdx, asset) => {
+    setEditModal(prev => {
+      const preguntas = [...prev.examen.preguntas];
+      preguntas[pIdx] = {
+        ...preguntas[pIdx],
+        image_url: asset?.url || '',
+        image_prompt: asset?.image_prompt || preguntas[pIdx].image_prompt || '',
+        image_type: asset?.image_type || '',
+        image_alt: asset?.image_alt || '',
+      };
+      return { ...prev, examen: { ...prev.examen, preguntas } };
+    });
+  };
+  const uploadPreguntaImage = async (pIdx, file) => {
+    if (!file) return;
+    const data = new FormData();
+    data.append('file', file);
+    try {
+      const res = await api.post('/uploads/question-image', data, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      setPreguntaImage(pIdx, res.data);
+      toast.success('Imagen agregada a la pregunta');
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'No se pudo subir la imagen');
+    }
+  };
+  const generatePreguntaImage = async (pIdx, mode) => {
+    const p = editModal.examen.preguntas[pIdx];
+    const prompt = window.prompt(
+      mode === 'illustration'
+        ? 'Describe la ilustración educativa que quieres crear'
+        : 'Describe la gráfica, figura o diagrama que quieres crear',
+      p.image_prompt || p.enunciado || p.pregunta || ''
+    );
+    if (!prompt) return;
+    try {
+      const res = await api.post('/ai/images/generate', { prompt, mode });
+      setPreguntaImage(pIdx, res.data);
+      toast.success(mode === 'illustration' ? 'Ilustración generada' : 'Diagrama generado');
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'No se pudo generar la imagen');
+    }
+  };
   const updateSopaPalabra = (idx, value) => {
     setEditModal(prev => {
       const palabras = [...(prev.examen.sopa_letras?.palabras || [])];
@@ -246,10 +328,28 @@ export default function ProfesorExamenes({ materiaId: propMateriaId, embedded = 
       {!embedded && (
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-6">
         <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Exámenes</h1>
-        <Link to={`/profesor/generar/${materiaId}`} className="btn-primary flex items-center gap-2 text-sm">
-          <FileText className="w-4 h-4" /> Generar Examen
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={() => setRegisterModal((prev) => ({ ...prev, show: true }))}
+            className="btn-secondary flex items-center gap-2 text-sm">
+            <ClipboardCheck className="w-4 h-4" /> Registrar Examen
+          </button>
+          <Link to={`/profesor/generar/${materiaId}`} className="btn-primary flex items-center gap-2 text-sm">
+            <FileText className="w-4 h-4" /> Generar Examen
+          </Link>
+        </div>
       </div>
+      )}
+
+      {embedded && (
+        <div className="flex flex-wrap gap-2 mb-6">
+          <button type="button" onClick={() => setRegisterModal((prev) => ({ ...prev, show: true }))}
+            className="btn-secondary flex items-center gap-2 text-sm">
+            <ClipboardCheck className="w-4 h-4" /> Registrar Examen
+          </button>
+          <Link to={`/profesor/generar/${materiaId}`} className="btn-primary flex items-center gap-2 text-sm">
+            <FileText className="w-4 h-4" /> Generar Examen
+          </Link>
+        </div>
       )}
 
       {examenes.length === 0 ? (
@@ -259,95 +359,175 @@ export default function ProfesorExamenes({ materiaId: propMateriaId, embedded = 
           </div>
           <p className="font-semibold text-gray-700 mb-1">No hay exámenes todavía</p>
           <p className="text-sm text-gray-500 mb-5">Genera tu primer examen con inteligencia artificial en segundos</p>
-          <Link to={`/profesor/generar/${materiaId}`}
-            className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-semibold text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 transition shadow-sm">
-            <FileText className="w-4 h-4" /> Generar Examen con IA
-          </Link>
+          <div className="flex justify-center gap-2 flex-wrap">
+            <button type="button" onClick={() => setRegisterModal((prev) => ({ ...prev, show: true }))}
+              className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-semibold text-indigo-700 bg-white border border-indigo-200 rounded-xl hover:bg-indigo-50 transition shadow-sm">
+              <ClipboardCheck className="w-4 h-4" /> Registrar Examen
+            </button>
+            <Link to={`/profesor/generar/${materiaId}`}
+              className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-semibold text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 transition shadow-sm">
+              <FileText className="w-4 h-4" /> Generar Examen con IA
+            </Link>
+          </div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {examenes.map(ex => (
-            <div key={ex.id} className="card hover:shadow-lg transition-shadow">
-              <div className="flex items-start justify-between gap-3 mb-3">
-                <div className="min-w-0 flex-1">
-                  <h3 className="font-semibold text-gray-900 truncate">{ex.titulo}</h3>
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs text-gray-500">
-                    <span className="px-2 py-0.5 rounded bg-gray-100 font-medium">{TIPO_LABELS[ex.tipo] || ex.tipo || 'Generado'}</span>
-                    <span>{format(new Date(ex.created_at), 'dd/MM/yyyy')}</span>
-                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${ex.activo_online ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                      {ex.activo_online ? 'Online' : 'Inactivo'}
-                    </span>
-                  </div>
-                </div>
-                <button onClick={() => toggleOnline(ex.id)} title={ex.activo_online ? 'Desactivar online' : 'Activar online'}
-                  className={`p-2 rounded-lg transition shrink-0 ${ex.activo_online ? 'text-green-600 bg-green-50 hover:bg-green-100' : 'text-gray-400 bg-gray-50 hover:bg-gray-100'}`}>
-                  {ex.activo_online ? <ToggleRight className="w-5 h-5" /> : <ToggleLeft className="w-5 h-5" />}
-                </button>
-              </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+          {examenes.map(ex => {
+            const tc = TIPO_COLORS[ex.tipo] || TIPO_COLORS.examen;
+            return (
+              <div key={ex.id} className={`card hover:shadow-xl transition-all duration-200 overflow-hidden border-l-4 ${tc.border}`}>
 
-              {/* Dates row */}
-              {(ex.fecha_limite || (ex.fecha_activacion && new Date(ex.fecha_activacion) > new Date())) && (
-                <div className="flex flex-wrap gap-2 mb-3 text-xs">
-                  {ex.fecha_limite && (
-                    <span className="flex items-center gap-1 text-gray-500">
-                      <Calendar className="w-3 h-3" /> Límite: {format(new Date(ex.fecha_limite), 'dd/MM/yyyy HH:mm')}
-                    </span>
-                  )}
-                  {ex.fecha_activacion && new Date(ex.fecha_activacion) > new Date() && (
-                    <span className="text-amber-600 font-medium">
-                      Programado: {format(new Date(ex.fecha_activacion), 'dd/MM/yyyy HH:mm')}
-                    </span>
-                  )}
-                </div>
-              )}
-
-              {/* Action buttons */}
-              <div className="flex items-center gap-1 flex-wrap pt-3 border-t border-gray-100">
-                <button onClick={() => openPreview(ex.id, ex.titulo, false)} title="Vista previa PDF"
-                  className="p-2 rounded-lg text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition">
-                  <FileSearch className="w-4 h-4" />
-                </button>
-                <div className="relative">
-                  <button onClick={(e) => { e.stopPropagation(); setDownloadMenu(downloadMenu === ex.id ? null : ex.id); }}
-                    title="Descargar PDF" className="p-2 rounded-lg text-blue-600 bg-blue-50 hover:bg-blue-100 transition">
-                    <Download className="w-4 h-4" />
-                  </button>
-                  {downloadMenu === ex.id && (
-                    <div className="absolute right-0 top-full mt-1 w-52 bg-white rounded-lg shadow-xl border border-gray-200 z-30 py-1 animate-in fade-in">
-                      <button onClick={() => downloadPdf(ex.id, false)}
-                        className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2">
-                        <FileText className="w-4 h-4 text-gray-400" /> Sin respuestas
-                      </button>
-                      <button onClick={() => downloadPdf(ex.id, true)}
-                        className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2">
-                        <BookOpen className="w-4 h-4 text-gray-400" /> Con respuestas
-                      </button>
+                {/* Header: título + toggle online */}
+                <div className="flex items-start justify-between gap-3 mb-3">
+                  <div className="min-w-0 flex-1">
+                    <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100 leading-snug">{ex.titulo}</h3>
+                    <div className="flex flex-wrap items-center gap-2 mt-2">
+                      <span className={`px-3 py-1 rounded-lg text-sm font-bold ${tc.badge}`}>
+                        {TIPO_LABELS[ex.tipo] || ex.tipo || 'Generado'}
+                      </span>
+                      <span className="text-sm text-gray-400 dark:text-gray-500">
+                        Creado el {format(new Date(ex.created_at), 'dd/MM/yyyy')}
+                      </span>
                     </div>
-                  )}
+                  </div>
+                  {/* Toggle online — botón con texto */}
+                  <button onClick={() => toggleOnline(ex.id)}
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-bold transition shrink-0
+                      ${ex.activo_online
+                        ? 'text-green-700 bg-green-100 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-300 dark:hover:bg-green-900/50'
+                        : 'text-gray-500 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
+                      }`}>
+                    {ex.activo_online ? <ToggleRight className="w-5 h-5" /> : <ToggleLeft className="w-5 h-5" />}
+                    <span className="hidden sm:inline">{ex.activo_online ? 'Online ✓' : 'Activar'}</span>
+                  </button>
                 </div>
-                <button onClick={() => openEdit(ex)} title="Editar examen"
-                  className="p-2 rounded-lg text-orange-600 bg-orange-50 hover:bg-orange-100 transition">
-                  <Edit3 className="w-4 h-4" />
-                </button>
-                <Link to={`/profesor/calificar/${ex.id}`} title="Calificar entregas"
-                  className="p-2 rounded-lg text-amber-600 bg-amber-50 hover:bg-amber-100 transition">
-                  <ClipboardCheck className="w-4 h-4" />
-                </Link>
-                <Link to={`/profesor/notas/${ex.id}`} title="Ver notas y métricas"
-                  className="p-2 rounded-lg text-emerald-600 bg-emerald-50 hover:bg-emerald-100 transition">
-                  <Award className="w-4 h-4" />
-                </Link>
-                <button onClick={() => deleteExamen(ex.id)} title="Eliminar examen"
-                  className="p-2 rounded-lg text-red-600 bg-red-50 hover:bg-red-100 transition ml-auto">
-                  <Trash2 className="w-4 h-4" />
+
+                {/* Fechas */}
+                {(ex.fecha_limite || (ex.fecha_activacion && new Date(ex.fecha_activacion) > new Date())) && (
+                  <div className="flex flex-wrap gap-2 mb-3 text-sm">
+                    {ex.fecha_limite && (
+                      <span className="flex items-center gap-1.5 bg-gray-100 dark:bg-gray-700/50 text-gray-600 dark:text-gray-300 px-3 py-1.5 rounded-lg font-semibold">
+                        <Calendar className="w-4 h-4 shrink-0" /> Límite: {format(new Date(ex.fecha_limite), 'dd/MM/yyyy HH:mm')}
+                      </span>
+                    )}
+                    {ex.fecha_activacion && new Date(ex.fecha_activacion) > new Date() && (
+                      <span className="flex items-center gap-1.5 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 px-3 py-1.5 rounded-lg font-semibold">
+                        Programado: {format(new Date(ex.fecha_activacion), 'dd/MM/yyyy HH:mm')}
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {/* Botones de acción — 2 cols en móvil, 3 en tablet+ */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 pt-3 border-t border-gray-100 dark:border-gray-700">
+                  <button onClick={() => openPreview(ex.id, ex.titulo, false)}
+                    className="flex flex-col items-center gap-2 py-4 rounded-xl text-indigo-600 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-900/20 dark:text-indigo-300 dark:hover:bg-indigo-900/40 transition active:scale-95">
+                    <FileSearch className="w-6 h-6" />
+                    <span className="text-sm font-bold">Ver PDF</span>
+                  </button>
+
+                  <div className="relative">
+                    <button onClick={(e) => { e.stopPropagation(); setDownloadMenu(downloadMenu === ex.id ? null : ex.id); }}
+                      className="w-full flex flex-col items-center gap-2 py-4 rounded-xl text-blue-600 bg-blue-50 hover:bg-blue-100 dark:bg-blue-900/20 dark:text-blue-300 dark:hover:bg-blue-900/40 transition active:scale-95">
+                      <Download className="w-6 h-6" />
+                      <span className="text-sm font-bold">Descargar</span>
+                    </button>
+                    {downloadMenu === ex.id && (
+                      <div className="absolute left-0 top-full mt-1 w-52 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 z-30 py-1">
+                        <button onClick={() => downloadPdf(ex.id, false)}
+                          className="w-full text-left px-4 py-3 text-base text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2">
+                          <FileText className="w-4 h-4 text-gray-400" /> Sin respuestas
+                        </button>
+                        <button onClick={() => downloadPdf(ex.id, true)}
+                          className="w-full text-left px-4 py-3 text-base text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2">
+                          <BookOpen className="w-4 h-4 text-gray-400" /> Con respuestas
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  <button onClick={() => openEdit(ex)}
+                    className="flex flex-col items-center gap-2 py-4 rounded-xl text-orange-600 bg-orange-50 hover:bg-orange-100 dark:bg-orange-900/20 dark:text-orange-300 dark:hover:bg-orange-900/40 transition active:scale-95">
+                    <Edit3 className="w-6 h-6" />
+                    <span className="text-sm font-bold">Editar</span>
+                  </button>
+
+                  <Link to={`/profesor/calificar/${ex.id}`}
+                    className="flex flex-col items-center gap-2 py-4 rounded-xl text-amber-600 bg-amber-50 hover:bg-amber-100 dark:bg-amber-900/20 dark:text-amber-300 dark:hover:bg-amber-900/40 transition active:scale-95">
+                    <ClipboardCheck className="w-6 h-6" />
+                    <span className="text-sm font-bold">Calificar</span>
+                  </Link>
+
+                  <Link to={`/profesor/calificar/imagenes/${ex.id}`}
+                    className="flex flex-col items-center gap-2 py-4 rounded-xl text-cyan-600 bg-cyan-50 hover:bg-cyan-100 dark:bg-cyan-900/20 dark:text-cyan-300 dark:hover:bg-cyan-900/40 transition active:scale-95">
+                    <Camera className="w-6 h-6" />
+                    <span className="text-sm font-bold">Por foto</span>
+                  </Link>
+
+                  <Link to={`/profesor/notas/${ex.id}`}
+                    className="flex flex-col items-center gap-2 py-4 rounded-xl text-emerald-600 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-900/20 dark:text-emerald-300 dark:hover:bg-emerald-900/40 transition active:scale-95">
+                    <Award className="w-6 h-6" />
+                    <span className="text-sm font-bold">Ver notas</span>
+                  </Link>
+                </div>
+
+                {/* Eliminar — zona peligrosa al fondo */}
+                <button onClick={() => deleteExamen(ex.id)}
+                  className="w-full flex items-center justify-center gap-2 py-3 mt-2.5 rounded-xl text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 dark:text-red-400 transition text-base font-semibold border border-transparent hover:border-red-200 dark:hover:border-red-800/40">
+                  <Trash2 className="w-5 h-5" />
+                  Eliminar examen
                 </button>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
       {/* ═══ PDF Preview Modal ═══ */}
+      {registerModal.show && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+              <div>
+                <h2 className="font-semibold text-gray-900">Registrar Examen</h2>
+                <p className="text-xs text-gray-500">Crea una actividad para calificar luego por foto.</p>
+              </div>
+              <button onClick={() => setRegisterModal({ show: false, titulo: '', notaMaxima: '5.0', criterios: '', saving: false })}
+                className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 transition">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Nombre del examen o tarea</label>
+                <input className="input-field" value={registerModal.titulo}
+                  onChange={(e) => setRegisterModal((prev) => ({ ...prev, titulo: e.target.value }))}
+                  placeholder="Ej: Taller estados de la materia" />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Nota maxima</label>
+                <input type="number" min="0.1" max="10" step="0.1" className="input-field w-32"
+                  value={registerModal.notaMaxima}
+                  onChange={(e) => setRegisterModal((prev) => ({ ...prev, notaMaxima: e.target.value }))} />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Que se evalua / criterios</label>
+                <textarea rows={5} className="input-field resize-none" value={registerModal.criterios}
+                  onChange={(e) => setRegisterModal((prev) => ({ ...prev, criterios: e.target.value }))}
+                  placeholder="Describe que debe revisar la IA: procedimiento, respuestas correctas, orden, explicacion, ortografia, etc." />
+              </div>
+            </div>
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-2">
+              <button type="button" className="btn-secondary" onClick={() => setRegisterModal({ show: false, titulo: '', notaMaxima: '5.0', criterios: '', saving: false })}>Cancelar</button>
+              <button type="button" className="btn-primary flex items-center gap-2" disabled={registerModal.saving} onClick={registrarExamen}>
+                {registerModal.saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                Guardar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {preview.show && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-2 sm:p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[95vh] sm:h-[90vh] flex flex-col overflow-hidden">
@@ -506,7 +686,10 @@ export default function ProfesorExamenes({ materiaId: propMateriaId, embedded = 
                     {editModal.examen.preguntas.map((p, i) => (
                       <EditPreguntaCard key={p.numero || i} pregunta={p} index={i}
                         updatePregunta={updatePregunta} updateOpcion={updateOpcion}
-                        addOpcion={addOpcion} removeOpcion={removeOpcion} />
+                        addOpcion={addOpcion} removeOpcion={removeOpcion}
+                        uploadPreguntaImage={uploadPreguntaImage}
+                        generatePreguntaImage={generatePreguntaImage}
+                        setPreguntaImage={setPreguntaImage} />
                     ))}
                   </div>
                 </div>
@@ -586,7 +769,17 @@ export default function ProfesorExamenes({ materiaId: propMateriaId, embedded = 
 }
 
 /* ── Pregunta edit sub-component ── */
-function EditPreguntaCard({ pregunta, index, updatePregunta, updateOpcion, addOpcion, removeOpcion }) {
+function EditPreguntaCard({
+  pregunta,
+  index,
+  updatePregunta,
+  updateOpcion,
+  addOpcion,
+  removeOpcion,
+  uploadPreguntaImage,
+  generatePreguntaImage,
+  setPreguntaImage,
+}) {
   const [open, setOpen] = useState(false);
   const p = pregunta;
   const enunciado = p.enunciado || p.pregunta || '';
@@ -625,6 +818,56 @@ function EditPreguntaCard({ pregunta, index, updatePregunta, updateOpcion, addOp
               <input type="text" value={p.respuesta_correcta || ''}
                 onChange={e => updatePregunta(index, 'respuesta_correcta', e.target.value)}
                 className="input-field text-sm w-full" />
+            </div>
+          </div>
+          <div className="border border-blue-100 rounded-xl p-3 bg-blue-50/40">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+              <div>
+                <p className="text-xs font-bold text-blue-900">Imagen de apoyo</p>
+                <p className="text-xs text-blue-700">Sube una imagen o crea un diagrama para que el estudiante entienda mejor.</p>
+              </div>
+              {p.image_url && (
+                <button
+                  type="button"
+                  onClick={() => setPreguntaImage(index, null)}
+                  className="text-xs font-semibold text-red-600 hover:text-red-700"
+                >
+                  Quitar imagen
+                </button>
+              )}
+            </div>
+            {p.image_url && (
+              <div className="mb-3">
+                <img src={p.image_url} alt={p.image_alt || 'Imagen de pregunta'} className="max-h-44 rounded-lg border border-blue-100 bg-white object-contain" />
+                <input
+                  type="text"
+                  value={p.image_alt || ''}
+                  onChange={(e) => updatePregunta(index, 'image_alt', e.target.value)}
+                  className="input-field text-xs mt-2"
+                  placeholder="Descripción breve de la imagen"
+                />
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <label className="btn-secondary cursor-pointer text-xs">
+                <Camera className="w-4 h-4" />
+                Subir imagen
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  className="hidden"
+                  onChange={(e) => uploadPreguntaImage(index, e.target.files?.[0])}
+                />
+              </label>
+              <button type="button" onClick={() => generatePreguntaImage(index, 'diagram')} className="btn-secondary text-xs">
+                Crear figura
+              </button>
+              <button type="button" onClick={() => generatePreguntaImage(index, 'graph')} className="btn-secondary text-xs">
+                Crear gráfica
+              </button>
+              <button type="button" onClick={() => generatePreguntaImage(index, 'illustration')} className="btn-secondary text-xs">
+                Ilustración IA
+              </button>
             </div>
           </div>
           {p.tipo === 'seleccion_multiple' && (

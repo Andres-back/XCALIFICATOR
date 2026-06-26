@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import api from '../../api';
 import toast from 'react-hot-toast';
+import { usePeriodos } from '../../hooks/usePeriodos';
 import {
   ScrollText, Loader2, Calendar, ChevronDown, ChevronUp,
   Printer, Search, Award, TrendingUp, Target, Users,
@@ -19,23 +20,18 @@ function escapeHtml(value) {
 }
 
 export default function MateriaBoletines({ materiaId, materiaNombre }) {
-  const [periodos, setPeriodos] = useState([]);
+  const { periodos, loading } = usePeriodos();
   const [selectedPeriodo, setSelectedPeriodo] = useState('');
   const [boletines, setBoletines] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [loadingBol, setLoadingBol] = useState(false);
   const [expanded, setExpanded] = useState(null);
   const [search, setSearch] = useState('');
 
   useEffect(() => {
-    api.get('/periodos/')
-      .then(res => {
-        setPeriodos(res.data);
-        if (res.data.length > 0) setSelectedPeriodo(res.data[0].id);
-      })
-      .catch(() => toast.error('Error cargando períodos'))
-      .finally(() => setLoading(false));
-  }, []);
+    if (periodos.length > 0 && !selectedPeriodo) {
+      setSelectedPeriodo(periodos[0].id);
+    }
+  }, [periodos]);
 
   useEffect(() => {
     if (selectedPeriodo) loadBoletines();
@@ -140,10 +136,10 @@ export default function MateriaBoletines({ materiaId, materiaNombre }) {
       {/* Period selector + actions */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
         <div className="flex items-center gap-2">
-          <label className="text-sm font-medium text-gray-700">Período:</label>
+          <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Período:</label>
           <select className="input-field w-full sm:w-56" value={selectedPeriodo}
             onChange={e => setSelectedPeriodo(e.target.value)}>
-            {periodos.sort((a, b) => a.numero - b.numero).map(p => (
+            {periodos.map(p => (
               <option key={p.id} value={p.id}>{p.nombre}</option>
             ))}
           </select>
@@ -166,40 +162,40 @@ export default function MateriaBoletines({ materiaId, materiaNombre }) {
       {/* Stats */}
       {allNotas.length > 0 && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3">
+          <div className="bg-white dark:bg-gray-800/60 rounded-xl border border-gray-200 dark:border-gray-700 p-4 flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-blue-100 flex items-center justify-center">
               <Users className="w-5 h-5 text-blue-600" />
             </div>
             <div>
-              <p className="text-xs text-gray-500">Estudiantes</p>
-              <p className="text-lg font-bold text-gray-900">{boletines.length}</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">Estudiantes</p>
+              <p className="text-lg font-bold text-gray-900 dark:text-white">{boletines.length}</p>
             </div>
           </div>
-          <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3">
+          <div className="bg-white dark:bg-gray-800/60 rounded-xl border border-gray-200 dark:border-gray-700 p-4 flex items-center gap-3">
             <div className={`w-10 h-10 rounded-xl ${promedio >= 3 ? 'bg-green-100' : 'bg-red-100'} flex items-center justify-center`}>
               <TrendingUp className={`w-5 h-5 ${promedio >= 3 ? 'text-green-600' : 'text-red-600'}`} />
             </div>
             <div>
-              <p className="text-xs text-gray-500">Promedio</p>
-              <p className="text-lg font-bold text-gray-900">{promedio.toFixed(1)}</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">Promedio</p>
+              <p className="text-lg font-bold text-gray-900 dark:text-white">{promedio.toFixed(1)}</p>
             </div>
           </div>
-          <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3">
+          <div className="bg-white dark:bg-gray-800/60 rounded-xl border border-gray-200 dark:border-gray-700 p-4 flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-green-100 flex items-center justify-center">
               <Target className="w-5 h-5 text-green-600" />
             </div>
             <div>
-              <p className="text-xs text-gray-500">Aprobados</p>
-              <p className="text-lg font-bold text-gray-900">{aprobados}/{allNotas.length}</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">Aprobados</p>
+              <p className="text-lg font-bold text-gray-900 dark:text-white">{aprobados}/{allNotas.length}</p>
             </div>
           </div>
-          <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3">
+          <div className="bg-white dark:bg-gray-800/60 rounded-xl border border-gray-200 dark:border-gray-700 p-4 flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-indigo-100 flex items-center justify-center">
               <Award className="w-5 h-5 text-indigo-600" />
             </div>
             <div>
-              <p className="text-xs text-gray-500">Mejor Nota</p>
-              <p className="text-lg font-bold text-gray-900">{mejor.toFixed(1)}</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">Mejor Nota</p>
+              <p className="text-lg font-bold text-gray-900 dark:text-white">{mejor.toFixed(1)}</p>
             </div>
           </div>
         </div>
@@ -233,7 +229,7 @@ export default function MateriaBoletines({ materiaId, materiaNombre }) {
           {filtered.map(b => {
             const isExpanded = expanded === b.id;
             return (
-              <div key={b.id} className="bg-white rounded-xl border border-gray-200 overflow-hidden hover:shadow-sm transition-shadow">
+              <div key={b.id} className="bg-white dark:bg-gray-800/60 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden hover:shadow-sm dark:hover:shadow-gray-900/30 transition-shadow">
                 {/* Student row */}
                 <div className="flex items-center justify-between p-4 cursor-pointer"
                   onClick={() => setExpanded(isExpanded ? null : b.id)}>
@@ -246,8 +242,8 @@ export default function MateriaBoletines({ materiaId, materiaNombre }) {
                       <span className="text-lg font-bold">{b.nota_final?.toFixed(1) || '—'}</span>
                     </div>
                     <div className="min-w-0">
-                      <p className="text-sm font-semibold text-gray-900 truncate">{b.estudiante_nombre || 'Estudiante'}</p>
-                      <p className="text-xs text-gray-400">
+                      <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{b.estudiante_nombre || 'Estudiante'}</p>
+                      <p className="text-xs text-gray-400 dark:text-gray-500">
                         {b.publicado_at
                           ? `Publicado: ${new Date(b.publicado_at).toLocaleDateString('es-CO')}`
                           : 'Sin publicar'}
@@ -270,9 +266,9 @@ export default function MateriaBoletines({ materiaId, materiaNombre }) {
 
                 {/* Expanded detail */}
                 {isExpanded && b.desglose_json && (
-                  <div className="px-5 pb-5 border-t border-gray-100 space-y-3 pt-4">
+                  <div className="px-5 pb-5 border-t border-gray-100 dark:border-gray-700 space-y-3 pt-4">
                     {/* Grade bar */}
-                    <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
+                    <div className="h-3 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
                       <div className={`h-full rounded-full transition-all ${
                         b.nota_final >= 4.0 ? 'bg-green-500' :
                         b.nota_final >= 3.0 ? 'bg-blue-500' : 'bg-red-500'
@@ -283,7 +279,7 @@ export default function MateriaBoletines({ materiaId, materiaNombre }) {
                     {b.desglose_json.config && Object.keys(b.desglose_json.config).length > 0 && (
                       <div className="flex flex-wrap gap-2">
                         {Object.entries(b.desglose_json.config).map(([tipo, pct]) => (
-                          <span key={tipo} className="px-2 py-0.5 text-xs rounded-full bg-gray-100 text-gray-600 capitalize">
+                          <span key={tipo} className="px-2 py-0.5 text-xs rounded-full bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 capitalize">
                             {tipo}: {pct}%
                           </span>
                         ))}
@@ -293,16 +289,16 @@ export default function MateriaBoletines({ materiaId, materiaNombre }) {
                     {/* Activities detail */}
                     {b.desglose_json.actividades && (
                       <div className="space-y-2">
-                        <h4 className="text-xs font-semibold text-gray-600 uppercase">Desglose de Actividades</h4>
+                        <h4 className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase">Desglose de Actividades</h4>
                         {b.desglose_json.actividades.map((a, i) => (
                           <div key={i} className={`flex items-center justify-between p-2.5 rounded-lg border ${
-                            a.nota != null && a.nota >= 3.0 ? 'bg-green-50 border-green-100' :
-                            a.nota != null ? 'bg-red-50 border-red-100' :
-                            'bg-gray-50 border-gray-100'
+                            a.nota != null && a.nota >= 3.0 ? 'bg-green-50 dark:bg-green-900/20 border-green-100 dark:border-green-800/30' :
+                            a.nota != null ? 'bg-red-50 dark:bg-red-900/20 border-red-100 dark:border-red-800/30' :
+                            'bg-gray-50 dark:bg-gray-700/40 border-gray-100 dark:border-gray-600'
                           }`}>
                             <div className="flex items-center gap-2 min-w-0">
-                              <span className="text-xs px-1.5 py-0.5 rounded bg-gray-200 text-gray-600 capitalize">{a.tipo}</span>
-                              <span className="text-sm text-gray-700 truncate">{a.titulo}</span>
+                              <span className="text-xs px-1.5 py-0.5 rounded bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-300 capitalize">{a.tipo}</span>
+                              <span className="text-sm text-gray-700 dark:text-gray-300 truncate">{a.titulo}</span>
                               {a.porcentaje > 0 && <span className="text-xs text-primary-600 font-medium">{a.porcentaje}%</span>}
                             </div>
                             <span className={`text-sm font-bold shrink-0 ${
@@ -319,23 +315,23 @@ export default function MateriaBoletines({ materiaId, materiaNombre }) {
                     {/* Attendance */}
                     {b.desglose_json.asistencia && (
                       <div className="mt-3">
-                        <h4 className="text-xs font-semibold text-gray-600 uppercase mb-2">Asistencia</h4>
+                        <h4 className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase mb-2">Asistencia</h4>
                         <div className="grid grid-cols-4 gap-2">
-                          <div className="text-center p-2 rounded-lg bg-green-50 border border-green-100">
-                            <p className="text-lg font-bold text-green-700">{b.desglose_json.asistencia.presente || 0}</p>
-                            <p className="text-xs text-green-600">Presente</p>
+                          <div className="text-center p-2 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-100 dark:border-green-800/30">
+                            <p className="text-lg font-bold text-green-700 dark:text-green-400">{b.desglose_json.asistencia.presente || 0}</p>
+                            <p className="text-xs text-green-600 dark:text-green-400">Presente</p>
                           </div>
-                          <div className="text-center p-2 rounded-lg bg-red-50 border border-red-100">
-                            <p className="text-lg font-bold text-red-700">{b.desglose_json.asistencia.ausente || 0}</p>
-                            <p className="text-xs text-red-600">Ausente</p>
+                          <div className="text-center p-2 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-800/30">
+                            <p className="text-lg font-bold text-red-700 dark:text-red-400">{b.desglose_json.asistencia.ausente || 0}</p>
+                            <p className="text-xs text-red-600 dark:text-red-400">Ausente</p>
                           </div>
-                          <div className="text-center p-2 rounded-lg bg-yellow-50 border border-yellow-100">
-                            <p className="text-lg font-bold text-yellow-700">{b.desglose_json.asistencia.tardanza || 0}</p>
-                            <p className="text-xs text-yellow-600">Tardanza</p>
+                          <div className="text-center p-2 rounded-lg bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-100 dark:border-yellow-800/30">
+                            <p className="text-lg font-bold text-yellow-700 dark:text-yellow-400">{b.desglose_json.asistencia.tardanza || 0}</p>
+                            <p className="text-xs text-yellow-600 dark:text-yellow-400">Tardanza</p>
                           </div>
-                          <div className="text-center p-2 rounded-lg bg-blue-50 border border-blue-100">
-                            <p className="text-lg font-bold text-blue-700">{b.desglose_json.asistencia.justificado || 0}</p>
-                            <p className="text-xs text-blue-600">Justificado</p>
+                          <div className="text-center p-2 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800/30">
+                            <p className="text-lg font-bold text-blue-700 dark:text-blue-400">{b.desglose_json.asistencia.justificado || 0}</p>
+                            <p className="text-xs text-blue-600 dark:text-blue-400">Justificado</p>
                           </div>
                         </div>
                       </div>

@@ -1,18 +1,20 @@
 import { create } from 'zustand';
 import api from './api';
 
+function safeParseUser() {
+  try { return JSON.parse(localStorage.getItem('user') || 'null'); } catch { return null; }
+}
+
 const useAuthStore = create((set) => ({
-  user: JSON.parse(localStorage.getItem('user') || 'null'),
-  isAuthenticated: !!localStorage.getItem('access_token'),
+  user: safeParseUser(),
+  isAuthenticated: !!safeParseUser(),
   loading: false,
 
   login: async (correo, password) => {
     set({ loading: true });
     try {
       const res = await api.post('/auth/login', { correo, password });
-      const { access_token, refresh_token, user } = res.data;
-      localStorage.setItem('access_token', access_token);
-      localStorage.setItem('refresh_token', refresh_token);
+      const { user } = res.data;
       localStorage.setItem('user', JSON.stringify(user));
       set({ user, isAuthenticated: true, loading: false });
       return user;
@@ -26,9 +28,7 @@ const useAuthStore = create((set) => ({
     set({ loading: true });
     try {
       const res = await api.post('/auth/register', data);
-      const { access_token, refresh_token, user } = res.data;
-      localStorage.setItem('access_token', access_token);
-      localStorage.setItem('refresh_token', refresh_token);
+      const { user } = res.data;
       localStorage.setItem('user', JSON.stringify(user));
       set({ user, isAuthenticated: true, loading: false });
       return user;
@@ -40,7 +40,7 @@ const useAuthStore = create((set) => ({
 
   logout: async () => {
     try { await api.post('/auth/logout'); } catch {}
-    localStorage.clear();
+    ['access_token', 'refresh_token', 'user'].forEach((k) => localStorage.removeItem(k));
     set({ user: null, isAuthenticated: false });
   },
 

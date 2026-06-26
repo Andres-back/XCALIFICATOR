@@ -3,6 +3,7 @@
  * Secciones: Hero, Features, How it works, Pilot results, Testimonials, CTA final, Footer.
  */
 import { Link } from 'react-router-dom';
+import { useRef } from 'react';
 import {
   Sparkles, ScanText, FileText, Brain, MessageSquare, Bell, Shield,
   CheckCircle2, ArrowRight, Mail, Phone, MapPin, Github, Twitter, Linkedin,
@@ -10,6 +11,7 @@ import {
 } from 'lucide-react';
 import TestimonialCard from '../components/TestimonialCard';
 import ThemeToggle from '../components/ThemeToggle';
+import usePageMotion from '../hooks/usePageMotion';
 
 const FEATURES = [
   {
@@ -107,8 +109,11 @@ const NAV_LINKS = [
 ];
 
 export default function Landing() {
+  const pageRef = useRef(null);
+  usePageMotion(pageRef, []);
+
   return (
-    <div className="min-h-screen bg-white dark:bg-gray-950">
+    <div ref={pageRef} className="min-h-screen bg-white dark:bg-gray-950">
       {/* ──────────────────────── NAV ──────────────────────── */}
       <header className="sticky top-0 z-40 bg-white/80 dark:bg-gray-950/80 backdrop-blur-md border-b border-gray-100 dark:border-gray-800">
         <nav className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">

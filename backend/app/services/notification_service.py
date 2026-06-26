@@ -1,3 +1,4 @@
+import logging
 import aiosmtplib
 import httpx
 from email.mime.text import MIMEText
@@ -6,6 +7,7 @@ from jinja2 import Template
 from app.core.config import get_settings
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 # Email templates
 EMAIL_TEMPLATES = {
@@ -144,7 +146,7 @@ async def send_email(to: str, subject: str, template_name: str, context: dict):
         )
         return True
     except Exception as e:
-        print(f"Error enviando email: {e}")
+        logger.error("Error enviando email: %s", e)
         return False
 
 
@@ -249,13 +251,13 @@ async def send_telegram(chat_id: str, template_name: str, context: dict) -> bool
                 try:
                     data = response.json()
                     if not data.get("ok", False):
-                        print(f"Telegram rechazo el mensaje: {data.get('description', 'sin descripcion')}")
+                        logger.warning("Telegram rechazo el mensaje: %s", data.get('description', 'sin descripcion'))
                         return False
                 except Exception:
                     pass
                 return True
-            print(f"Error Telegram [{response.status_code}]: {response.text[:300]}")
+            logger.warning("Error Telegram [%s]: %s", response.status_code, response.text[:300])
             return False
     except Exception as e:
-        print(f"Error enviando Telegram: {e}")
+        logger.error("Error enviando Telegram: %s", e)
         return False

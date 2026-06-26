@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import useAuthStore from '../store';
 import toast from 'react-hot-toast';
 import { GraduationCap, Eye, EyeOff } from 'lucide-react';
 import ThemeToggle from '../components/ThemeToggle';
+import usePageMotion from '../hooks/usePageMotion';
 
 export default function Register() {
   const [form, setForm] = useState({
@@ -14,6 +15,9 @@ export default function Register() {
   const [errors, setErrors] = useState({});
   const { register, loading } = useAuthStore();
   const navigate = useNavigate();
+  const pageRef = useRef(null);
+
+  usePageMotion(pageRef, []);
 
   const validate = () => {
     const errs = {};
@@ -55,7 +59,7 @@ export default function Register() {
   const update = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary-50 to-blue-100 dark:from-gray-950 dark:to-gray-900 px-4 py-8 relative">
+    <div ref={pageRef} className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary-50 to-blue-100 dark:from-gray-950 dark:to-gray-900 px-4 py-8 relative">
       <div className="absolute top-4 right-4">
         <ThemeToggle className="bg-white/80 border border-gray-200 text-gray-600 hover:bg-gray-100 dark:bg-gray-800/80 dark:border-gray-700 dark:text-gray-300" />
       </div>

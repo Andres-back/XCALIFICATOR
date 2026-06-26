@@ -386,7 +386,7 @@ export default function AdminBoletines() {
                               </td>
                               <td className="py-2 px-2 text-center">
                                 <span className="font-bold" style={{ color: getColorByNota(m.nota_final) }}>
-                                  {m.nota_final.toFixed(2)}
+                                  {m.nota_final != null ? Number(m.nota_final).toFixed(2) : '—'}
                                 </span>
                               </td>
                               <td className="py-2 px-2 text-center">
@@ -464,7 +464,7 @@ function buildGlobalBoletinPageHtml(est, periodoNombre) {
     <tr>
       <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-weight:500">${safeMateriaNombre}</td>
       <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;text-align:center">
-        <span style="font-weight:700;color:${getColor(m.nota_final)};font-size:16px">${m.nota_final.toFixed(2)}</span>
+        <span style="font-weight:700;color:${getColor(m.nota_final)};font-size:16px">${m.nota_final != null ? Number(m.nota_final).toFixed(2) : '—'}</span>
       </td>
       <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;text-align:center">
         <span style="display:inline-block;padding:2px 10px;border-radius:20px;font-size:11px;font-weight:600;

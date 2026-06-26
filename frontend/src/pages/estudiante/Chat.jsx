@@ -12,16 +12,19 @@ export default function EstudianteChat() {
   const [loading, setLoading] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [session, setSession] = useState(null);
+  const [mascotUrl, setMascotUrl] = useState('/xali/mascota-principal.png');
   const messagesEnd = useRef(null);
 
   // Load persistent chat history + session status on mount
   useEffect(() => {
     const loadData = async () => {
       try {
-        const [histRes, sessRes] = await Promise.all([
+        const [histRes, sessRes, settingsRes] = await Promise.all([
           api.get(`/chat/${notaId}/history`),
           api.get(`/chat/session/${notaId}`).catch(() => ({ data: null })),
+          api.get('/xali/settings').catch(() => ({ data: null })),
         ]);
+        setMascotUrl(settingsRes.data?.estudiante_mascot_url || '/xali/mascota-principal.png');
         if (sessRes.data) setSession(sessRes.data);
         if (histRes.data.length > 0) {
           setMessages(histRes.data.map(m => ({ role: m.role, content: m.content })));
@@ -119,8 +122,12 @@ export default function EstudianteChat() {
   return (
     <div className="max-w-2xl mx-auto flex flex-col h-[calc(100vh-140px)]">
       <div className="flex items-center gap-3 mb-4">
-        <div className="w-10 h-10 rounded-xl bg-primary-100 flex items-center justify-center">
-          <Bot className="w-6 h-6 text-primary-700" />
+        <div className="w-10 h-10 rounded-xl bg-primary-100 flex items-center justify-center overflow-hidden">
+          {mascotUrl ? (
+            <img src={mascotUrl} alt="" className="w-full h-full object-cover" />
+          ) : (
+            <Bot className="w-6 h-6 text-primary-700" />
+          )}
         </div>
         <div className="flex-1">
           <h1 className="text-lg font-bold text-gray-900">Asistente de Estudio - Xali</h1>
@@ -155,10 +162,12 @@ export default function EstudianteChat() {
       <div className="flex-1 overflow-y-auto space-y-3 mb-4">
         {messages.map((msg, i) => (
           <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 overflow-hidden
               ${msg.role === 'user' ? 'bg-primary-100' : 'bg-gray-100'}`}>
               {msg.role === 'user' ? (
                 <User className="w-4 h-4 text-primary-700" />
+              ) : mascotUrl ? (
+                <img src={mascotUrl} alt="" className="w-full h-full object-cover" />
               ) : (
                 <Bot className="w-4 h-4 text-gray-700" />
               )}
@@ -174,8 +183,12 @@ export default function EstudianteChat() {
         ))}
         {loading && (
           <div className="flex gap-3">
-            <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
-              <Bot className="w-4 h-4 text-gray-700" />
+            <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center overflow-hidden">
+              {mascotUrl ? (
+                <img src={mascotUrl} alt="" className="w-full h-full object-cover" />
+              ) : (
+                <Bot className="w-4 h-4 text-gray-700" />
+              )}
             </div>
             <div className="bg-gray-100 px-4 py-3 rounded-2xl rounded-bl-md">
               <Loader2 className="w-4 h-4 animate-spin text-gray-500" />

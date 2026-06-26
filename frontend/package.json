@@ -10,10 +10,12 @@
     "check:api-contract": "node ../scripts/check_api_contracts.cjs"
   },
   "dependencies": {
+    "@gsap/react": "^2.1.2",
     "@jaredreisinger/react-crossword": "^5.2.0",
     "axios": "^1.7.5",
     "date-fns": "^3.6.0",
     "dompurify": "^3.3.3",
+    "gsap": "^3.15.0",
     "katex": "^0.16.28",
     "lucide-react": "^0.441.0",
     "react": "^18.3.1",

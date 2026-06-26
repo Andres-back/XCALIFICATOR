@@ -6,6 +6,7 @@ import {
   Award, TrendingUp, TrendingDown, AlertTriangle, Filter, CalendarDays, FileSpreadsheet,
   Presentation, Sparkles,
 } from 'lucide-react';
+import PageGuide from '../../components/GuidedTour';
 
 
 function escapeHtml(value) {
@@ -520,10 +521,20 @@ export default function ProfesorReportes() {
             Vista consolidada para comparar múltiples materias. Para reporte individual usa Materia {'>'} Reportes.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <PageGuide
+            storageKey="guide-profesor-reportes-global"
+            steps={[
+              { title: 'Escoge el periodo', body: 'Empieza eligiendo el periodo academico que quieres revisar.', selector: '[data-guide="reportes-periodo"]' },
+              { title: 'Marca varias materias', body: 'Lo especial de esta pantalla: puedes marcar varias materias a la vez y compararlas. (Para una sola, entra a la materia y abre su pestana Reportes.)', selector: '[data-guide="reportes-materias"]' },
+              { title: 'Genera el reporte', body: 'Con el periodo y las materias listas, toca Generar y se calculan promedios, faltas y actividades.', selector: '[data-guide="reportes-generar"]' },
+              { title: 'Lee los resultados', body: 'Veras el resumen del grupo, los estudiantes destacados y las actividades que necesitan refuerzo.', selector: '[data-guide="reportes-resultado"]' },
+            ]}
+          />
           <div className="flex items-center gap-2">
             <CalendarDays className="w-4 h-4 text-gray-500" />
             <select
+              data-guide="reportes-periodo"
               className="input-field w-60"
               value={selectedPeriodo}
               onChange={(e) => setSelectedPeriodo(e.target.value)}
@@ -563,7 +574,7 @@ export default function ProfesorReportes() {
       </div>
 
       {/* Materia selector */}
-      <div className="bg-white rounded-xl border border-gray-200 p-5">
+      <div data-guide="reportes-materias" className="bg-white rounded-xl border border-gray-200 p-5">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <Filter className="w-4 h-4 text-profesor-500" />
@@ -601,6 +612,7 @@ export default function ProfesorReportes() {
 
         <div className="mt-4 flex justify-end">
           <button onClick={generateReport}
+            data-guide="reportes-generar"
             disabled={generating || !selected.length || !selectedPeriodo}
             className="btn-primary flex items-center gap-2 disabled:opacity-50">
             {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <BarChart3 className="w-4 h-4" />}
@@ -632,7 +644,7 @@ export default function ProfesorReportes() {
 
       {/* Report results */}
       {report && (
-        <div className="space-y-6">
+        <div data-guide="reportes-resultado" className="space-y-6">
           {globalStats && (
             <div className="bg-white rounded-xl border border-gray-200 p-5">
               <div className="flex items-center gap-2 mb-4">

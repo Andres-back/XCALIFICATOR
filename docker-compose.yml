@@ -1,48 +1,51 @@
+name: xcalificator_local
+
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: xcalificator_postgres
+    container_name: xcalificator_local_postgres
     restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+    env_file:
+      - .env.local
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
-      - ./backend/db/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - local_pgdata:/var/lib/postgresql/data
+      - ./backend/db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
   redis:
     image: redis:7-alpine
-    container_name: xcalificator_redis
+    container_name: xcalificator_local_redis
     restart: unless-stopped
+    env_file:
+      - .env.local
+    command: ["sh", "-c", "redis-server --requirepass \"$${REDIS_PASSWORD}\""]
     ports:
-      - "6379:6379"
+      - "6380:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep PONG"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: xcalificator_backend
+    container_name: xcalificator_local_backend
     restart: unless-stopped
+    env_file:
+      - .env.local
     ports:
       - "8000:8000"
-    env_file:
-      - .env
     volumes:
       - ./backend:/app
-      - uploads:/app/uploads
+      - local_uploads:/app/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -53,88 +56,85 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: xcalificator_frontend
+    container_name: xcalificator_local_frontend
     restart: unless-stopped
-    ports:
-      - "3000:3000"
     env_file:
-      - .env
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
+      - .env.local
     depends_on:
       - backend
 
-  paddleocr:
-    build:
-      context: ./paddleocr
-      dockerfile: Dockerfile
-    container_name: xcalificator_paddleocr
-    restart: unless-stopped
-    ports:
-      - "8001:8001"
-    volumes:
-      - uploads:/app/uploads
-
   presenton:
-    image: ghcr.io/presenton/presenton:latest
-    container_name: xcalificator_presenton
+    build:
+      context: ./presenton_patches
+      dockerfile: Dockerfile
+    container_name: xcalificator_local_presenton
     restart: unless-stopped
-    ports:
-      - "5001:80"
     environment:
       LLM: ${PRESENTON_LLM:-custom}
-      CUSTOM_LLM_URL: ${PRESENTON_CUSTOM_LLM_URL:-https://api.groq.com/openai/v1}
-      CUSTOM_MODEL: ${PRESENTON_CUSTOM_MODEL:-meta-llama/llama-4-scout-17b-16e-instruct}
-      CUSTOM_LLM_API_KEY: ${GROQ_API_KEY}
-      DISABLE_IMAGE_GENERATION: "false"
+      CUSTOM_LLM_URL: ${PRESENTON_CUSTOM_LLM_URL:-https://opencode.ai/zen/go/v1}
+      CUSTOM_MODEL: ${PRESENTON_CUSTOM_MODEL:-qwen3.7-plus}
+      CUSTOM_LLM_API_KEY: ${PRESENTON_CUSTOM_LLM_API_KEY}
+      DISABLE_IMAGE_GENERATION: "${PRESENTON_DISABLE_IMAGES:-false}"
+      IMAGE_PROVIDER: open_webui
+      OPEN_WEBUI_IMAGE_URL: http://backend:8000/api/internal/presenton-images
+      OPEN_WEBUI_IMAGE_API_KEY: ${PRESENTON_IMAGE_PROXY_TOKEN}
+      PRESENTON_ASSET_TIMEOUT: "${PRESENTON_ASSET_TIMEOUT:-120}"
+      PRESENTON_STRUCTURE_TIMEOUT: "${PRESENTON_STRUCTURE_TIMEOUT:-6}"
+      PRESENTON_STRUCTURE_ATTEMPTS: "${PRESENTON_STRUCTURE_ATTEMPTS:-1}"
+      PRESENTON_SLIDE_CONTENT_TIMEOUT: "${PRESENTON_SLIDE_CONTENT_TIMEOUT:-75}"
+      PRESENTON_SLIDE_CONTENT_ATTEMPTS: "${PRESENTON_SLIDE_CONTENT_ATTEMPTS:-2}"
       APP_DATA_DIRECTORY: "/app_data"
       CAN_CHANGE_KEYS: "false"
-      AUTH_USERNAME: ${PRESENTON_AUTH_USERNAME:-xcalificator}
-      AUTH_PASSWORD: ${PRESENTON_AUTH_PASSWORD:-xcalificator-dev-only}
+      AUTH_USERNAME: xcalificator
+      AUTH_PASSWORD: xcalificator-dev-only
       AUTH_OVERRIDE_FROM_ENV: "true"
+    ports:
+      - "5001:80"
     volumes:
-      - presenton_data:/app_data
+      - local_presenton_data:/app_data
+      - local_presenton_chrome:/root/.cache/puppeteer
+      - ./presenton_patches/fastapi/llmai_patch.py:/app/servers/fastapi/llmai_patch.py:ro
+      - ./presenton_patches/fastapi/api/main.py:/app/servers/fastapi/api/main.py:ro
+      - ./presenton_patches/fastapi/api/middlewares.py:/app/servers/fastapi/api/middlewares.py:ro
+      - ./presenton_patches/fastapi/utils/get_layout_by_name.py:/app/servers/fastapi/utils/get_layout_by_name.py:ro
+      - ./presenton_patches/fastapi/utils/llm_calls/generate_presentation_outlines.py:/app/servers/fastapi/utils/llm_calls/generate_presentation_outlines.py:ro
+      - ./presenton_patches/fastapi/utils/llm_calls/generate_presentation_structure.py:/app/servers/fastapi/utils/llm_calls/generate_presentation_structure.py:ro
+      - ./presenton_patches/fastapi/utils/llm_calls/generate_slide_content.py:/app/servers/fastapi/utils/llm_calls/generate_slide_content.py:ro
+      - ./presenton_patches/fastapi/utils/llm_calls/select_slide_type_on_edit.py:/app/servers/fastapi/utils/llm_calls/select_slide_type_on_edit.py:ro
+      - ./presenton_patches/fastapi/api/v1/ppt/endpoints/presentation.py:/app/servers/fastapi/api/v1/ppt/endpoints/presentation.py:ro
+      - ./presenton_patches/fastapi/static/images/placeholder.jpg:/app/servers/fastapi/static/images/placeholder.jpg:ro
 
   nginx:
     image: nginx:alpine
-    container_name: xcalificator_nginx
+    container_name: xcalificator_local_nginx
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "8080:80"
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/nginx.local.conf:/etc/nginx/nginx.conf:ro
     depends_on:
       - backend
       - frontend
 
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    container_name: xcalificator_cloudflared
-    restart: unless-stopped
-    command: tunnel --no-autoupdate run
-    environment:
-      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
-    depends_on:
-      - nginx
-    profiles:
-      - cloudflare
-
   pgadmin:
     image: dpage/pgadmin4
-    container_name: xcalificator_pgadmin
+    container_name: xcalificator_local_pgadmin
     restart: unless-stopped
+    env_file:
+      - .env.local
     ports:
       - "5050:80"
-    environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@xcalificator.local}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-xcalificator-dev-only}
+    volumes:
+      - local_pgadmin_data:/var/lib/pgadmin
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     profiles:
-      - dev
+      - tools
 
 volumes:
-  pgdata:
-  uploads:
-  presenton_data:
+  local_pgdata:
+  local_presenton_chrome:
+  local_uploads:
+  local_pgadmin_data:
+  local_presenton_data:

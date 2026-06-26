@@ -4,7 +4,7 @@ import api from '../../api';
 import toast from 'react-hot-toast';
 import {
   Award, Users, FileText, TrendingUp, BarChart3, Clock3, ExternalLink,
-  ChevronDown, ChevronUp,
+  ChevronDown, ChevronUp, Camera,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import StatCard from '../../components/StatCard';
@@ -437,6 +437,11 @@ export default function MateriaCalificaciones({ materiaId }) {
                       onClick={e => e.stopPropagation()}
                       className="text-xs px-2 py-1 rounded-lg bg-primary-50 text-primary-700 hover:bg-primary-100 font-medium">
                       Calificar
+                    </Link>
+                    <Link to={`/profesor/calificar/imagenes/${ex.id}`}
+                      onClick={e => e.stopPropagation()}
+                      className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg bg-cyan-50 text-cyan-700 hover:bg-cyan-100 dark:bg-cyan-950/30 dark:text-cyan-300 dark:hover:bg-cyan-900/40 font-medium">
+                      <Camera className="w-3 h-3" /> OCR
                     </Link>
                     <Link to={`/profesor/notas/${ex.id}`}
                       onClick={e => e.stopPropagation()}

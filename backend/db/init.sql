@@ -90,15 +90,9 @@ CREATE TABLE preferencias_notif (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id         UUID REFERENCES users(id) ON DELETE CASCADE UNIQUE,
   acepta_email    BOOLEAN DEFAULT TRUE,
-  acepta_telegram BOOLEAN DEFAULT FALSE,
+  acepta_whatsapp BOOLEAN DEFAULT FALSE,
   updated_at      TIMESTAMPTZ DEFAULT NOW()
 );
-
--- Telegram linking columns on users (aditivo)
-ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_chat_id VARCHAR(50);
-ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_link_code VARCHAR(10);
-ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_link_code_expires TIMESTAMPTZ;
-CREATE INDEX IF NOT EXISTS idx_users_telegram_chat_id ON users(telegram_chat_id);
 
 CREATE TABLE notificaciones (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -200,7 +194,7 @@ CREATE TABLE ai_global_config (
   grading_model              VARCHAR(120),
   grading_fallback_provider  VARCHAR(30),
   grading_fallback_model     VARCHAR(120),
-  ocr_provider               VARCHAR(30) NOT NULL DEFAULT 'paddleocr',
+  ocr_provider               VARCHAR(30) NOT NULL DEFAULT 'open_code_vision',
   ocr_model                  VARCHAR(120),
   ocr_fallback_provider      VARCHAR(30),
   ocr_fallback_model         VARCHAR(120),
@@ -218,7 +212,7 @@ CREATE TABLE profesor_ai_configs (
   grading_model              VARCHAR(120),
   grading_fallback_provider  VARCHAR(30),
   grading_fallback_model     VARCHAR(120),
-  ocr_provider               VARCHAR(30) NOT NULL DEFAULT 'paddleocr',
+  ocr_provider               VARCHAR(30) NOT NULL DEFAULT 'open_code_vision',
   ocr_model                  VARCHAR(120),
   ocr_fallback_provider      VARCHAR(30),
   ocr_fallback_model         VARCHAR(120),

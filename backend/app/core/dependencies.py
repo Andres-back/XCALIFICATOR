@@ -6,14 +6,15 @@ from app.core.database import get_db
 from app.core.security import decode_token
 from app.models.models import User
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    token = credentials.credentials
+    token = credentials.credentials if credentials else request.cookies.get("access_token")
     payload = decode_token(token)
     if not payload or payload.get("type") != "access":
         raise HTTPException(

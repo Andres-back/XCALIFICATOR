@@ -1,11 +1,13 @@
 import json
+import os
 import re
 from typing import Any, cast
 import httpx
 from groq import Groq
-from app.core.config import get_settings
+from app.core.config import get_settings, normalize_ollama_native_url
 from app.core.database import AsyncSessionLocal
 from app.models.models import APIUsageLog
+from app.services.open_code_service import OPEN_CODE_RECOMMENDED_MODELS, open_code_chat_json, open_code_chat_completion, _message_text
 
 settings = get_settings()
 
@@ -18,6 +20,26 @@ MODELS = {
     "rag_chat": "meta-llama/llama-4-scout-17b-16e-instruct",
     "classification": "llama-3.1-8b-instant",
 }
+
+
+def _open_code_base_url(cfg: dict) -> str:
+    return str(cfg.get("open_code_base_url") or settings.OPEN_CODE_BASE_URL or "").strip()
+
+
+def _open_code_api_key(cfg: dict) -> str:
+    return str(cfg.get("open_code_api_key") or settings.OPEN_CODE_API_KEY or "").strip()
+
+
+def _groq_api_key(cfg: dict | None = None) -> str:
+    data = cfg or {}
+    return str(data.get("groq_api_key") or settings.GROQ_API_KEY or os.getenv("GROQ_API_KEY") or "").strip()
+
+
+def _groq_client(cfg: dict | None = None) -> Groq:
+    api_key = _groq_api_key(cfg)
+    if not api_key:
+        raise RuntimeError("GROQ_API_KEY no configurada")
+    return Groq(api_key=api_key)
 
 
 def _grade_system_prompt() -> str:
@@ -170,9 +192,7 @@ async def _grade_exam_ollama(
         ],
     }
 
-    base_url = (ollama_url or "").strip().rstrip("/")
-    if not base_url:
-        base_url = "http://host.docker.internal:11434"
+    base_url = normalize_ollama_native_url(ollama_url)
 
     async with httpx.AsyncClient(timeout=90.0) as http_client:
         headers = {"Authorization": f"Bearer {ollama_api_key}"} if ollama_api_key else None
@@ -190,9 +210,10 @@ async def _grade_exam_groq(
     clave_respuestas: list[dict],
     rubrica: str = "",
     model: str | None = None,
+    provider_config: dict | None = None,
 ) -> dict:
     selected_model = (model or MODELS["grading"]).strip()
-    chat = client.chat.completions.create(
+    chat = _groq_client(provider_config).chat.completions.create(
         model=selected_model,
         messages=[
             {"role": "system", "content": _grade_system_prompt()},
@@ -214,6 +235,42 @@ async def _grade_exam_groq(
     return json.loads(response_text)
 
 
+async def _grade_exam_open_code(
+    respuestas_estudiante: list[dict],
+    clave_respuestas: list[dict],
+    rubrica: str = "",
+    model: str | None = None,
+    provider_config: dict | None = None,
+) -> dict:
+    cfg = provider_config or {}
+    selected_model = (
+        str(model or "").strip()
+        or str(cfg.get("open_code_feedback_model") or "").strip()
+        or str(settings.OPEN_CODE_FEEDBACK_MODEL or "").strip()
+        or OPEN_CODE_RECOMMENDED_MODELS["feedback"]
+    )
+    return await open_code_chat_json(
+        model=selected_model,
+        base_url=_open_code_base_url(cfg),
+        api_key=_open_code_api_key(cfg),
+        temperature=0.1,
+        # Thinking models (e.g. DeepSeek V4 Flash) consume tokens on reasoning before
+        # emitting the grading JSON; 4096 can be exhausted mid-reasoning.
+        max_tokens=8192,
+        messages=[
+            {"role": "system", "content": _grade_system_prompt()},
+            {
+                "role": "user",
+                "content": _grade_user_message(
+                    respuestas_estudiante=respuestas_estudiante,
+                    clave_respuestas=clave_respuestas,
+                    rubrica=rubrica,
+                ),
+            },
+        ],
+    )
+
+
 async def grade_exam_with_fallback(
     respuestas_estudiante: list[dict],
     clave_respuestas: list[dict],
@@ -228,10 +285,12 @@ async def grade_exam_with_fallback(
     primary_model = str(
         cfg.get("grading_model")
         or (MODELS["grading"] if primary_provider == "groq" else "")
+        or (cfg.get("open_code_feedback_model") if primary_provider == "open_code" else "")
     ).strip()
     fallback_model = str(
         cfg.get("grading_fallback_model")
         or (MODELS["grading"] if fallback_provider == "groq" else "")
+        or (cfg.get("open_code_feedback_model") if fallback_provider == "open_code" else "")
     ).strip()
     ollama_url = str(cfg.get("ollama_url") or "http://host.docker.internal:11434").strip()
     ollama_api_key = str(cfg.get("ollama_api_key") or "").strip() or None
@@ -250,6 +309,7 @@ async def grade_exam_with_fallback(
                     clave_respuestas=clave_respuestas,
                     rubrica=rubrica,
                     model=model,
+                    provider_config=cfg,
                 )
                 return _normalize_grade_result(result, clave_respuestas)
 
@@ -261,6 +321,16 @@ async def grade_exam_with_fallback(
                     model=model,
                     ollama_url=ollama_url,
                     ollama_api_key=ollama_api_key,
+                )
+                return _normalize_grade_result(result, clave_respuestas)
+
+            if provider == "open_code":
+                result = await _grade_exam_open_code(
+                    respuestas_estudiante=respuestas_estudiante,
+                    clave_respuestas=clave_respuestas,
+                    rubrica=rubrica,
+                    model=model,
+                    provider_config=cfg,
                 )
                 return _normalize_grade_result(result, clave_respuestas)
 
@@ -288,8 +358,111 @@ async def _log_usage(task: str, model: str, usage):
         pass  # Don't break functionality if logging fails
 
 
-async def generate_exam(tema: str, nivel: str, distribucion: dict, contenido_base: str = "", grado: str = "") -> dict:
-    """Generate an exam using Groq LLM."""
+async def _call_content_provider(
+    messages: list[dict],
+    cfg: dict,
+    temperature: float = 0.7,
+    max_tokens: int = 4096,
+    json_mode: bool = True,
+) -> str:
+    """Dispatch a content generation call to the configured provider with fallback."""
+    primary_provider = str(cfg.get("content_provider") or "groq").strip().lower()
+    fallback_provider = cfg.get("content_fallback_provider")
+    fallback_provider = str(fallback_provider).strip().lower() if fallback_provider else None
+
+    primary_model = str(
+        cfg.get("content_model")
+        or (MODELS["exam_generation"] if primary_provider == "groq" else "")
+        or (cfg.get("open_code_content_model") if primary_provider == "open_code" else "")
+    ).strip()
+    fallback_model = str(
+        cfg.get("content_fallback_model")
+        or (MODELS["exam_generation"] if fallback_provider == "groq" else "")
+        or (cfg.get("open_code_content_model") if fallback_provider == "open_code" else "")
+    ).strip()
+
+    ollama_url = str(cfg.get("ollama_url") or "http://host.docker.internal:11434").strip()
+    ollama_api_key = str(cfg.get("ollama_api_key") or "").strip() or None
+
+    attempts: list[tuple[str, str]] = [(primary_provider, primary_model)]
+    if fallback_provider and fallback_provider != "none":
+        if fallback_provider != primary_provider or fallback_model != primary_model:
+            attempts.append((fallback_provider, fallback_model))
+    if not any(p == "groq" for p, _ in attempts):
+        if str(cfg.get("groq_api_key") or settings.GROQ_API_KEY or os.getenv("GROQ_API_KEY") or "").strip():
+            attempts.append(("groq", MODELS["exam_generation"]))
+
+    errors: list[str] = []
+    for provider, model in attempts:
+        try:
+            if provider == "open_code":
+                oc_model = model or cfg.get("open_code_content_model") or OPEN_CODE_RECOMMENDED_MODELS["content"]
+                rf = {"type": "json_object"} if json_mode else None
+                result = await open_code_chat_completion(
+                    messages=messages,
+                    model=oc_model,
+                    base_url=_open_code_base_url(cfg),
+                    api_key=_open_code_api_key(cfg),
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    response_format=rf,
+                )
+                finish_reason = ((result.get("choices") or [{}])[0].get("finish_reason") or "")
+                msg = ((result.get("choices") or [{}])[0].get("message") or {})
+                real_content = (msg.get("content") or "").strip()
+                if not real_content and finish_reason == "length":
+                    raise ValueError("Open Code: modelo cortado sin producir contenido (finish_reason=length)")
+                content = _message_text(result)
+                if not content:
+                    raise ValueError("Open Code: respuesta vacia")
+                await _log_usage("content_generation", str(oc_model), None)
+                return content
+
+            if provider == "groq":
+                selected_model = model or MODELS["exam_generation"]
+                kwargs: dict[str, Any] = dict(
+                    model=selected_model, messages=messages,
+                    temperature=temperature, max_tokens=max_tokens,
+                )
+                if json_mode:
+                    kwargs["response_format"] = {"type": "json_object"}
+                chat = _groq_client(cfg).chat.completions.create(**kwargs)
+                await _log_usage("content_generation", selected_model, chat.usage)
+                return _require_content(chat.choices[0].message.content, "content_generation")
+
+            if provider == "ollama":
+                eff_model = str(model or "").strip()
+                if not eff_model:
+                    raise ValueError("No hay modelo Ollama configurado para generacion")
+                payload: dict[str, Any] = {"model": eff_model, "stream": False, "messages": messages}
+                if json_mode:
+                    payload["format"] = "json"
+                base_url = normalize_ollama_native_url(ollama_url)
+                headers = {"Authorization": f"Bearer {ollama_api_key}"} if ollama_api_key else None
+                async with httpx.AsyncClient(timeout=90.0) as http_client:
+                    resp = await http_client.post(f"{base_url}/api/chat", json=payload, headers=headers)
+                    resp.raise_for_status()
+                    data = resp.json()
+                content = (((data or {}).get("message") or {}).get("content") or "").strip()
+                await _log_usage("content_generation", eff_model, None)
+                return content
+
+            raise ValueError(f"Proveedor de contenido no soportado: {provider}")
+        except Exception as exc:
+            errors.append(f"{provider}({model}): {str(exc)}")
+
+    raise RuntimeError("No fue posible generar contenido. " + " | ".join(errors))
+
+
+async def generate_exam(
+    tema: str,
+    nivel: str,
+    distribucion: dict,
+    contenido_base: str = "",
+    grado: str = "",
+    provider_config: dict | None = None,
+) -> dict:
+    """Generate an exam using the configured content provider."""
     grado_instruccion = f"\nGrado escolar: {grado}. Adapta el vocabulario, complejidad y contenido al nivel cognitivo de este grado del sistema educativo colombiano." if grado else ""
     system_prompt = f"""Eres un experto en pedagogía y diseño de evaluaciones del sistema educativo colombiano.
 Genera un examen en formato JSON ESTRICTAMENTE siguiendo este schema.
@@ -332,19 +505,82 @@ NO generes crucigrama ni sopa_letras aquí."""
 
     user_msg = f"Genera el examen basándote en el siguiente contenido:\n\n{contenido_base}" if contenido_base else "Genera el examen."
 
-    chat = client.chat.completions.create(
-        model=MODELS["exam_generation"],
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_msg},
-        ],
-        temperature=0.7,
-        max_tokens=4096,
-        response_format={"type": "json_object"},
-    )
-    await _log_usage("exam_generation", MODELS["exam_generation"], chat.usage)
-    response_text = _require_content(chat.choices[0].message.content, "generate_exam")
-    return json.loads(response_text)
+    cfg = provider_config or {}
+    primary_provider = str(cfg.get("content_provider") or "groq").strip().lower()
+    fallback_provider = cfg.get("content_fallback_provider")
+    fallback_provider = str(fallback_provider).strip().lower() if fallback_provider else None
+    primary_model = str(
+        cfg.get("content_model")
+        or (MODELS["exam_generation"] if primary_provider == "groq" else "")
+        or (cfg.get("open_code_content_model") if primary_provider == "open_code" else "")
+    ).strip()
+    fallback_model = str(
+        cfg.get("content_fallback_model")
+        or (MODELS["exam_generation"] if fallback_provider == "groq" else "")
+        or (cfg.get("open_code_content_model") if fallback_provider == "open_code" else "")
+    ).strip()
+    attempts: list[tuple[str, str]] = [(primary_provider, primary_model)]
+    if fallback_provider and fallback_provider != "none":
+        if fallback_provider != primary_provider or fallback_model != primary_model:
+            attempts.append((fallback_provider, fallback_model))
+    if not any(provider == "groq" for provider, _ in attempts):
+        if str(cfg.get("groq_api_key") or settings.GROQ_API_KEY or os.getenv("GROQ_API_KEY") or "").strip():
+            attempts.append(("groq", MODELS["grading"]))
+
+    errors: list[str] = []
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_msg},
+    ]
+    ollama_url = str(cfg.get("ollama_url") or "http://host.docker.internal:11434").strip()
+    ollama_api_key = str(cfg.get("ollama_api_key") or "").strip() or None
+
+    for provider, model in attempts:
+        try:
+            if provider == "open_code":
+                return await open_code_chat_json(
+                    model=model or cfg.get("open_code_content_model") or OPEN_CODE_RECOMMENDED_MODELS["content"],
+                    base_url=_open_code_base_url(cfg),
+                    api_key=_open_code_api_key(cfg),
+                    temperature=0.7,
+                    max_tokens=8192,
+                    messages=messages,
+                )
+            if provider == "groq":
+                selected_model = model or MODELS["exam_generation"]
+                chat = _groq_client(cfg).chat.completions.create(
+                    model=selected_model,
+                    messages=messages,
+                    temperature=0.7,
+                    max_tokens=4096,
+                    response_format={"type": "json_object"},
+                )
+                await _log_usage("exam_generation", selected_model, chat.usage)
+                response_text = _require_content(chat.choices[0].message.content, "generate_exam")
+                return json.loads(response_text)
+            if provider == "ollama":
+                selected_model = str(model or "").strip()
+                if not selected_model:
+                    raise ValueError("No hay modelo Ollama configurado para generacion")
+                payload = {
+                    "model": selected_model,
+                    "stream": False,
+                    "format": "json",
+                    "messages": messages,
+                }
+                base_url = normalize_ollama_native_url(ollama_url)
+                headers = {"Authorization": f"Bearer {ollama_api_key}"} if ollama_api_key else None
+                async with httpx.AsyncClient(timeout=90.0) as http_client:
+                    response = await http_client.post(f"{base_url}/api/chat", json=payload, headers=headers)
+                    response.raise_for_status()
+                    result = response.json()
+                content = (((result or {}).get("message") or {}).get("content") or "").strip()
+                return _extract_json_from_text(content)
+            raise ValueError(f"Proveedor de contenido no soportado: {provider}")
+        except Exception as exc:
+            errors.append(f"{provider}({model}): {str(exc)}")
+
+    raise RuntimeError("No fue posible generar contenido con proveedores configurados. " + " | ".join(errors))
 
 
 async def generate_sopa_letras(
@@ -354,6 +590,7 @@ async def generate_sopa_letras(
     palabras_obligatorias: list[str] | None = None,
     contenido_base: str = "",
     grado: str = "",
+    provider_config: dict | None = None,
 ) -> dict:
     """Generate a word search puzzle using Groq LLM."""
     grado_inst = f"\nGrado escolar: {grado}. Adapta las palabras al nivel cognitivo de este grado del sistema educativo colombiano." if grado else ""
@@ -363,53 +600,39 @@ async def generate_sopa_letras(
         if clean:
             obligatorias_inst = f"\nPALABRAS OBLIGATORIAS que DEBEN aparecer en la sopa: {', '.join(clean)}. Completa el total con más palabras del tema."
 
-    system_prompt = f"""Eres un experto en diseño de sopas de letras educativas.
-Genera SOLAMENTE una sopa de letras en formato JSON. NO generes preguntas de examen.
+    system_prompt = f"""Eres un experto en vocabulario para sopas de letras educativas.
+Genera SOLAMENTE la lista de palabras en formato JSON. NO generes la cuadricula, porque el sistema la construye despues.
+NO generes preguntas de examen.
 NO agregues texto fuera del JSON. NO uses markdown.
 Nivel: {nivel}.{grado_inst}
 Tema: {tema}
 Número de palabras a incluir: {num_palabras}{obligatorias_inst}
 
 REGLAS OBLIGATORIAS:
-1. La cuadrícula DEBE ser cuadrada de al menos 15x15 celdas.
-2. TODAS las celdas deben tener exactamente UNA letra mayúscula sin excepción.
-3. Las palabras se colocan en horizontal (izq→der), vertical (arriba→abajo), o diagonal.
-4. Las palabras NO deben tener tildes, eñes ni caracteres especiales (ej: TELEFONO en vez de TELÉFONO, NINO en vez de NIÑO).
-5. NINGUNA palabra debe quedar cortada ni salir de los límites de la cuadrícula.
-6. La cuadrícula debe ser lo suficientemente grande para contener TODAS las palabras.
-7. Las celdas no ocupadas por palabras se llenan con letras mayúsculas aleatorias.
+1. Devuelve exactamente {num_palabras} palabras del tema, salvo que las obligatorias excedan ese numero.
+2. Cada palabra debe ser UNA sola palabra en MAYUSCULA, sin tildes, sin espacios, sin Ñ y sin caracteres especiales.
+3. Usa palabras educativas, claras y adecuadas al nivel.
+4. No repitas palabras.
+5. Longitud recomendada: 4 a 12 letras.
 
 Schema JSON EXACTO requerido:
 {{
   "titulo": "string",
   "sopa_letras": {{
-    "grid": [["A","B","C",...], ...],
-    "size": int,
-    "palabras": ["PALABRA1", "PALABRA2", ...],
-    "ubicaciones": [
-      {{"palabra": "PALABRA1", "fila": 0, "columna": 2, "direccion": "horizontal"}},
-      {{"palabra": "PALABRA2", "fila": 3, "columna": 5, "direccion": "vertical"}}
-    ]
+    "palabras": ["PALABRA1", "PALABRA2", "..."]
   }}
 }}"""
 
     user_msg = f"Genera la sopa de letras sobre: {tema}"
     if contenido_base:
-        user_msg += f"\n\nContenido base:\n{contenido_base}"
+        user_msg += f"\n\nContenido base:\n{contenido_base[:1800]}"
 
-    chat = client.chat.completions.create(
-        model=MODELS["exam_generation"],
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_msg},
-        ],
-        temperature=0.7,
-        max_tokens=4096,
-        response_format={"type": "json_object"},
+    cfg = provider_config or {}
+    content = await _call_content_provider(
+        messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_msg}],
+        cfg=cfg, temperature=0.5, max_tokens=2048, json_mode=True,
     )
-    await _log_usage("exam_generation", MODELS["exam_generation"], chat.usage)
-    response_text = _require_content(chat.choices[0].message.content, "generate_sopa_letras")
-    return json.loads(response_text)
+    return _extract_json_from_text(content)
 
 
 async def generate_crucigrama(
@@ -420,6 +643,7 @@ async def generate_crucigrama(
     palabras_obligatorias: list[str] | None = None,
     contenido_base: str = "",
     grado: str = "",
+    provider_config: dict | None = None,
 ) -> dict:
     """Generate a crossword puzzle using Groq LLM."""
     grado_inst = f"\nGrado escolar: {grado}. Adapta las pistas y palabras al nivel cognitivo de este grado del sistema educativo colombiano." if grado else ""
@@ -429,66 +653,34 @@ async def generate_crucigrama(
         if clean:
             obligatorias_inst = f"\nPALABRAS OBLIGATORIAS que DEBEN aparecer en el crucigrama: {', '.join(clean)}. Distribúyelas entre horizontales y verticales."
 
-    system_prompt = f"""Eres un experto en crucigramas educativos.
-Genera palabras y pistas para un crucigrama. La cuadrícula se construye automáticamente.
+    # Prompt CONCISO a propósito: la cuadrícula se arma sola, así que el modelo
+    # solo lista palabras + pistas (no debe "resolver" el crucigrama). Esto evita
+    # que los modelos de razonamiento se extiendan y agoten los tokens.
+    total = num_horizontales + num_verticales
+    system_prompt = f"""Eres un generador de vocabulario para crucigramas educativos.
 Nivel: {nivel}.{grado_inst}
-Tema: {tema}
-Genera {num_horizontales} palabras para horizontales y {num_verticales} para verticales.{obligatorias_inst}
+Devuelve {num_horizontales} palabras "horizontales" y {num_verticales} "verticales" sobre el tema, cada una con una pista breve.{obligatorias_inst}
 
-REGLAS OBLIGATORIAS:
-1. Las respuestas deben ser UNA SOLA PALABRA en MAYÚSCULA, sin tildes, sin espacios, sin Ñ.
-2. Las palabras DEBEN compartir letras comunes (A, E, O, R, S, N, I, L, T, C) para que se crucen.
-3. NO repitas la misma palabra en horizontales y verticales.
-4. Cada pista debe ser una descripción clara y educativa.
-5. NO generes grid, size, fila, columna ni longitud. Solo palabras y pistas.
-6. Longitud recomendada por palabra: entre 4 y 8 letras (máximo 10).
-7. Evita tecnicismos muy largos o palabras compuestas difíciles de cruzar.
-8. Mantén equilibrio semántico: horizontales y verticales deben tener dificultad similar.
+REGLAS:
+- Cada respuesta: UNA palabra, MAYÚSCULA, sin tildes, sin espacios, sin Ñ, de 4 a 8 letras.
+- Prefiere palabras con letras comunes (vocales, R, S, N, L, T) para facilitar cruces.
+- No repitas palabras. Pistas claras y educativas.
+- NO incluyas grid, posiciones ni longitudes; solo palabra y pista.
+- Responde de forma directa, sin explicaciones extra.
 
-Responde SOLO con JSON válido:
-{{
-  "titulo": "string",
-  "crucigrama": {{
-    "pistas_horizontal": [
-      {{"pista": "Descripción...", "respuesta": "PALABRA"}}
-    ],
-    "pistas_vertical": [
-      {{"pista": "Descripción...", "respuesta": "PALABRA"}}
-    ]
-  }}
-}}"""
+Responde SOLO JSON válido con este formato exacto:
+{{"titulo":"string","crucigrama":{{"pistas_horizontal":[{{"pista":"...","respuesta":"PALABRA"}}],"pistas_vertical":[{{"pista":"...","respuesta":"PALABRA"}}]}}}}"""
 
-    user_msg = f"Genera el crucigrama sobre: {tema}"
+    user_msg = f"Tema: {tema}. Genera las {total} palabras con sus pistas."
     if contenido_base:
-        user_msg += f"\n\nContenido base:\n{contenido_base}"
+        user_msg += f"\n\nContenido base:\n{contenido_base[:1500]}"
 
-    chat = client.chat.completions.create(
-        model=MODELS["exam_generation"],
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_msg},
-        ],
-        temperature=0.7,
-        max_tokens=4096,
-        response_format={"type": "json_object"},
+    cfg = provider_config or {}
+    content = await _call_content_provider(
+        messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_msg}],
+        cfg=cfg, temperature=0.5, max_tokens=3072, json_mode=True,
     )
-    await _log_usage("exam_generation", MODELS["exam_generation"], chat.usage)
-    response_text = _require_content(chat.choices[0].message.content, "generate_crucigrama")
-    return json.loads(response_text)
-
-
-async def grade_exam(
-    respuestas_estudiante: list[dict],
-    clave_respuestas: list[dict],
-    rubrica: str = "",
-) -> dict:
-    """Grade exam responses using Groq LLM."""
-    result = await _grade_exam_groq(
-        respuestas_estudiante=respuestas_estudiante,
-        clave_respuestas=clave_respuestas,
-        rubrica=rubrica,
-    )
-    return _normalize_grade_result(result, clave_respuestas)
+    return _extract_json_from_text(content)
 
 
 async def rag_chat(
@@ -498,10 +690,15 @@ async def rag_chat(
     feedback: str,
     conversation_history: list[dict] | None = None,
     model: str | None = None,
+    provider: str | None = None,
+    open_code_base_url: str | None = None,
+    open_code_api_key: str | None = None,
+    open_code_model: str | None = None,
+    ollama_url: str | None = None,
+    ollama_api_key: str | None = None,
+    ollama_model: str | None = None,
 ) -> str:
     """RAG chatbot limited to student's exam context with full conversation history."""
-    selected_model = str(model or MODELS["rag_chat"]).strip() or MODELS["rag_chat"]
-
     system_prompt = f"""Eres un asistente pedagógico experto y amigable llamado "Xali".
 Tu ÚNICA fuente de información es el examen del estudiante y sus resultados.
 
@@ -534,15 +731,54 @@ TU ROL Y COMPORTAMIENTO:
 14. Si piden una gráfica, entrega una mini tabla de valores (en texto) + interpretación pedagógica del comportamiento; no inventes imágenes.
 15. Si usas matrices o sistemas, usa notación LaTeX (ejemplo: $$\\begin{{pmatrix}}a & b \\\\ c & d\\end{{pmatrix}}$$)."""
 
-    messages = [{"role": "system", "content": system_prompt}]
-
-    # Add conversation history (last 20 messages max to stay within context window)
+    messages: list[dict] = [{"role": "system", "content": system_prompt}]
     if conversation_history:
         for msg in conversation_history[-20:]:
             messages.append({"role": msg["role"], "content": msg["content"]})
-
     messages.append({"role": "user", "content": user_message})
 
+    eff_provider = (provider or "groq").lower().strip()
+
+    if eff_provider == "open_code":
+        oc_model = (open_code_model or OPEN_CODE_RECOMMENDED_MODELS["content"]).strip()
+        result = await open_code_chat_completion(
+            messages=messages,
+            model=oc_model,
+            base_url=open_code_base_url,
+            api_key=open_code_api_key,
+            temperature=0.3,
+            # Thinking models (e.g. DeepSeek V4 Flash) spend tokens on reasoning_content
+            # before producing the answer; a small budget leaves nothing for the reply.
+            max_tokens=8192,
+        )
+        content = _message_text(result)
+        await _log_usage("rag_chat", oc_model, None)
+        return content
+
+    if eff_provider == "ollama":
+        eff_url = normalize_ollama_native_url(
+            str(ollama_url or "http://host.docker.internal:11434").strip()
+        )
+        eff_model = (ollama_model or "").strip()
+        if not eff_model:
+            raise ValueError("No hay modelo Ollama configurado para el chat")
+        payload = {
+            "model": eff_model,
+            "messages": messages,
+            "stream": False,
+            "options": {"temperature": 0.3, "num_predict": 1024},
+        }
+        headers = {"Authorization": f"Bearer {ollama_api_key}"} if ollama_api_key else None
+        async with httpx.AsyncClient(timeout=90.0) as http_client:
+            resp = await http_client.post(f"{eff_url}/api/chat", json=payload, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+        content = ((data.get("message") or {}).get("content") or "").strip()
+        await _log_usage("rag_chat", eff_model, None)
+        return content
+
+    # Groq (default / fallback)
+    selected_model = str(model or MODELS["rag_chat"]).strip() or MODELS["rag_chat"]
     chat = client.chat.completions.create(
         model=selected_model,
         messages=cast(Any, messages),
@@ -567,10 +803,18 @@ async def classify_chat_relevance(
     feedback: str,
     conversation_history: list[dict] | None = None,
     model: str | None = None,
+    provider: str | None = None,
+    open_code_base_url: str | None = None,
+    open_code_api_key: str | None = None,
+    open_code_model: str | None = None,
 ) -> dict[str, Any]:
-    """Classify whether a student's message is related to the active exam context."""
-    selected_model = str(model or MODELS["classification"]).strip() or MODELS["classification"]
+    """Classify whether a student's message is related to the active exam context.
 
+    Provider-aware: uses Open Code when the profesor/global config selects it,
+    otherwise Groq. On infra failure it FAILS OPEN (allows the message) because the
+    RAG prompt already enforces scope, and blocking a student due to an unreachable
+    classifier is worse than occasionally answering a borderline question.
+    """
     recent_history: list[str] = []
     if conversation_history:
         for msg in conversation_history[-6:]:
@@ -605,21 +849,37 @@ Responde ÚNICAMENTE JSON válido con este schema exacto:
         "respuestas_estudiante": _truncate_for_classifier(student_answers, 1800),
         "retroalimentacion": _truncate_for_classifier(feedback, 1200),
     }
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+    ]
+
+    eff_provider = (provider or "groq").lower().strip()
 
     try:
-        chat = client.chat.completions.create(
-            model=selected_model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
-            temperature=0,
-            max_tokens=180,
-            response_format={"type": "json_object"},
-        )
-        await _log_usage("classification", selected_model, chat.usage)
-        response_text = _require_content(chat.choices[0].message.content, "classify_chat_relevance")
-        parsed = _extract_json_from_text(response_text)
+        if eff_provider == "open_code":
+            oc_model = (open_code_model or OPEN_CODE_RECOMMENDED_MODELS["content"]).strip()
+            parsed = await open_code_chat_json(
+                messages=messages,
+                model=oc_model,
+                base_url=open_code_base_url,
+                api_key=open_code_api_key,
+                temperature=0.0,
+                max_tokens=4096,
+            )
+            await _log_usage("classification", oc_model, None)
+        else:
+            selected_model = str(model or MODELS["classification"]).strip() or MODELS["classification"]
+            chat = client.chat.completions.create(
+                model=selected_model,
+                messages=cast(Any, messages),
+                temperature=0,
+                max_tokens=180,
+                response_format={"type": "json_object"},
+            )
+            await _log_usage("classification", selected_model, chat.usage)
+            response_text = _require_content(chat.choices[0].message.content, "classify_chat_relevance")
+            parsed = _extract_json_from_text(response_text)
 
         confidence_raw = parsed.get("confidence", 0.0)
         try:
@@ -633,10 +893,11 @@ Responde ÚNICAMENTE JSON válido con este schema exacto:
             "reason": str(parsed.get("reason") or ""),
         }
     except Exception:
+        # Fail open: do not block the student when the classifier is unreachable.
         return {
-            "is_exam_related": False,
-            "confidence": 0.0,
-            "reason": "fallback_block",
+            "is_exam_related": True,
+            "confidence": 1.0,
+            "reason": "classifier_unavailable",
         }
 
 
@@ -646,8 +907,9 @@ async def generate_emparejar(
     num_pares: int = 6,
     contenido_base: str = "",
     grado: str = "",
+    provider_config: dict | None = None,
 ) -> dict:
-    """Generate a matching activity using Groq LLM."""
+    """Generate a matching activity using the configured content provider."""
     grado_inst = f"\nGrado escolar: {grado}. Adapta el vocabulario y contenido al nivel cognitivo de este grado del sistema educativo colombiano." if grado else ""
 
     system_prompt = f"""Eres un experto en diseño de actividades educativas.
@@ -679,21 +941,63 @@ Schema JSON EXACTO requerido:
 
     user_msg = f"Genera la actividad de emparejar sobre: {tema}"
     if contenido_base:
-        user_msg += f"\n\nContenido base:\n{contenido_base}"
+        user_msg += f"\n\nContenido base:\n{contenido_base[:1800]}"
 
-    chat = client.chat.completions.create(
-        model=MODELS["exam_generation"],
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_msg},
-        ],
-        temperature=0.7,
-        max_tokens=2048,
-        response_format={"type": "json_object"},
+    cfg = provider_config or {}
+    content = await _call_content_provider(
+        messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_msg}],
+        cfg=cfg, temperature=0.5, max_tokens=2048, json_mode=True,
     )
-    await _log_usage("exam_generation", MODELS["exam_generation"], chat.usage)
-    response_text = _require_content(chat.choices[0].message.content, "generate_emparejar")
-    return json.loads(response_text)
+    return _extract_json_from_text(content)
+
+
+async def generate_unir_columnas(
+    tema: str,
+    nivel: str,
+    num_pares: int = 6,
+    contenido_base: str = "",
+    grado: str = "",
+    provider_config: dict | None = None,
+) -> dict:
+    """Generate a 'unir columnas' matching activity — same logic as emparejar but labeled for exam use."""
+    grado_inst = f"\nGrado escolar: {grado}. Adapta el vocabulario y contenido al nivel cognitivo de este grado del sistema educativo colombiano." if grado else ""
+
+    system_prompt = f"""Eres un experto en diseño de actividades educativas para Colombia.
+Genera SOLAMENTE una actividad de unir columnas en formato JSON. NO generes preguntas de examen.
+NO agregues texto fuera del JSON. NO uses markdown.
+Nivel: {nivel}.{grado_inst}
+Tema: {tema}
+Número de pares a generar: {num_pares}
+
+REGLAS OBLIGATORIAS:
+1. Genera exactamente {num_pares} pares de elementos relacionados del tema.
+2. La columna izquierda tiene conceptos, términos, fechas, etc.
+3. La columna derecha contiene su correspondencia: definiciones, nombres, eventos, etc.
+4. Los pares deben tener una relación clara e inequívoca.
+5. Las instrucciones deben pedir al estudiante que una con una línea los elementos de ambas columnas.
+
+Schema JSON EXACTO requerido:
+{{
+  "titulo": "string",
+  "unir_columnas": {{
+    "instrucciones": "Une con una línea cada elemento de la columna izquierda con su correspondiente de la columna derecha.",
+    "pares": [
+      {{"id": 1, "izquierda": "Concepto A", "derecha": "Definición A"}},
+      {{"id": 2, "izquierda": "Concepto B", "derecha": "Definición B"}}
+    ]
+  }}
+}}"""
+
+    user_msg = f"Genera la actividad de unir columnas sobre: {tema}"
+    if contenido_base:
+        user_msg += f"\n\nContenido base:\n{contenido_base[:1800]}"
+
+    cfg = provider_config or {}
+    content = await _call_content_provider(
+        messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_msg}],
+        cfg=cfg, temperature=0.5, max_tokens=2048, json_mode=True,
+    )
+    return _extract_json_from_text(content)
 
 
 async def generate_cuento(
@@ -702,8 +1006,9 @@ async def generate_cuento(
     contenido_base: str = "",
     grado: str = "",
     moraleja_tema: str = "",
+    provider_config: dict | None = None,
 ) -> dict:
-    """Generate an educational story with moral lesson using Groq LLM."""
+    """Generate an educational story with moral lesson using the configured content provider."""
     grado_inst = f"\nGrado escolar: {grado}. Adapta el vocabulario, complejidad narrativa y extensión al nivel cognitivo de este grado del sistema educativo colombiano." if grado else ""
     moraleja_inst = f"\nEnfoca la moraleja/enseñanza en: {moraleja_tema}" if moraleja_tema else ""
 
@@ -736,22 +1041,19 @@ Schema JSON EXACTO requerido:
     if contenido_base:
         user_msg += f"\n\nContenido base:\n{contenido_base}"
 
-    chat = client.chat.completions.create(
-        model=MODELS["exam_generation"],
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_msg},
-        ],
-        temperature=0.8,
-        max_tokens=4096,
-        response_format={"type": "json_object"},
+    cfg = provider_config or {}
+    content = await _call_content_provider(
+        messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_msg}],
+        cfg=cfg, temperature=0.8, max_tokens=8192, json_mode=True,
     )
-    await _log_usage("exam_generation", MODELS["exam_generation"], chat.usage)
-    response_text = _require_content(chat.choices[0].message.content, "generate_cuento")
-    return json.loads(response_text)
+    return _extract_json_from_text(content)
 
 
-async def generate_coloring_prompt(descripcion: str, allow_letters: bool = False) -> str:
+async def generate_coloring_prompt(
+    descripcion: str,
+    allow_letters: bool = False,
+    provider_config: dict | None = None,
+) -> str:
     """Translate a Spanish coloring-page description into a detailed English image prompt."""
     if allow_letters:
         constraints = (
@@ -769,38 +1071,22 @@ async def generate_coloring_prompt(descripcion: str, allow_letters: bool = False
             "'no words', 'no letters', 'no title', 'printable line art', 'kid-friendly'."
         )
 
-    chat = client.chat.completions.create(
-        model=MODELS["classification"],
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are an image-prompt specialist for children's coloring pages. "
-                    "The user gives you a description in Spanish. "
-                    "Return ONLY a single English image prompt (no explanations, no markdown). "
-                    f"{constraints} "
-                    "Be specific about the animals/characters requested. Keep it under 80 words."
-                ),
-            },
-            {"role": "user", "content": descripcion},
-        ],
-        temperature=0.4,
-        max_tokens=120,
+    cfg = provider_config or {}
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are an image-prompt specialist for children's coloring pages. "
+                "The user gives you a description in Spanish. "
+                "Return ONLY a single English image prompt (no explanations, no markdown). "
+                f"{constraints} "
+                "Be specific about the animals/characters requested. Keep it under 80 words."
+            ),
+        },
+        {"role": "user", "content": descripcion},
+    ]
+    return await _call_content_provider(
+        messages=messages, cfg=cfg, temperature=0.4, max_tokens=2048, json_mode=False,
     )
-    return _require_content(chat.choices[0].message.content, "generate_coloring_prompt")
 
 
-async def classify_writing(text_sample: str) -> str:
-    """Classify if text is handwritten or printed."""
-    chat = client.chat.completions.create(
-        model=MODELS["classification"],
-        messages=[
-            {"role": "system", "content": "Clasifica si el siguiente texto extraído proviene de escritura manuscrita o texto impreso/digital. Responde SOLO con 'manuscrito' o 'impreso'."},
-            {"role": "user", "content": text_sample},
-        ],
-        temperature=0,
-        max_tokens=10,
-    )
-    await _log_usage("classification", MODELS["classification"], chat.usage)
-    result = _require_content(chat.choices[0].message.content, "classify_writing").lower()
-    return "manuscrito" if "manuscrito" in result else "impreso"

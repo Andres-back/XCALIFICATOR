@@ -1,13 +1,18 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 from datetime import datetime, timezone
 
 from app.core.database import get_db
+from app.core.config import get_settings
 from app.core.ai_provider_config import (
     get_profesor_ai_config,
     upsert_profesor_ai_config,
     fetch_ollama_models,
+    fetch_groq_models,
+    split_groq_models,
+    fetch_open_code_models,
+    split_open_code_models,
 )
 from app.core.security import (
     hash_password, verify_password,
@@ -15,7 +20,7 @@ from app.core.security import (
     create_email_confirm_token,
 )
 from app.core.dependencies import get_current_user, get_client_ip, get_user_agent
-from app.models.models import User, Sesion, PreferenciaNotif
+from app.models.models import User, Sesion, PreferenciaNotif, AuditLog
 from app.schemas.schemas import (
     UserRegister, UserLogin,
     TokenResponse, UserOut, RefreshTokenRequest, UserUpdate,
@@ -25,6 +30,25 @@ from app.schemas.schemas import (
 from app.services.notification_service import send_email
 
 router = APIRouter(prefix="/auth", tags=["Autenticación"])
+settings = get_settings()
+
+
+def _cookie_secure(request: Request) -> bool:
+    proto = request.headers.get("X-Forwarded-Proto", request.url.scheme)
+    host = request.headers.get("host", "")
+    return proto == "https" and "localhost" not in host and "127.0.0.1" not in host
+
+
+def _set_auth_cookies(response: Response, request: Request, access_token: str, refresh_token: str) -> None:
+    secure = _cookie_secure(request)
+    response.set_cookie("access_token", access_token, max_age=settings.JWT_EXPIRY, httponly=True, secure=secure, samesite="lax", path="/")
+    response.set_cookie("refresh_token", refresh_token, max_age=settings.JWT_REFRESH_EXPIRY, httponly=True, secure=secure, samesite="lax", path="/")
+
+
+def _clear_auth_cookies(response: Response, request: Request) -> None:
+    secure = _cookie_secure(request)
+    response.delete_cookie("access_token", path="/", secure=secure, samesite="lax")
+    response.delete_cookie("refresh_token", path="/", secure=secure, samesite="lax")
 
 
 async def _close_user_sessions(db: AsyncSession, user_id):
@@ -40,6 +64,7 @@ async def _close_user_sessions(db: AsyncSession, user_id):
 async def register(
     data: UserRegister,
     request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
 ):
     # Check unique constraints
@@ -94,10 +119,11 @@ async def register(
 
     access_token = create_access_token({"sub": str(user.id), "rol": user.rol})
     refresh_token = create_refresh_token({"sub": str(user.id)})
+    _set_auth_cookies(response, request, access_token, refresh_token)
 
     return TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
+        access_token=None,
+        refresh_token=None,
         user=UserOut.model_validate(user),
     )
 
@@ -152,6 +178,7 @@ async def resend_confirmation(
 async def login(
     data: UserLogin,
     request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(select(User).where(User.correo == data.correo))
@@ -177,20 +204,24 @@ async def login(
 
     access_token = create_access_token({"sub": str(user.id), "rol": user.rol})
     refresh_token = create_refresh_token({"sub": str(user.id)})
+    _set_auth_cookies(response, request, access_token, refresh_token)
 
     return TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
+        access_token=None,
+        refresh_token=None,
         user=UserOut.model_validate(user),
     )
 
 
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh_token(
-    data: RefreshTokenRequest,
+    request: Request,
+    response: Response,
+    data: RefreshTokenRequest | None = None,
     db: AsyncSession = Depends(get_db),
 ):
-    payload = decode_token(data.refresh_token)
+    refresh_value = (data.refresh_token if data and data.refresh_token else None) or request.cookies.get("refresh_token")
+    payload = decode_token(refresh_value)
     if not payload or payload.get("type") != "refresh":
         raise HTTPException(status_code=401, detail="Refresh token inválido")
 
@@ -202,10 +233,11 @@ async def refresh_token(
 
     access_token = create_access_token({"sub": str(user.id), "rol": user.rol})
     new_refresh = create_refresh_token({"sub": str(user.id)})
+    _set_auth_cookies(response, request, access_token, new_refresh)
 
     return TokenResponse(
-        access_token=access_token,
-        refresh_token=new_refresh,
+        access_token=None,
+        refresh_token=None,
         user=UserOut.model_validate(user),
     )
 
@@ -218,6 +250,7 @@ async def get_me(current_user: User = Depends(get_current_user)):
 @router.patch("/me", response_model=UserOut)
 async def update_profile(
     data: UserUpdate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -228,6 +261,12 @@ async def update_profile(
         current_user.apellido = data.apellido.strip()
     if data.celular is not None:
         current_user.celular = data.celular.strip() or None
+    db.add(AuditLog(
+        user_id=current_user.id,
+        accion="update_profile",
+        detalle={"fields": list(data.model_dump(exclude_unset=True).keys())},
+        ip=get_client_ip(request),
+    ))
     await db.commit()
     await db.refresh(current_user)
     return UserOut.model_validate(current_user)
@@ -259,21 +298,34 @@ async def change_own_password(
 
 @router.post("/logout")
 async def logout(
+    request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Close all active sessions for the current user."""
     await _close_user_sessions(db, current_user.id)
     await db.commit()
+    _clear_auth_cookies(response, request)
     return {"detail": "Sesión cerrada"}
 
 
 def _as_local_ai_out(cfg: dict) -> LocalAIConfigOut:
     return LocalAIConfigOut(
+        content_provider=cfg.get("content_provider") or "groq",
+        grading_provider=cfg.get("grading_provider") or "groq",
+        ocr_provider=cfg.get("ocr_provider") or "open_code_vision",
+        groq_api_key=cfg.get("groq_api_key") or None,
         ollama_url=cfg.get("ollama_url") or "http://host.docker.internal:11434",
         ollama_api_key=cfg.get("ollama_api_key") or None,
-        grading_local_model=cfg.get("grading_fallback_model") or None,
-        ocr_local_model=cfg.get("ocr_fallback_model") or None,
+        open_code_base_url=cfg.get("open_code_base_url") or None,
+        open_code_api_key=cfg.get("open_code_api_key") or None,
+        content_model=cfg.get("content_model") or None,
+        grading_local_model=cfg.get("grading_model") or cfg.get("grading_fallback_model") or None,
+        ocr_local_model=cfg.get("ocr_model") or cfg.get("ocr_fallback_model") or None,
+        open_code_content_model=cfg.get("open_code_content_model") or None,
+        open_code_vision_model=cfg.get("open_code_vision_model") or None,
+        open_code_feedback_model=cfg.get("open_code_feedback_model") or None,
     )
 
 
@@ -301,25 +353,30 @@ async def update_my_local_ai_config(
     current_cfg = await get_profesor_ai_config(db, str(current_user.id))
     patch = data.model_dump(exclude_unset=True)
 
-    if "grading_local_model" in patch:
-        grading_local_model = patch.get("grading_local_model") or ""
-    else:
-        grading_local_model = current_cfg.get("grading_fallback_model") or ""
-
-    if "ocr_local_model" in patch:
-        ocr_local_model = patch.get("ocr_local_model") or ""
-    else:
-        ocr_local_model = current_cfg.get("ocr_fallback_model") or ""
-
     merged = {
         **current_cfg,
+        "content_provider": patch.get("content_provider", current_cfg.get("content_provider")),
+        "grading_provider": patch.get("grading_provider", current_cfg.get("grading_provider")),
+        "ocr_provider": patch.get("ocr_provider", current_cfg.get("ocr_provider")),
+        "groq_api_key": patch.get("groq_api_key", current_cfg.get("groq_api_key")),
         "ollama_url": patch.get("ollama_url", current_cfg.get("ollama_url")),
         "ollama_api_key": patch.get("ollama_api_key", current_cfg.get("ollama_api_key")),
-        "grading_fallback_provider": "ollama" if grading_local_model else None,
-        "grading_fallback_model": grading_local_model,
-        "ocr_fallback_provider": "ollama_vision" if ocr_local_model else None,
-        "ocr_fallback_model": ocr_local_model,
+        "open_code_base_url": patch.get("open_code_base_url", current_cfg.get("open_code_base_url")),
+        "open_code_api_key": patch.get("open_code_api_key", current_cfg.get("open_code_api_key")),
+        "open_code_content_model": patch.get("open_code_content_model", current_cfg.get("open_code_content_model")),
+        "open_code_vision_model": patch.get("open_code_vision_model", current_cfg.get("open_code_vision_model")),
+        "open_code_feedback_model": patch.get("open_code_feedback_model", current_cfg.get("open_code_feedback_model")),
+        "content_model": patch.get("content_model", current_cfg.get("content_model")),
+        "grading_model": patch.get("grading_local_model", current_cfg.get("grading_model")),
+        "ocr_model": patch.get("ocr_local_model", current_cfg.get("ocr_model")),
     }
+
+    if merged.get("content_provider") == "open_code" and not merged.get("content_model"):
+        merged["content_model"] = merged.get("open_code_content_model")
+    if merged.get("grading_provider") == "open_code" and not merged.get("grading_model"):
+        merged["grading_model"] = merged.get("open_code_feedback_model")
+    if merged.get("ocr_provider") == "open_code_vision" and not merged.get("ocr_model"):
+        merged["ocr_model"] = merged.get("open_code_vision_model")
 
     updated = await upsert_profesor_ai_config(
         db=db,
@@ -352,3 +409,40 @@ async def get_my_ollama_models(
         )
 
     return LocalOllamaModelsOut(ollama_url=ollama_url, models=models)
+
+
+@router.get("/me/groq-models")
+async def get_my_groq_models(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.rol != "profesor":
+        raise HTTPException(status_code=403, detail="Solo los profesores pueden consultar modelos Groq")
+
+    cfg = await get_profesor_ai_config(db, str(current_user.id))
+    try:
+        models = await fetch_groq_models(cfg.get("groq_api_key"))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"No se pudo consultar Groq Cloud: {str(exc)}")
+
+    return split_groq_models(models)
+
+
+@router.get("/me/open-code-models")
+async def get_my_open_code_models(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.rol != "profesor":
+        raise HTTPException(status_code=403, detail="Solo los profesores pueden consultar modelos Open Code")
+
+    cfg = await get_profesor_ai_config(db, str(current_user.id))
+    try:
+        models = await fetch_open_code_models(
+            cfg.get("open_code_base_url") or "",
+            cfg.get("open_code_api_key"),
+        )
+    except Exception:
+        models = []
+
+    return split_open_code_models(models)

@@ -6,6 +6,7 @@ TOOL_TYPE_LABELS: dict[str, str] = {
     "crucigrama": "Crucigrama",
     "sopa_letras": "Sopa de Letras",
     "emparejar": "Emparejar",
+    "unir_columnas": "Unir Columnas",
     "cuento": "Cuento",
     "para_colorear": "Para Colorear",
     "presentacion": "Presentación",

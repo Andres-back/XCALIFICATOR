@@ -18,10 +18,10 @@
 | LLM | Groq SDK | 0.11.0 |
 | Cache / Rate limiting | Redis | 5.1.0 |
 | PDF | ReportLab | 4.2.0 |
-| OCR (microservicio) | PaddleOCR vía contenedor en `http://paddleocr:8001` | — |
+| OCR (visión) | Modelos de visión vía Ollama / Groq / OpenCode (sin microservicio externo) | — |
 | HTTP async | httpx | 0.27.0 |
 | Email | aiosmtplib | 3.0.1 |
-| Notif Telegram | Telegram Bot API (bot con @BotFather) | TELEGRAM_BOT_TOKEN |
+| Notif WhatsApp | Whapi (API REST externa) | — |
 | Imágenes IA | Pollinations.ai (gen.pollinations.ai) | — |
 
 ### Frontend
@@ -49,7 +49,7 @@
 | `xcalificator_backend` | Build local (`backend/`) | 8000 (interno) |
 | `xcalificator_frontend` | Build local (`frontend/`) | 3000 (interno) |
 | `xcalificator_nginx` | nginx:alpine | **80** (público) |
-| `xcalificator_paddleocr` | Build local (`paddleocr/`) | 8001 (interno) |
+| `xcalificator_presenton` | Build local (`presenton_patches/`) | 5001 (interno) |
 
 **Deploy**: `docker compose up -d --build backend frontend`
 **DB**: `xcalificator_db`, user `xcalificator`, password en `.env`
@@ -66,7 +66,7 @@ GROQ_API_KEY=gsk_...
 JWT_SECRET / JWT_EXPIRY=3600
 GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET
 SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS
-TELEGRAM_BOT_TOKEN / TELEGRAM_BOT_USERNAME / TELEGRAM_WEBHOOK_URL
+WHAPI_API_URL / WHAPI_TOKEN
 VITE_GOOGLE_CLIENT_ID
 ```
 
@@ -105,7 +105,7 @@ backend/
       notifications.py   ← /api/notifications
     services/
       groq_service.py    ← Funciones LLM (generate_exam, generate_sopa_letras, etc.)
-      ocr_service.py     ← Llama PaddleOCR microservice
+      ocr_service.py     ← Extracción por visión (Ollama/Groq/OpenCode)
       pdf_service.py     ← Genera PDFs con ReportLab
       notification_service.py ← Email + WhatsApp
   db/
@@ -127,7 +127,7 @@ frontend/
 
 nginx/
   nginx.conf             ← Proxy: /api → backend:8000, / → frontend:3000
-paddleocr/               ← Microservicio independiente FastAPI + PaddleOCR
+presenton_patches/       ← Parches del servicio Presenton (generación de presentaciones)
 ```
 
 ---
@@ -157,9 +157,8 @@ Todos los IDs son UUID generado en Python (`default=uuid.uuid4`). Timestamps con
 | `MiembroGrupo` | `miembros_grupo` | id, grupo_id→GrupoActividad, estudiante_id→User, es_lider, aceptado; UNIQUE(grupo_id, estudiante_id) |
 | `APIUsageLog` | `api_usage_logs` | id, model, task, prompt_tokens, completion_tokens, total_tokens |
 | `AuditLog` | `audit_logs` | id, user_id→User (nullable), accion, detalle (JSONB), ip |
-| `PreferenciaNotif` | `preferencias_notif` | id, user_id (UNIQUE), acepta_email, acepta_telegram |
-| `Notificacion` | `notificaciones` | id, user_id, tipo, canal (email/telegram), mensaje, enviado, fecha_envio |
-| `User` (campos telegram) | `users` | telegram_chat_id, telegram_link_code, telegram_link_code_expires |
+| `PreferenciaNotif` | `preferencias_notif` | id, user_id (UNIQUE), acepta_email, acepta_whatsapp |
+| `Notificacion` | `notificaciones` | id, user_id, tipo, canal (email/whatsapp), mensaje, enviado, fecha_envio |
 
 ---
 
@@ -199,7 +198,7 @@ Todos requieren rol profesor/admin. Rate limit: 10 req/min.
 - `POST /sopa-letras` — Sopa de letras IA
 - `POST /crucigrama` — Crucigrama IA
 - `POST /emparejar` — Actividad de emparejar IA
-- `POST /cuento` — Cuento educativo (sin imagen por ahora)
+- `POST /cuento` — Cuento educativo + imagen (Pollinations)
 - `POST /para-colorear` — Página para colorear + imagen B&W
 
 ### Calificación (`/api/grading`)
@@ -268,7 +267,7 @@ nota_final = Σ(nota_actividad × porcentaje/100)  capada a 5.0
 
 ### Auto-calificación IA
 - **Online**: Respuestas enviadas por estudiante → Groq compara con clave_respuestas → devuelve nota + feedback por pregunta
-- **OCR**: Imagen/PDF → PaddleOCR extrae texto → Groq califica
+- **OCR**: Imagen/PDF → modelo de visión extrae respuestas directamente (Ollama/Groq/OpenCode) → calificación automática
 - Resultado se guarda en `Nota.detalle_json` (array de preguntas con puntos obtenidos y feedback)
 
 ### Sesiones de chat (tutor Xali)

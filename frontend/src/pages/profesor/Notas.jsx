@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import toast from 'react-hot-toast';
+import { openPresentonEditorWithSession } from '../../utils/presenton';
 import {
   Award, Trash2, Edit3, X, Save, ChevronDown, ChevronUp,
   AlertTriangle, CheckCircle, XCircle, BarChart3, Users, TrendingUp, Target,
@@ -447,6 +448,15 @@ export default function ProfesorNotas() {
     }
   };
 
+  const abrirEditorRepaso = async () => {
+    if (!repasoResult?.edit_url) return;
+    try {
+      await openPresentonEditorWithSession(repasoResult);
+    } catch {
+      toast.error('No se pudo abrir el editor de Presenton');
+    }
+  };
+
   if (loading) return (
     <div className="max-w-4xl mx-auto space-y-4">
       <div className="flex items-center justify-between mb-4">
@@ -519,10 +529,10 @@ export default function ProfesorNotas() {
             </a>
           )}
           {repasoResult.edit_url && (
-            <a href={repasoResult.edit_url} target="_blank" rel="noopener noreferrer"
+            <button type="button" onClick={abrirEditorRepaso}
               className="inline-flex items-center gap-1 px-3 py-1 text-xs font-semibold text-emerald-700 border border-emerald-300 hover:bg-emerald-100 rounded-lg transition">
               <ExternalLink className="w-3 h-3" /> Editar en Presenton
-            </a>
+            </button>
           )}
           <button onClick={() => setRepasoResult(null)} className="p-1 rounded text-emerald-600 hover:bg-emerald-100">
             <X className="w-3.5 h-3.5" />
@@ -631,6 +641,11 @@ export default function ProfesorNotas() {
             const needsReview  = n.detalle_json?.requiere_revision_profesor;
             const examContent  = n.examen_contenido_json || {};
             const respuestasMap = parseRespuestaMap(n.respuestas_json);
+            const ocrPayload = n.respuestas_json?.tipo_entrega === 'ocr_presencial' ? n.respuestas_json : null;
+            const ocrFileUrl = n.imagen_procesada_url || ocrPayload?.archivo?.url || '';
+            const ocrFullText = n.texto_extraido || ocrPayload?.ocr?.texto_extraido || ocrPayload?.ocr?.texto_extraido_preview || n.detalle_json?.texto_extraido_preview || '';
+            const ocrDetectedQuestions = Array.isArray(ocrPayload?.preguntas) ? ocrPayload.preguntas : [];
+            const hasOcrEvidence = !!(ocrPayload || ocrFileUrl || ocrFullText || ocrDetectedQuestions.length);
             const examType     = n.examen_tipo || n.detalle_json?.tipo || '';
             const notaNum      = n.nota != null ? parseFloat(n.nota) : null;
 
@@ -644,17 +659,17 @@ export default function ProfesorNotas() {
                   ${isHighlighted ? 'ring-2 ring-indigo-400 border-indigo-300' : ''}
                 `}
               >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-lg font-extrabold
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-lg font-extrabold shrink-0
                       ${needsReview   ? 'bg-amber-100 text-amber-700'
                         : notaNum == null  ? 'bg-gray-100 text-gray-400'
                         : notaNum >= 3.0   ? 'bg-emerald-100 text-emerald-700'
                                           : 'bg-red-100 text-red-700'}`}>
                       {needsReview ? <AlertTriangle className="w-5 h-5" /> : (n.nota ?? '—')}
                     </div>
-                    <div>
-                      <p className="font-semibold text-gray-900 text-sm">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-gray-900 text-sm truncate">
                         {n.estudiante_nombre ? `${n.estudiante_nombre} ${n.estudiante_apellido || ''}`.trim() : n.estudiante_id}
                       </p>
                       <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
@@ -690,7 +705,7 @@ export default function ProfesorNotas() {
                       </div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-1 shrink-0">
                     {(hasDetail || needsReview) && (
                       <button onClick={() => toggleExpand(n.id)}
                         className="p-2 rounded text-gray-500 hover:bg-gray-100" title="Ver detalle">
@@ -741,6 +756,55 @@ export default function ProfesorNotas() {
                       value={editValues.retroalimentacion}
                       onChange={e => setEditValues(p => ({ ...p, retroalimentacion: e.target.value }))}
                       placeholder="Retroalimentación..." />
+                  </div>
+                )}
+
+                {expanded === n.id && hasOcrEvidence && (
+                  <div className="mt-3 border-t border-gray-100 pt-3 grid grid-cols-1 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] gap-3">
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 overflow-hidden">
+                      <div className="px-3 py-2 border-b border-gray-200 bg-white flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold text-gray-600 uppercase">Hoja original</p>
+                        {ocrFileUrl && (
+                          <a href={ocrFileUrl} target="_blank" rel="noreferrer" className="text-xs text-blue-600 underline">
+                            Abrir
+                          </a>
+                        )}
+                      </div>
+                      {ocrFileUrl ? (
+                        String(ocrFileUrl).toLowerCase().endsWith('.pdf') ? (
+                          <div className="p-4 text-sm text-gray-600">Archivo PDF subido. Usa Abrir para revisar la hoja.</div>
+                        ) : (
+                          <a href={ocrFileUrl} target="_blank" rel="noreferrer" className="block bg-white">
+                            <img src={ocrFileUrl} alt="Hoja original del estudiante" className="w-full max-h-80 object-contain" />
+                          </a>
+                        )
+                      ) : (
+                        <div className="p-4 text-sm text-gray-500">No hay imagen asociada.</div>
+                      )}
+                    </div>
+                    <div className="space-y-3">
+                      {ocrFullText && (
+                        <div>
+                          <p className="text-[10px] font-semibold text-gray-500 uppercase mb-1">Texto OCR completo</p>
+                          <pre className="text-xs text-gray-700 bg-gray-50 rounded-lg px-3 py-2.5 whitespace-pre-wrap border border-gray-200 max-h-56 overflow-y-auto">
+                            {ocrFullText}
+                          </pre>
+                        </div>
+                      )}
+                      {ocrDetectedQuestions.length > 0 && (
+                        <div>
+                          <p className="text-[10px] font-semibold text-gray-500 uppercase mb-1">Respuestas detectadas</p>
+                          <div className="space-y-1.5 max-h-56 overflow-y-auto">
+                            {ocrDetectedQuestions.map((item, idx) => (
+                              <div key={idx} className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-700">
+                                <span className="font-semibold">P{item.numero || idx + 1}:</span>{' '}
+                                {item.respuesta || item.respuesta_estudiante || item.texto || item.enunciado || 'Sin lectura'}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
 

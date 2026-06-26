@@ -2,12 +2,17 @@
  * NotFound: 404 ilustrado con la mascota, mensaje claro y CTA de regreso.
  */
 import { Link } from 'react-router-dom';
+import { useRef } from 'react';
 import { Home, ArrowLeft } from 'lucide-react';
 import ThemeToggle from '../components/ThemeToggle';
+import usePageMotion from '../hooks/usePageMotion';
 
 export default function NotFound() {
+  const pageRef = useRef(null);
+  usePageMotion(pageRef, []);
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-brand-50 via-white to-accent-50 dark:from-gray-950 dark:via-gray-950 dark:to-gray-900 flex items-center justify-center p-4">
+    <div ref={pageRef} className="min-h-screen bg-gradient-to-br from-brand-50 via-white to-accent-50 dark:from-gray-950 dark:via-gray-950 dark:to-gray-900 flex items-center justify-center p-4">
       <div className="absolute top-4 right-4">
         <ThemeToggle className="bg-white/80 border border-gray-200 text-gray-600 hover:bg-gray-100 dark:bg-gray-800/80 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800" />
       </div>

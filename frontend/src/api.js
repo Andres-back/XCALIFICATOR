@@ -1,12 +1,13 @@
 import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
-const AUTH_STORAGE_KEYS = ['access_token', 'refresh_token', 'user'];
 let refreshPromise = null;
 let isRedirectingToLogin = false;
 
 const clearAuthStorage = () => {
-  AUTH_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
+  localStorage.removeItem('access_token');
+  localStorage.removeItem('refresh_token');
+  localStorage.removeItem('user');
 };
 
 const redirectToLoginOnce = () => {
@@ -15,39 +16,15 @@ const redirectToLoginOnce = () => {
   window.location.href = '/login';
 };
 
-const decodeJwtPayload = (token) => {
-  try {
-    const part = String(token || '').split('.')[1];
-    if (!part) return null;
-    const normalized = part.replace(/-/g, '+').replace(/_/g, '/');
-    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
-    return JSON.parse(atob(padded));
-  } catch {
-    return null;
-  }
-};
-
-const isTokenExpiredOrNearExpiry = (token, skewSeconds = 20) => {
-  const payload = decodeJwtPayload(token);
-  const exp = Number(payload?.exp || 0);
-  if (!exp) return false;
-  return (Date.now() + skewSeconds * 1000) >= exp * 1000;
-};
-
 const runRefreshTokenFlow = async () => {
-  const refreshToken = localStorage.getItem('refresh_token');
-  if (!refreshToken) {
-    throw new Error('No refresh token');
-  }
-
   if (!refreshPromise) {
     refreshPromise = axios
-      .post(`${API_URL}/api/auth/refresh`, { refresh_token: refreshToken })
+      .post(`${API_URL}/api/auth/refresh`, {}, { withCredentials: true })
       .then((res) => {
-        const { access_token, refresh_token: newRefresh } = res.data;
-        localStorage.setItem('access_token', access_token);
-        localStorage.setItem('refresh_token', newRefresh);
-        return { access_token, refresh_token: newRefresh };
+        if (res.data?.user) {
+          localStorage.setItem('user', JSON.stringify(res.data.user));
+        }
+        return res.data;
       })
       .finally(() => {
         refreshPromise = null;
@@ -70,7 +47,7 @@ const normalizeApiDetail = (detail) => {
       })
       .filter(Boolean)
       .join(', ');
-    return parsed || 'Error de validación';
+    return parsed || 'Error de validacion';
   }
   if (detail && typeof detail === 'object') {
     return detail.msg || detail.detail || detail.message || JSON.stringify(detail);
@@ -81,34 +58,9 @@ const normalizeApiDetail = (detail) => {
 const api = axios.create({
   baseURL: `${API_URL}/api`,
   headers: { 'Content-Type': 'application/json' },
+  withCredentials: true,
 });
 
-// Request interceptor - add auth token and pre-refresh when token is expired
-api.interceptors.request.use(async (config) => {
-  const url = String(config?.url || '');
-  if (url.includes('/auth/login') || url.includes('/auth/register') || url.includes('/auth/refresh')) {
-    return config;
-  }
-
-  let token = localStorage.getItem('access_token');
-  if (token && isTokenExpiredOrNearExpiry(token)) {
-    try {
-      const refreshed = await runRefreshTokenFlow();
-      token = refreshed.access_token;
-    } catch {
-      clearAuthStorage();
-      redirectToLoginOnce();
-      throw new axios.Cancel('Sesión expirada');
-    }
-  }
-
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-});
-
-// Response interceptor - handle 401 and refresh
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
@@ -122,18 +74,22 @@ api.interceptors.response.use(
       const retryAfterHeader = error.response?.headers?.['retry-after'];
       const retryAfter = Number.parseInt(retryAfterHeader, 10);
       if (Number.isFinite(retryAfter) && retryAfter > 0) {
-        const currentDetail = String(error.response.data.detail || 'Límite de solicitudes alcanzado').trim();
+        const currentDetail = String(error.response.data.detail || 'Limite de solicitudes alcanzado').trim();
         if (!currentDetail.toLowerCase().includes('intenta de nuevo en')) {
           error.response.data.detail = `${currentDetail} Intenta de nuevo en ${retryAfter}s.`;
         }
       }
     }
 
-    if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {
+    const url = String(originalRequest?.url || '');
+    const isAuthEndpoint = url.includes('/auth/login')
+      || url.includes('/auth/register')
+      || url.includes('/auth/refresh');
+
+    if (error.response?.status === 401 && originalRequest && !originalRequest._retry && !isAuthEndpoint) {
       originalRequest._retry = true;
       try {
-        const refreshed = await runRefreshTokenFlow();
-        originalRequest.headers.Authorization = `Bearer ${refreshed.access_token}`;
+        await runRefreshTokenFlow();
         return api(originalRequest);
       } catch {
         clearAuthStorage();

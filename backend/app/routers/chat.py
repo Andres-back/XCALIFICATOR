@@ -136,12 +136,18 @@ async def student_chat(
     conversation_history = [{"role": h.role, "content": h.content} for h in history_rows]
 
     # Validate scope: Xali must only answer exam-related questions.
+    _cfg_relevance = profesor_ai_cfg or {}
+    relevance_provider = "open_code" if _cfg_relevance.get("open_code_api_key") else _cfg_relevance.get("content_provider")
     relevance = await classify_chat_relevance(
         user_message=data.message,
         exam_context=exam_context,
         student_answers=student_answers,
         feedback=feedback,
         conversation_history=conversation_history,
+        provider=relevance_provider,
+        open_code_base_url=_cfg_relevance.get("open_code_base_url"),
+        open_code_api_key=_cfg_relevance.get("open_code_api_key"),
+        open_code_model=_cfg_relevance.get("chat_model") or _cfg_relevance.get("open_code_content_model"),
     )
 
     is_related = bool(relevance.get("is_exam_related", False))
@@ -175,13 +181,22 @@ async def student_chat(
         )
 
     try:
+        _cfg = profesor_ai_cfg or {}
+        chat_provider = "open_code" if _cfg.get("open_code_api_key") else _cfg.get("content_provider")
         response = await rag_chat(
             user_message=data.message,
             exam_context=exam_context,
             student_answers=student_answers,
             feedback=feedback,
             conversation_history=conversation_history,
-            model=(profesor_ai_cfg or {}).get("chat_model"),
+            model=_cfg.get("chat_model"),
+            provider=chat_provider,
+            open_code_base_url=_cfg.get("open_code_base_url"),
+            open_code_api_key=_cfg.get("open_code_api_key"),
+            open_code_model=_cfg.get("chat_model") or _cfg.get("open_code_content_model"),
+            ollama_url=_cfg.get("ollama_url"),
+            ollama_api_key=_cfg.get("ollama_api_key"),
+            ollama_model=_cfg.get("content_model"),
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en chatbot: {str(e)}")

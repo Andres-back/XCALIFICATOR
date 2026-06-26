@@ -7,15 +7,24 @@ import fitz
 import httpx
 from groq import Groq
 
-from app.core.config import get_settings
+from app.core.config import get_settings, normalize_ollama_native_url
+from app.services.open_code_service import OPEN_CODE_RECOMMENDED_MODELS, open_code_vision_json
 
 settings = get_settings()
 
 groq_client = Groq(api_key=settings.GROQ_API_KEY) if settings.GROQ_API_KEY else None
 
-INTERACTIVE_TYPES = {"sopa_letras", "crucigrama", "emparejar"}
+INTERACTIVE_TYPES = {"sopa_letras", "crucigrama", "emparejar", "unir_columnas"}
 DEFAULT_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+DEFAULT_OPEN_CODE_VISION_MODEL = OPEN_CODE_RECOMMENDED_MODELS["vision"]
 MAX_VISION_PAGES = 3
+
+
+def _groq_client(api_key: str | None = None) -> Groq:
+    selected_api_key = str(api_key or settings.GROQ_API_KEY or "").strip()
+    if not selected_api_key:
+        raise RuntimeError("GROQ_API_KEY no configurada para vision")
+    return Groq(api_key=selected_api_key)
 
 
 def _extract_json_from_text(raw_text: str) -> dict:
@@ -116,10 +125,12 @@ def _collect_ollama_images(
     return images
 
 
-def _vision_request_groq(prompt: str, images: list[dict[str, Any]], model: str) -> dict:
-    if groq_client is None:
-        raise RuntimeError("GROQ_API_KEY no configurada para vision")
-
+def _vision_request_groq(
+    prompt: str,
+    images: list[dict[str, Any]],
+    model: str,
+    api_key: str | None = None,
+) -> dict:
     messages = cast(Any, [
         {
             "role": "user",
@@ -130,7 +141,7 @@ def _vision_request_groq(prompt: str, images: list[dict[str, Any]], model: str) 
         }
     ])
 
-    chat = groq_client.chat.completions.create(
+    chat = _groq_client(api_key).chat.completions.create(
         model=model,
         messages=messages,
         temperature=0.0,
@@ -151,9 +162,7 @@ async def _vision_request_ollama(
     if not selected_model:
         raise ValueError("No hay modelo Ollama configurado para vision")
 
-    base_url = (ollama_url or "").strip().rstrip("/")
-    if not base_url:
-        base_url = "http://host.docker.internal:11434"
+    base_url = normalize_ollama_native_url(ollama_url)
 
     payload = {
         "model": selected_model,
@@ -175,6 +184,27 @@ async def _vision_request_ollama(
         result = response.json() or {}
         content = (((result or {}).get("message") or {}).get("content") or "").strip()
         return _extract_json_from_text(content)
+
+
+async def _vision_request_open_code(
+    prompt: str,
+    images: list[str],
+    model: str,
+    base_url: str,
+    api_key: str | None,
+) -> dict:
+    selected_model = (model or DEFAULT_OPEN_CODE_VISION_MODEL).strip()
+    return await open_code_vision_json(
+        image_payloads=images,
+        prompt=prompt,
+        model=selected_model,
+        base_url=base_url,
+        api_key=api_key,
+        temperature=0.0,
+        # Full written exams with many questions produce long grading JSON; a tight
+        # budget truncates the output and breaks JSON parsing.
+        max_tokens=4096,
+    )
 
 
 async def _grade_sopa_with_vision(
@@ -461,6 +491,207 @@ async def _grade_emparejar_with_vision(
     }
 
 
+async def _grade_unir_columnas_with_vision(
+    images: Any,
+    contenido: dict,
+    key_entries: list[dict],
+    model: str,
+    vision_request: Callable[[str, Any, str], Awaitable[dict]],
+) -> dict | None:
+    """Califica actividad de 'Unir Columnas' desde imagen — misma lógica que emparejar."""
+    if not key_entries:
+        return None
+
+    pares = []
+    unir = contenido.get("unir_columnas") if isinstance(contenido, dict) else None
+    if isinstance(unir, dict):
+        pares = unir.get("pares", [])
+    if not isinstance(pares, list) or not pares:
+        pares = key_entries
+
+    prompt = (
+        "Eres un corrector de actividad de unir columnas. Observa la imagen y determina "
+        "las conexiones que el estudiante realizo entre la columna izquierda y la derecha. "
+        "Devuelve SOLO JSON valido con este schema exacto:\n"
+        "{\"emparejamientos\": [{\"izquierda\": \"...\", \"derecha\": \"...\"}], "
+        "\"observaciones\": \"...\"}\n"
+        "Usa exactamente los textos listados para izquierda y derecha. "
+        "No inventes conexiones si no se ven claras. "
+        f"Elementos: {json.dumps(pares, ensure_ascii=False)}"
+    )
+
+    data = await vision_request(prompt, images, model)
+    matches_raw = data.get("emparejamientos") if isinstance(data, dict) else []
+    matches_raw = matches_raw if isinstance(matches_raw, list) else []
+
+    key_by_left = {}
+    for p in key_entries:
+        if not isinstance(p, dict):
+            continue
+        left = str(p.get("izquierda") or "").strip()
+        right = str(p.get("derecha") or "").strip()
+        if left:
+            key_by_left[_compact_text(left)] = {"izquierda": left, "derecha": right}
+
+    pares_bien = 0
+    total_pares = len(key_by_left)
+    detalle_pares = []
+    used_left = set()
+
+    for match in matches_raw:
+        if not isinstance(match, dict):
+            continue
+        left_raw = str(match.get("izquierda") or "").strip()
+        right_raw = str(match.get("derecha") or "").strip()
+        left_key = _compact_text(left_raw)
+        if not left_key or left_key in used_left:
+            continue
+        key = key_by_left.get(left_key)
+        if not key:
+            continue
+        used_left.add(left_key)
+        correcto = _compact_text(right_raw) == _compact_text(key.get("derecha", ""))
+        if correcto:
+            pares_bien += 1
+        detalle_pares.append({
+            "izquierda": key.get("izquierda", ""),
+            "derecha_correcta": key.get("derecha", ""),
+            "derecha_estudiante": right_raw,
+            "correcto": correcto,
+        })
+
+    for left_key, key in key_by_left.items():
+        if left_key in used_left:
+            continue
+        detalle_pares.append({
+            "izquierda": key.get("izquierda", ""),
+            "derecha_correcta": key.get("derecha", ""),
+            "derecha_estudiante": "",
+            "correcto": False,
+        })
+
+    nota_act = round((pares_bien / total_pares * 5.0) if total_pares else 0.0, 2)
+
+    return {
+        "nota_total": nota_act,
+        "nota_maxima": 5.0,
+        "preguntas": [
+            {
+                "numero": "unir_columnas",
+                "tipo": "unir_columnas",
+                "nota": nota_act,
+                "nota_maxima": 5.0,
+                "correcto": pares_bien == total_pares,
+                "retroalimentacion": f"Unir Columnas: {pares_bien}/{total_pares} pares correctos",
+                "detalle_pares": detalle_pares,
+            }
+        ],
+    }
+
+
+async def grade_written_exam_with_vision(
+    file_bytes: bytes,
+    filename: str,
+    content_type: str | None,
+    preguntas_con_clave: list[dict],
+    provider_config: dict | None = None,
+) -> dict:
+    """Grade a written exam directly with a single vision call (image + answer key → grade).
+    No intermediate text extraction step.
+    """
+    if not preguntas_con_clave:
+        return {
+            "nota_total": 0.0,
+            "nota_maxima": 0.0,
+            "preguntas": [],
+            "calificacion_automatica": True,
+            "tiene_preguntas_abiertas": False,
+        }
+
+    cfg = provider_config or {}
+    provider = str(cfg.get("ocr_provider") or "groq_vision").strip().lower()
+    if provider not in ("groq_vision", "ollama_vision", "open_code_vision"):
+        provider = "groq_vision"
+
+    selected_model = str(cfg.get("ocr_model") or "").strip()
+    if provider == "ollama_vision" and not selected_model:
+        selected_model = str(cfg.get("ocr_fallback_model") or "").strip()
+    if provider == "open_code_vision" and not selected_model:
+        selected_model = str(cfg.get("open_code_vision_model") or cfg.get("ocr_fallback_model") or "").strip()
+    if provider == "groq_vision":
+        selected_model = selected_model or DEFAULT_VISION_MODEL
+
+    if provider in ("ollama_vision", "open_code_vision") and not selected_model:
+        raise ValueError("No hay modelo de vision configurado para calificacion")
+
+    nota_maxima_total = sum(float(p.get("puntos") or 1.0) for p in preguntas_con_clave)
+
+    prompt = (
+        "Eres un corrector de examenes escritos. Analiza la imagen del examen respondido.\n\n"
+        "PREGUNTAS Y CLAVE:\n"
+        + json.dumps(preguntas_con_clave, ensure_ascii=False)
+        + "\n\nINSTRUCCIONES:\n"
+        "1. Lee cada respuesta manuscrita del estudiante en la imagen.\n"
+        "2. Compara con respuesta_correcta de cada pregunta.\n"
+        "3. seleccion_multiple y verdadero_falso: correcto si coincide la letra/opcion (ignora mayusculas/tildes).\n"
+        "4. respuesta_corta y desarrollo: puntaje segun proximidad semantica con la respuesta correcta.\n"
+        "5. Si no puedes leer una respuesta, deja respuesta_estudiante vacia y nota 0.\n\n"
+        "Devuelve SOLO JSON valido:\n"
+        '{"nota_total": float, "nota_maxima": ' + str(nota_maxima_total) + ", "
+        '"preguntas": [{"numero": num, "tipo": "str", "respuesta_estudiante": "str", '
+        '"respuesta_correcta": "str", "correcto": bool, "nota": float, "nota_maxima": float, '
+        '"retroalimentacion": "str"}]}'
+    )
+
+    if provider == "ollama_vision":
+        images = _collect_ollama_images(file_bytes, filename, content_type)
+        if not images:
+            raise ValueError("No se pudo preparar la imagen")
+        ollama_url = str(cfg.get("ollama_url") or "http://host.docker.internal:11434").strip()
+        ollama_api_key = str(cfg.get("ollama_api_key") or "").strip() or None
+        result = await _vision_request_ollama(prompt, images, selected_model, ollama_url, ollama_api_key)
+    elif provider == "open_code_vision":
+        images = _collect_ollama_images(file_bytes, filename, content_type)
+        if not images:
+            raise ValueError("No se pudo preparar la imagen")
+        oc_base_url = str(cfg.get("open_code_base_url") or settings.OPEN_CODE_BASE_URL or "").strip()
+        oc_api_key = str(cfg.get("open_code_api_key") or settings.OPEN_CODE_API_KEY or "").strip() or None
+        result = await _vision_request_open_code(prompt, images, selected_model, oc_base_url, oc_api_key)
+    else:
+        images = _collect_groq_images(file_bytes, filename, content_type)
+        if not images:
+            raise ValueError("No se pudo preparar la imagen")
+        groq_api_key = str(cfg.get("groq_api_key") or settings.GROQ_API_KEY or "").strip() or None
+        result = _vision_request_groq(prompt, images, selected_model, groq_api_key)
+
+    preguntas_out = []
+    nota_total = 0.0
+    for p_raw in (result.get("preguntas") or []):
+        if not isinstance(p_raw, dict):
+            continue
+        nota_p = float(p_raw.get("nota") or 0.0)
+        nota_max_p = float(p_raw.get("nota_maxima") or 1.0)
+        nota_total += nota_p
+        preguntas_out.append({
+            "numero": p_raw.get("numero"),
+            "tipo": str(p_raw.get("tipo") or ""),
+            "respuesta_estudiante": str(p_raw.get("respuesta_estudiante") or ""),
+            "respuesta_correcta": str(p_raw.get("respuesta_correcta") or ""),
+            "correcto": bool(p_raw.get("correcto")),
+            "nota": round(nota_p, 2),
+            "nota_maxima": round(nota_max_p, 2),
+            "retroalimentacion": str(p_raw.get("retroalimentacion") or ""),
+        })
+
+    return {
+        "nota_total": round(nota_total, 2),
+        "nota_maxima": round(nota_maxima_total, 2),
+        "preguntas": preguntas_out,
+        "calificacion_automatica": True,
+        "tiene_preguntas_abiertas": False,
+    }
+
+
 async def grade_interactive_with_vision(
     file_bytes: bytes,
     filename: str,
@@ -485,17 +716,19 @@ async def grade_interactive_with_vision(
 
     cfg = provider_config or {}
     provider = str(cfg.get("ocr_provider") or "groq_vision").strip().lower()
-    if provider not in ("groq_vision", "ollama_vision"):
+    if provider not in ("groq_vision", "ollama_vision", "open_code_vision"):
         provider = "groq_vision"
 
     selected_model = str(cfg.get("ocr_model") or "").strip()
     if provider == "ollama_vision" and not selected_model:
         selected_model = str(cfg.get("ocr_fallback_model") or "").strip()
+    if provider == "open_code_vision" and not selected_model:
+        selected_model = str(cfg.get("open_code_vision_model") or cfg.get("ocr_fallback_model") or "").strip()
     if provider == "groq_vision":
         selected_model = selected_model or DEFAULT_VISION_MODEL
 
-    if provider == "ollama_vision" and not selected_model:
-        raise ValueError("No hay modelo Ollama configurado para vision")
+    if provider in ("ollama_vision", "open_code_vision") and not selected_model:
+        raise ValueError("No hay modelo de vision configurado")
 
     if provider == "ollama_vision":
         images = _collect_ollama_images(file_bytes, filename, content_type)
@@ -507,13 +740,24 @@ async def grade_interactive_with_vision(
 
         async def vision_request(prompt: str, images_payload: Any, model_name: str) -> dict:
             return await _vision_request_ollama(prompt, images_payload, model_name, ollama_url, ollama_api_key)
+    elif provider == "open_code_vision":
+        images = _collect_ollama_images(file_bytes, filename, content_type)
+        if not images:
+            raise ValueError("No se pudo preparar la imagen para vision")
+
+        open_code_base_url = str(cfg.get("open_code_base_url") or settings.OPEN_CODE_BASE_URL or "").strip()
+        open_code_api_key = str(cfg.get("open_code_api_key") or settings.OPEN_CODE_API_KEY or "").strip() or None
+
+        async def vision_request(prompt: str, images_payload: Any, model_name: str) -> dict:
+            return await _vision_request_open_code(prompt, images_payload, model_name, open_code_base_url, open_code_api_key)
     else:
         images = _collect_groq_images(file_bytes, filename, content_type)
         if not images:
             raise ValueError("No se pudo preparar la imagen para vision")
+        groq_api_key = str(cfg.get("groq_api_key") or settings.GROQ_API_KEY or "").strip() or None
 
         async def vision_request(prompt: str, images_payload: Any, model_name: str) -> dict:
-            return _vision_request_groq(prompt, images_payload, model_name)
+            return _vision_request_groq(prompt, images_payload, model_name, groq_api_key)
 
     preguntas = []
     nota_total = 0.0
@@ -532,6 +776,9 @@ async def grade_interactive_with_vision(
         elif tipo == "emparejar":
             key_entries = claves.get("emparejar_respuestas") or []
             result = await _grade_emparejar_with_vision(images, content, key_entries, selected_model, vision_request)
+        elif tipo == "unir_columnas":
+            key_entries = claves.get("unir_columnas_respuestas") or []
+            result = await _grade_unir_columnas_with_vision(images, content, key_entries, selected_model, vision_request)
         else:
             result = None
 

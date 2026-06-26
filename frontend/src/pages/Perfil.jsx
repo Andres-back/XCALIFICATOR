@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+﻿import { useState, useEffect } from 'react';
 import useAuthStore from '../store';
 import api from '../api';
 import toast from 'react-hot-toast';
@@ -10,9 +10,26 @@ import {
   Lock,
   X,
   Cpu,
+  Cloud,
+  HardDrive,
   RefreshCw,
   ScanText,
 } from 'lucide-react';
+import PageGuide from '../components/GuidedTour';
+
+const DEFAULT_OLLAMA_URL = 'http://host.docker.internal:11434';
+const DEFAULT_OPEN_CODE_CONTENT_MODEL = 'Qwen3.7 Plus';
+const DEFAULT_OPEN_CODE_VISION_MODEL = 'Qwen3.7 Plus';
+const DEFAULT_OPEN_CODE_FEEDBACK_MODEL = 'DeepSeek V4 Pro';
+const FALLBACK_GROQ_MODELS = ['llama-3.3-70b-versatile', 'meta-llama/llama-4-scout-17b-16e-instruct'];
+const FALLBACK_OPEN_CODE_MODELS = [
+  'Qwen3.7 Plus',
+  'DeepSeek V4 Pro',
+  'DeepSeek V4 Flash',
+  'Qwen3.7 Max',
+  'GLM-5.1',
+  'MiniMax M2.7',
+];
 
 export default function Perfil() {
   const { user, updateUser } = useAuthStore();
@@ -25,15 +42,29 @@ export default function Perfil() {
   const [pwForm, setPwForm] = useState({ current_password: '', new_password: '' });
   const [pwLoading, setPwLoading] = useState(false);
   const [localAI, setLocalAI] = useState({
-    ollama_url: 'http://host.docker.internal:11434',
+    content_provider: 'open_code',
+    grading_provider: 'open_code',
+    ocr_provider: 'open_code_vision',
+    groq_api_key: '',
+    ollama_url: DEFAULT_OLLAMA_URL,
     ollama_api_key: '',
+    open_code_base_url: '',
+    open_code_api_key: '',
+    content_model: DEFAULT_OPEN_CODE_CONTENT_MODEL,
     grading_local_model: '',
-    ocr_local_model: '',
+    ocr_local_model: DEFAULT_OPEN_CODE_VISION_MODEL,
+    open_code_content_model: DEFAULT_OPEN_CODE_CONTENT_MODEL,
+    open_code_vision_model: DEFAULT_OPEN_CODE_VISION_MODEL,
+    open_code_feedback_model: DEFAULT_OPEN_CODE_FEEDBACK_MODEL,
   });
   const [localModels, setLocalModels] = useState([]);
+  const [localGroqModels, setLocalGroqModels] = useState(FALLBACK_GROQ_MODELS);
+  const [localOpenCodeModels, setLocalOpenCodeModels] = useState(FALLBACK_OPEN_CODE_MODELS);
   const [localLoading, setLocalLoading] = useState(false);
   const [localSaving, setLocalSaving] = useState(false);
   const [detectingModels, setDetectingModels] = useState(false);
+  const [detectingGroqModels, setDetectingGroqModels] = useState(false);
+  const [detectingOpenCodeModels, setDetectingOpenCodeModels] = useState(false);
 
   useEffect(() => {
     api.get('/notifications/preferences').then(res => setPrefs(res.data)).catch(() => {});
@@ -51,10 +82,20 @@ export default function Perfil() {
     try {
       const res = await api.get('/auth/me/local-ai-config');
       setLocalAI({
-        ollama_url: res.data?.ollama_url || 'http://host.docker.internal:11434',
+        content_provider: res.data?.content_provider || 'open_code',
+        grading_provider: res.data?.grading_provider || 'open_code',
+        ocr_provider: res.data?.ocr_provider || 'open_code_vision',
+        groq_api_key: res.data?.groq_api_key || '',
+        ollama_url: res.data?.ollama_url || DEFAULT_OLLAMA_URL,
         ollama_api_key: res.data?.ollama_api_key || '',
+        open_code_base_url: res.data?.open_code_base_url || '',
+        open_code_api_key: res.data?.open_code_api_key || '',
+        content_model: res.data?.content_model || DEFAULT_OPEN_CODE_CONTENT_MODEL,
         grading_local_model: res.data?.grading_local_model || '',
-        ocr_local_model: res.data?.ocr_local_model || '',
+        ocr_local_model: res.data?.ocr_local_model || DEFAULT_OPEN_CODE_VISION_MODEL,
+        open_code_content_model: res.data?.open_code_content_model || DEFAULT_OPEN_CODE_CONTENT_MODEL,
+        open_code_vision_model: res.data?.open_code_vision_model || DEFAULT_OPEN_CODE_VISION_MODEL,
+        open_code_feedback_model: res.data?.open_code_feedback_model || DEFAULT_OPEN_CODE_FEEDBACK_MODEL,
       });
     } catch (err) {
       toast.error(err.response?.data?.detail || 'No se pudo cargar configuración local IA');
@@ -85,21 +126,73 @@ export default function Perfil() {
     }
   };
 
+  const detectGroq = async () => {
+    setDetectingGroqModels(true);
+    try {
+      const res = await api.get('/auth/me/groq-models');
+      const models = Array.isArray(res.data?.grading_models) && res.data.grading_models.length
+        ? res.data.grading_models
+        : FALLBACK_GROQ_MODELS;
+      setLocalGroqModels(models);
+      toast.success(`Modelos Groq detectados: ${models.length}`);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'No se pudo consultar Groq Cloud');
+    } finally {
+      setDetectingGroqModels(false);
+    }
+  };
+
+  const detectOpenCode = async () => {
+    setDetectingOpenCodeModels(true);
+    try {
+      const res = await api.get('/auth/me/open-code-models');
+      const models = Array.isArray(res.data?.all_models) && res.data.all_models.length
+        ? res.data.all_models
+        : FALLBACK_OPEN_CODE_MODELS;
+      setLocalOpenCodeModels(models);
+      toast.success(`Modelos Open Code detectados: ${models.length}`);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'No se pudo consultar Open Code');
+    } finally {
+      setDetectingOpenCodeModels(false);
+    }
+  };
+
   const saveLocalAIConfig = async () => {
     setLocalSaving(true);
     try {
       const payload = {
         ollama_url: localAI.ollama_url || null,
         ollama_api_key: localAI.ollama_api_key || null,
+        content_provider: localAI.content_provider || null,
+        grading_provider: localAI.grading_provider || null,
+        ocr_provider: localAI.ocr_provider || null,
+        groq_api_key: localAI.groq_api_key || null,
+        open_code_base_url: localAI.open_code_base_url || null,
+        open_code_api_key: localAI.open_code_api_key || null,
+        content_model: localAI.content_model || null,
         grading_local_model: localAI.grading_local_model || null,
         ocr_local_model: localAI.ocr_local_model || null,
+        open_code_content_model: localAI.open_code_content_model || null,
+        open_code_vision_model: localAI.open_code_vision_model || null,
+        open_code_feedback_model: localAI.open_code_feedback_model || null,
       };
       const res = await api.put('/auth/me/local-ai-config', payload);
       setLocalAI({
-        ollama_url: res.data?.ollama_url || 'http://host.docker.internal:11434',
+        content_provider: res.data?.content_provider || 'open_code',
+        grading_provider: res.data?.grading_provider || 'open_code',
+        ocr_provider: res.data?.ocr_provider || 'open_code_vision',
+        groq_api_key: res.data?.groq_api_key || '',
+        ollama_url: res.data?.ollama_url || DEFAULT_OLLAMA_URL,
         ollama_api_key: res.data?.ollama_api_key || '',
+        open_code_base_url: res.data?.open_code_base_url || '',
+        open_code_api_key: res.data?.open_code_api_key || '',
+        content_model: res.data?.content_model || DEFAULT_OPEN_CODE_CONTENT_MODEL,
         grading_local_model: res.data?.grading_local_model || '',
-        ocr_local_model: res.data?.ocr_local_model || '',
+        ocr_local_model: res.data?.ocr_local_model || DEFAULT_OPEN_CODE_VISION_MODEL,
+        open_code_content_model: res.data?.open_code_content_model || DEFAULT_OPEN_CODE_CONTENT_MODEL,
+        open_code_vision_model: res.data?.open_code_vision_model || DEFAULT_OPEN_CODE_VISION_MODEL,
+        open_code_feedback_model: res.data?.open_code_feedback_model || DEFAULT_OPEN_CODE_FEEDBACK_MODEL,
       });
       toast.success('Configuración local guardada');
     } catch (err) {
@@ -160,24 +253,49 @@ export default function Perfil() {
     }
   };
 
+  const contentModelOptions = localAI.content_provider === 'open_code'
+    ? localOpenCodeModels
+    : localAI.content_provider === 'groq'
+      ? localGroqModels
+      : localModels;
+  const gradingModelOptions = localAI.grading_provider === 'open_code'
+    ? localOpenCodeModels
+    : localAI.grading_provider === 'groq'
+      ? localGroqModels
+      : localModels;
+  const ocrModelOptions = localAI.ocr_provider === 'open_code_vision'
+    ? localOpenCodeModels
+    : localAI.ocr_provider === 'groq_vision'
+      ? localGroqModels
+      : localModels;
+
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900">Mi Perfil</h1>
+    <div className="max-w-4xl mx-auto space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <h1 className="text-2xl font-bold text-gray-900">Mi Perfil</h1>
+        <PageGuide
+          storageKey="guide-perfil"
+          steps={[
+            { title: 'Tus datos de cuenta', body: 'Aquí ves tu nombre, correo y teléfono. Toca Editar para actualizarlos o cambiar tu contraseña; revisa bien antes de guardar.', selector: '[data-guide="perfil-info"]' },
+            { title: 'Tu IA personal', body: 'Como profesor puedes revisar los modelos de IA de tu cuenta. Si lo dejas vacío, se usa la configuración del administrador. No compartas tus llaves ni las copies en chats.', selector: '[data-guide="perfil-ia"]' },
+          ]}
+        />
+      </div>
 
       {/* Info */}
-      <div className="card">
+      <div data-guide="perfil-info" className="card">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <User className="w-5 h-5 text-primary-600" />
-            <h2 className="text-lg font-semibold">Información Personal</h2>
+            <h2 className="text-lg font-semibold">Información personal</h2>
           </div>
           {!editing ? (
-            <button onClick={() => setEditing(true)}
+            <button data-guide="perfil-editar" onClick={() => setEditing(true)}
               className="text-sm text-primary-600 hover:text-primary-700 flex items-center gap-1">
               <Pencil className="w-4 h-4" /> Editar
             </button>
           ) : (
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button onClick={() => setEditing(false)}
                 className="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1">
                 <X className="w-4 h-4" /> Cancelar
@@ -208,14 +326,14 @@ export default function Perfil() {
                 onChange={e => setForm(p => ({...p, celular: e.target.value}))}
                 placeholder="Número de celular" />
             </div>
-            <div className="grid grid-cols-2 gap-4 text-sm pt-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm pt-2">
               <div><span className="text-gray-500">Documento:</span> <span className="font-medium">{user?.documento}</span></div>
               <div><span className="text-gray-500">Correo:</span> <span className="font-medium">{user?.correo}</span></div>
               <div><span className="text-gray-500">Rol:</span> <span className="font-medium capitalize">{user?.rol}</span></div>
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-4 text-sm">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
             <div><span className="text-gray-500">Nombre:</span> <span className="font-medium">{user?.nombre} {user?.apellido}</span></div>
             <div><span className="text-gray-500">Documento:</span> <span className="font-medium">{user?.documento}</span></div>
             <div><span className="text-gray-500">Correo:</span> <span className="font-medium">{user?.correo}</span></div>
@@ -256,9 +374,9 @@ export default function Perfil() {
                 minLength={8}
               />
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button type="submit" disabled={pwLoading}
-                className="btn-primary text-sm px-4 py-2">Cambiar Contraseña</button>
+                className="btn-primary text-sm px-4 py-2">Cambiar contraseña</button>
               <button
                 type="button"
                 onClick={() => {
@@ -271,7 +389,7 @@ export default function Perfil() {
         ) : (
           <button onClick={() => setShowPwForm(true)}
             className="btn-secondary text-sm flex items-center gap-2">
-            <Lock className="w-4 h-4" /> Cambiar Contraseña
+            <Lock className="w-4 h-4" /> Cambiar contraseña
           </button>
         )}
       </div>
@@ -313,7 +431,7 @@ export default function Perfil() {
           <h3 className="text-sm font-semibold text-gray-800 mb-2">Vincular Telegram</h3>
           {prefs.telegram_chat_id ? (
             <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-sm text-green-800">
-              ✅ Telegram vinculado. Recibirás notificaciones en tu cuenta.
+              Telegram vinculado. Recibirás notificaciones en tu cuenta.
             </div>
           ) : tgLink.code ? (
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-2 text-sm">
@@ -372,14 +490,14 @@ export default function Perfil() {
       </div>
 
       {user?.rol === 'profesor' && (
-        <div className="card space-y-4">
+        <div data-guide="perfil-ia" className="card space-y-4">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <Cpu className="w-5 h-5 text-primary-600" />
               <div>
-                <h2 className="text-lg font-semibold">IA Ollama (local o cloud)</h2>
+                <h2 className="text-lg font-semibold">IA y OCR</h2>
                 <p className="text-xs text-gray-500">
-                  Selecciona tus modelos Ollama para usar en modo local o cloud.
+                  Configura tus propias claves y modelos. Si dejas campos vacios se usa la configuracion global.
                 </p>
               </div>
             </div>
@@ -393,80 +511,166 @@ export default function Perfil() {
             </button>
           </div>
 
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">URL de Ollama</label>
-            <input
-              type="text"
-              className="input-field"
-              value={localAI.ollama_url}
-              onChange={(e) => setLocalAI((prev) => ({ ...prev, ollama_url: e.target.value }))}
-              placeholder="http://host.docker.internal:11434"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">API Key (opcional)</label>
-            <input
-              type="password"
-              className="input-field"
-              value={localAI.ollama_api_key}
-              onChange={(e) => setLocalAI((prev) => ({ ...prev, ollama_api_key: e.target.value }))}
-              placeholder="Bearer token si aplica"
-            />
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={detectModels}
-              className="btn-secondary text-sm flex items-center gap-2"
-              disabled={detectingModels}
-            >
-              <ScanText className={`w-4 h-4 ${detectingModels ? 'animate-spin' : ''}`} />
-              Detectar modelos (ollama list)
-            </button>
-            <button
-              type="button"
-              onClick={saveLocalAIConfig}
-              className="btn-primary text-sm flex items-center gap-2"
-              disabled={localSaving}
-            >
-              {localSaving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Guardar IA local
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Modelo local para calificación</label>
-              <select
-                className="input-field"
-                value={localAI.grading_local_model}
-                onChange={(e) => setLocalAI((prev) => ({ ...prev, grading_local_model: e.target.value }))}
-              >
-                <option value="">Sin modelo seleccionado</option>
-                {localModels.map((model) => (
-                  <option key={`g-${model}`} value={model}>{model}</option>
-                ))}
-              </select>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+            <div className="border border-gray-200 rounded-xl p-3 space-y-3">
+              <div className="flex items-center gap-2">
+                <Cloud className="w-4 h-4 text-primary-600" />
+                <h3 className="text-sm font-semibold">Groq Cloud</h3>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">API key</label>
+                <input
+                  type="password"
+                  className="input-field"
+                  value={localAI.groq_api_key}
+                  onChange={(e) => setLocalAI((prev) => ({ ...prev, groq_api_key: e.target.value }))}
+                  placeholder="Opcional"
+                />
+              </div>
+              <button type="button" onClick={detectGroq} className="btn-secondary text-sm flex items-center gap-2" disabled={detectingGroqModels}>
+                <RefreshCw className={`w-4 h-4 ${detectingGroqModels ? 'animate-spin' : ''}`} />
+                Detectar Groq
+              </button>
             </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Modelo local para OCR</label>
-              <select
-                className="input-field"
-                value={localAI.ocr_local_model}
-                onChange={(e) => setLocalAI((prev) => ({ ...prev, ocr_local_model: e.target.value }))}
-              >
-                <option value="">Sin modelo seleccionado</option>
-                {localModels.map((model) => (
-                  <option key={`o-${model}`} value={model}>{model}</option>
-                ))}
-              </select>
+
+            <div className="border border-gray-200 rounded-xl p-3 space-y-3">
+              <div className="flex items-center gap-2">
+                <HardDrive className="w-4 h-4 text-primary-600" />
+                <h3 className="text-sm font-semibold">Ollama</h3>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">URL</label>
+                <input
+                  type="text"
+                  className="input-field"
+                  value={localAI.ollama_url}
+                  onChange={(e) => setLocalAI((prev) => ({ ...prev, ollama_url: e.target.value }))}
+                  placeholder={DEFAULT_OLLAMA_URL}
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">API key</label>
+                <input
+                  type="password"
+                  className="input-field"
+                  value={localAI.ollama_api_key}
+                  onChange={(e) => setLocalAI((prev) => ({ ...prev, ollama_api_key: e.target.value }))}
+                  placeholder="Opcional"
+                />
+              </div>
+              <button type="button" onClick={detectModels} className="btn-secondary text-sm flex items-center gap-2" disabled={detectingModels}>
+                <ScanText className={`w-4 h-4 ${detectingModels ? 'animate-spin' : ''}`} />
+                Detectar Ollama
+              </button>
+            </div>
+
+            <div className="border border-gray-200 rounded-xl p-3 space-y-3">
+              <div className="flex items-center gap-2">
+                <ScanText className="w-4 h-4 text-primary-600" />
+                <h3 className="text-sm font-semibold">Open Code</h3>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">URL base</label>
+                <input
+                  type="text"
+                  className="input-field"
+                  value={localAI.open_code_base_url}
+                  onChange={(e) => setLocalAI((prev) => ({ ...prev, open_code_base_url: e.target.value }))}
+                  placeholder="Gateway OpenAI-compatible"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">API key</label>
+                <input
+                  type="password"
+                  className="input-field"
+                  value={localAI.open_code_api_key}
+                  onChange={(e) => setLocalAI((prev) => ({ ...prev, open_code_api_key: e.target.value }))}
+                  placeholder="Open Code API key"
+                />
+              </div>
+              <button type="button" onClick={detectOpenCode} className="btn-secondary text-sm flex items-center gap-2" disabled={detectingOpenCodeModels}>
+                <RefreshCw className={`w-4 h-4 ${detectingOpenCodeModels ? 'animate-spin' : ''}`} />
+                Detectar Open Code
+              </button>
             </div>
           </div>
 
-          <p className="text-xs text-amber-700 bg-amber-50 rounded p-2">
-            La configuración de Groq Cloud la administra el equipo de administración. Esta sección controla solo el uso de Ollama.
-          </p>
+          <div className="border border-gray-200 rounded-xl p-3 space-y-3">
+            <h3 className="text-sm font-semibold">Que usa mi cuenta</h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Generacion</label>
+                <select
+                  className="input-field"
+                  value={localAI.content_provider}
+                  onChange={(e) => setLocalAI((prev) => ({ ...prev, content_provider: e.target.value }))}
+                >
+                  <option value="open_code">Open Code</option>
+                  <option value="groq">Groq Cloud</option>
+                  <option value="ollama">Ollama</option>
+                </select>
+                <select
+                  className="input-field mt-2"
+                  value={localAI.content_model}
+                  onChange={(e) => setLocalAI((prev) => ({ ...prev, content_model: e.target.value }))}
+                >
+                  <option value="">Selecciona modelo</option>
+                  {contentModelOptions.map((model) => <option key={`content-${model}`} value={model}>{model}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Retroalimentacion</label>
+                <select
+                  className="input-field"
+                  value={localAI.grading_provider}
+                  onChange={(e) => setLocalAI((prev) => ({ ...prev, grading_provider: e.target.value }))}
+                >
+                  <option value="open_code">Open Code</option>
+                  <option value="groq">Groq Cloud</option>
+                  <option value="ollama">Ollama</option>
+                </select>
+                <select
+                  className="input-field mt-2"
+                  value={localAI.grading_local_model}
+                  onChange={(e) => setLocalAI((prev) => ({ ...prev, grading_local_model: e.target.value }))}
+                >
+                  <option value="">Selecciona modelo</option>
+                  {gradingModelOptions.map((model) => <option key={`grading-${model}`} value={model}>{model}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">OCR / Vision</label>
+                <select
+                  className="input-field"
+                  value={localAI.ocr_provider}
+                  onChange={(e) => setLocalAI((prev) => ({ ...prev, ocr_provider: e.target.value }))}
+                >
+                  <option value="open_code_vision">Open Code Vision</option>
+                  <option value="groq_vision">Groq Vision</option>
+                  <option value="ollama_vision">Ollama Vision</option>
+                </select>
+                <select
+                  className="input-field mt-2"
+                  value={localAI.ocr_local_model}
+                  onChange={(e) => setLocalAI((prev) => ({ ...prev, ocr_local_model: e.target.value }))}
+                >
+                  <option value="">Selecciona modelo</option>
+                  {ocrModelOptions.map((model) => <option key={`ocr-${model}`} value={model}>{model}</option>)}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={saveLocalAIConfig}
+            className="btn-primary text-sm flex items-center gap-2"
+            disabled={localSaving}
+          >
+            {localSaving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            Guardar IA y OCR
+          </button>
         </div>
       )}
     </div>

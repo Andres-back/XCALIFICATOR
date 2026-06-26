@@ -12,18 +12,20 @@
  * un solo click por acción, copy claro.
  */
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../../api';
 import toast from 'react-hot-toast';
+import { openPresentonEditorWithSession } from '../../utils/presenton';
 import {
   Download, Plus, Presentation, RefreshCw, Trash2,
   Sparkles, Calendar, GraduationCap, Loader2, Image,
-  ExternalLink, ArrowRight,
+  ExternalLink, ArrowRight, FileQuestion, X,
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 import { es } from 'date-fns/locale';
 import EmptyState from '../../components/EmptyState';
 import ConfirmDialog from '../../components/ConfirmDialog';
+import PageGuide from '../../components/GuidedTour';
 
 // ── Subtipo → metadata visual ─────────────────────────────────────────
 const SUBTYPE_META = {
@@ -40,7 +42,7 @@ const COLOR_CLASSES = {
 };
 
 // ── Card de una presentación ──────────────────────────────────────────
-function PresentationCard({ pres, onDelete }) {
+function PresentationCard({ pres, onDelete, onGenerateQuiz, creatingQuizId }) {
   const meta = SUBTYPE_META[pres.subtipo] || SUBTYPE_META.default;
   const colors = COLOR_CLASSES[meta.color] || COLOR_CLASSES.profesor;
   const thumb = pres.thumbnails?.[0];
@@ -51,15 +53,12 @@ function PresentationCard({ pres, onDelete }) {
     if (!pres.edit_url) return;
     setOpeningEditor(true);
     try {
-      const res = await api.get('/presentaciones/presenton-token');
-      const token = res.data.token;
-      document.cookie = `presenton_session=${token}; path=/; SameSite=Lax; max-age=86400`;
+      await openPresentonEditorWithSession(pres);
     } catch {
-      // Si falla la obtención del token, el usuario verá el login de Presenton
+      toast.error('No se pudo abrir el editor de Presenton');
     } finally {
       setOpeningEditor(false);
     }
-    window.open(pres.edit_url, '_blank', 'noopener,noreferrer');
   };
 
   return (
@@ -73,7 +72,7 @@ function PresentationCard({ pres, onDelete }) {
           <img
             src={thumb}
             alt={pres.titulo}
-            className="w-full h-full object-cover"
+            className="w-full h-full object-contain p-2"
             loading="lazy"
           />
         ) : (
@@ -115,7 +114,7 @@ function PresentationCard({ pres, onDelete }) {
         </div>
 
         {/* Action buttons */}
-        <div className="flex items-center gap-2">
+        <div className="grid grid-cols-2 gap-2">
           {pres.pptx_url && (
             <a
               href={pres.pptx_url}
@@ -132,12 +131,29 @@ function PresentationCard({ pres, onDelete }) {
               Descargar
             </a>
           )}
+          <button
+            type="button"
+            onClick={() => onGenerateQuiz(pres)}
+            disabled={creatingQuizId === pres.id}
+            title="Generar quiz desde esta presentación"
+            className="
+              inline-flex items-center justify-center gap-1.5
+              bg-emerald-50 hover:bg-emerald-100 text-emerald-700
+              border border-emerald-200 font-semibold text-xs rounded-lg py-2 px-3
+              transition-colors disabled:opacity-60
+            "
+          >
+            {creatingQuizId === pres.id
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              : <FileQuestion className="w-3.5 h-3.5" />}
+            Quiz
+          </button>
           {pres.edit_url && (
             <button
               type="button"
               onClick={handleOpenEditor}
               disabled={openingEditor}
-              title="Abrir editor de Presenton"
+              title="Editar manualmente en Presenton"
               className="inline-flex items-center justify-center gap-1.5 border border-gray-300 hover:bg-gray-50 text-gray-600 rounded-lg p-2 transition-colors disabled:opacity-60"
             >
               {openingEditor
@@ -161,10 +177,15 @@ function PresentationCard({ pres, onDelete }) {
 
 // ── Página principal ─────────────────────────────────────────────────
 export default function MisPresentaciones() {
+  const navigate = useNavigate();
   const [items, setItems]   = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter]   = useState('all'); // all | clase | repaso_examen | boletin_periodo
   const [confirm, setConfirm] = useState(null);   // presentación a eliminar
+  const [creatingQuizId, setCreatingQuizId] = useState(null);
+  const [quizModal, setQuizModal] = useState(null);
+  const [materias, setMaterias] = useState([]);
+  const [loadingMaterias, setLoadingMaterias] = useState(false);
 
   const fetchItems = async () => {
     try {
@@ -191,6 +212,42 @@ export default function MisPresentaciones() {
       toast.error('No pudimos eliminar');
     } finally {
       setConfirm(null);
+    }
+  };
+
+  const loadMaterias = async () => {
+    setLoadingMaterias(true);
+    try {
+      const { data } = await api.get('/materias/mis-materias');
+      setMaterias(data || []);
+    } catch {
+      toast.error('No pudimos cargar tus materias');
+      setMaterias([]);
+    } finally {
+      setLoadingMaterias(false);
+    }
+  };
+
+  const createQuiz = async (pres, materiaId) => {
+    const selectedMateriaId = materiaId || pres.materia_id;
+    if (!selectedMateriaId) {
+      setQuizModal({ pres, materiaId: '' });
+      if (materias.length === 0) loadMaterias();
+      return;
+    }
+    setCreatingQuizId(pres.id);
+    try {
+      await api.post(`/presentaciones/${pres.id}/quiz`, {
+        materia_id: selectedMateriaId,
+        num_preguntas: 5,
+      });
+      toast.success('Quiz guardado en Mis Exámenes');
+      setQuizModal(null);
+      navigate(`/profesor/examenes/${selectedMateriaId}`);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'No pudimos generar el quiz');
+    } finally {
+      setCreatingQuizId(null);
     }
   };
 
@@ -224,7 +281,15 @@ export default function MisPresentaciones() {
             Todas las diapositivas que has generado, listas para descargar o reusar.
           </p>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <PageGuide
+            storageKey="guide-profesor-mis-presentaciones"
+            steps={[
+              { title: 'Filtra por tipo', body: 'Separa tus diapositivas de clase, los repasos de examen y los boletines cuando tengas varias guardadas.', selector: '[data-guide="presentaciones-filtros"]' },
+              { title: 'Descarga el PPTX', body: 'En cada tarjeta, el boton PPTX te da el archivo para abrirlo en PowerPoint o compartirlo.', selector: '[data-guide="presentaciones-lista"]' },
+              { title: 'Edita sin salir', body: 'Tambien puedes abrir el editor desde la tarjeta para cambiar texto, imagenes, iconos o el orden de las diapositivas.', selector: '[data-guide="presentaciones-lista"]' },
+            ]}
+          />
           <button
             onClick={fetchItems}
             disabled={loading}
@@ -234,6 +299,7 @@ export default function MisPresentaciones() {
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
           <Link
+            data-guide="presentaciones-nueva"
             to="/profesor/presentacion"
             className="
               inline-flex items-center gap-2 font-semibold text-sm rounded-lg
@@ -250,7 +316,7 @@ export default function MisPresentaciones() {
 
       {/* Filter tabs */}
       {!loading && items.length > 0 && (
-        <div className="flex gap-2 overflow-x-auto pb-1 mb-5">
+        <div data-guide="presentaciones-filtros" className="flex gap-2 overflow-x-auto pb-1 mb-5">
           {FILTER_TABS.map((tab) => {
             const active = filter === tab.id;
             return (
@@ -277,7 +343,7 @@ export default function MisPresentaciones() {
 
       {/* Content */}
       {loading ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+        <div data-guide="presentaciones-lista" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
           {Array.from({ length: 6 }).map((_, i) => (
             <div key={i} className="bg-white rounded-2xl border border-surface-border overflow-hidden">
               <div className="aspect-video skeleton rounded-none" />
@@ -328,8 +394,58 @@ export default function MisPresentaciones() {
               key={pres.id}
               pres={pres}
               onDelete={(p) => setConfirm(p)}
+              onGenerateQuiz={createQuiz}
+              creatingQuizId={creatingQuizId}
             />
           ))}
+        </div>
+      )}
+
+      {quizModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-xl border border-gray-200 p-5">
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">Guardar quiz en una materia</h2>
+                <p className="text-sm text-gray-500 mt-1">
+                  El quiz quedará en Mis Exámenes para asignarlo o editarlo.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setQuizModal(null)}
+                className="rounded-lg p-2 text-gray-500 hover:bg-gray-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Materia</label>
+            <select
+              className="input-field"
+              value={quizModal.materiaId}
+              onChange={(e) => setQuizModal((prev) => ({ ...prev, materiaId: e.target.value }))}
+              disabled={loadingMaterias}
+            >
+              <option value="">{loadingMaterias ? 'Cargando materias...' : 'Selecciona una materia'}</option>
+              {materias.map((materia) => (
+                <option key={materia.id} value={materia.id}>{materia.nombre}</option>
+              ))}
+            </select>
+            <div className="flex flex-col sm:flex-row justify-end gap-2 mt-5">
+              <button type="button" className="btn-secondary" onClick={() => setQuizModal(null)}>
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="btn-primary inline-flex items-center justify-center gap-2"
+                disabled={!quizModal.materiaId || creatingQuizId === quizModal.pres.id}
+                onClick={() => createQuiz(quizModal.pres, quizModal.materiaId)}
+              >
+                {creatingQuizId === quizModal.pres.id && <Loader2 className="w-4 h-4 animate-spin" />}
+                Generar quiz
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

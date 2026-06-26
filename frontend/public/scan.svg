@@ -1,0 +1,31 @@
+<svg width="320" height="320" viewBox="0 0 320 320" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="320" height="320" rx="48" fill="#F4F7FB"></rect>
+
+  <!-- Documento -->
+  <rect x="78" y="52" width="164" height="216" rx="18" fill="white" stroke="#1E293B" stroke-width="6"></rect>
+  <path d="M206 52V96C206 103 212 109 219 109H242" fill="#E2E8F0"></path>
+  <path d="M206 52V94C206 102 212 108 220 108H242" stroke="#1E293B" stroke-width="6" stroke-linejoin="round"></path>
+
+  <!-- Líneas del examen -->
+  <rect x="105" y="118" width="86" height="8" rx="4" fill="#CBD5E1"></rect>
+  <rect x="105" y="142" width="112" height="8" rx="4" fill="#CBD5E1"></rect>
+  <rect x="105" y="166" width="76" height="8" rx="4" fill="#CBD5E1"></rect>
+
+  <!-- Check -->
+  <circle cx="216" cy="183" r="32" fill="#22C55E"></circle>
+  <path d="M201 183L212 194L233 170" stroke="white" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"></path>
+
+  <!-- Cerebro IA simplificado -->
+  <circle cx="122" cy="210" r="30" fill="#6366F1"></circle>
+  <path d="M108 212C103 207 104 197 112 194C114 186 125 184 130 191C139 189 146 197 143 206C149 212 145 224 135 224H116C109 224 104 218 108 212Z" fill="white"></path>
+  
+  <!-- Circuitos -->
+  <circle cx="113" cy="208" r="3" fill="#6366F1"></circle>
+  <circle cx="127" cy="201" r="3" fill="#6366F1"></circle>
+  <circle cx="135" cy="214" r="3" fill="#6366F1"></circle>
+  <path d="M113 208H127M127 201V214H135" stroke="#6366F1" stroke-width="3" stroke-linecap="round"></path>
+
+  <!-- Burbuja feedback -->
+  <rect x="102" y="24" width="116" height="38" rx="19" fill="#0F172A"></rect>
+  <text x="160" y="49" text-anchor="middle" font-size="16" font-family="Arial" fill="white">Feedback IA</text>
+</svg>

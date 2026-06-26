@@ -8,9 +8,10 @@ from typing import Any
 import httpx
 from groq import Groq
 
-from app.core.config import get_settings
+from app.core.config import get_settings, normalize_ollama_native_url
 from app.services.google_slides_service import GoogleSlidesService
 from app.services.presenton_service import PresentonService
+from app.routers.ai_assets import classify_image_policy
 
 
 settings = get_settings()
@@ -76,13 +77,16 @@ def _build_planner_prompt(
         "  ]\n"
         "}\n\n"
         "Reglas:\n"
-        f"1. Genera exactamente {n_slides} slides.\n"
-        "2. Cada slide debe tener titulo breve y contenido pedagogico claro.\n"
-        "3. Incluye ejemplos y mini-actividad cuando aplique.\n"
-        "4. No escribas texto fuera del JSON.\n"
-        f"5. Idioma objetivo: {language}.\n"
-        f"6. Nivel de complejidad: {level}.\n"
-        f"7. Grado sugerido: {grade or 'no especificado'}.\n\n"
+        f"1. Genera exactamente {n_slides} slides; este total ya incluye portada, contenido y cierre.\n"
+        "2. Cada slide debe tener titulo breve, contenido pedagogico claro y vocabulario natural en espanol.\n"
+        "3. Incluye ejemplos concretos, mini-actividad o pregunta guia cuando aplique.\n"
+        "4. Haz la secuencia como una clase real: inicio, desarrollo, practica guiada, verificacion y cierre.\n"
+        "5. image_query debe describir una imagen educativa concreta, sin texto dentro de la imagen salvo que sea una ficha de letras o rotulos indispensables.\n"
+        "6. Para ejercicios matematicos, quimicos o cientificos, image_query debe pedir precision visual y composicion limpia.\n"
+        "7. No escribas texto fuera del JSON.\n"
+        f"8. Idioma objetivo: {language}.\n"
+        f"9. Nivel de complejidad: {level}.\n"
+        f"10. Grado sugerido: {grade or 'no especificado'}.\n\n"
         "Contexto:\n"
         f"- Tema: {topic}\n"
         f"- Titulo sugerido: {title or topic}\n"
@@ -160,6 +164,7 @@ def _slides_to_markdown(slides: list[dict[str, Any]]) -> list[str]:
         body = str(slide.get("body") or "").strip()
         bullets = slide.get("bullets") if isinstance(slide.get("bullets"), list) else []
         image_url = str(slide.get("image_url") or "").strip()
+        image_prompt = str(slide.get("image_prompt") or "").strip()
 
         lines: list[str] = [f"# {title}"]
         if body:
@@ -172,6 +177,8 @@ def _slides_to_markdown(slides: list[dict[str, Any]]) -> list[str]:
 
         if image_url:
             lines.append(f"![{title}]({image_url})")
+        elif image_prompt:
+            lines.append(f"Imagen educativa sugerida: {image_prompt}")
 
         output.append("\n".join(lines))
 
@@ -206,12 +213,37 @@ async def _plan_with_groq(prompt: str) -> dict[str, Any]:
     return await asyncio.to_thread(_plan_with_groq_sync, prompt)
 
 
+async def _plan_with_open_code(
+    *,
+    prompt: str,
+    base_url: str,
+    api_key: str,
+    model: str,
+) -> dict[str, Any]:
+    from app.services.open_code_service import open_code_chat_completion, OPEN_CODE_RECOMMENDED_MODELS
+    oc_model = model.strip() or OPEN_CODE_RECOMMENDED_MODELS["content"]
+    result = await open_code_chat_completion(
+        messages=[
+            {"role": "system", "content": "Genera contenido educativo para presentaciones y responde solo JSON."},
+            {"role": "user", "content": prompt},
+        ],
+        model=oc_model,
+        base_url=base_url or None,
+        api_key=api_key or None,
+        temperature=0.35,
+        max_tokens=4096,
+        response_format={"type": "json_object"},
+    )
+    raw = (((result.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+    return _extract_json_object(raw)
+
+
 async def _plan_with_ollama(*, prompt: str, ollama_url: str, ollama_model: str) -> dict[str, Any]:
     model = str(ollama_model or "").strip()
     if not model:
         raise ValueError("No hay modelo Ollama configurado para presentaciones")
 
-    base = str(ollama_url or settings.OLLAMA_URL or "").strip().rstrip("/")
+    base = normalize_ollama_native_url(ollama_url or settings.OLLAMA_URL)
     if not base:
         raise ValueError("No hay OLLAMA_URL configurada")
 
@@ -292,21 +324,33 @@ class PresentationService:
 
         ollama_url = str(input_payload.get("ollama_url") or settings.OLLAMA_URL or "").strip()
         ollama_model = str(input_payload.get("ollama_model") or settings.OLLAMA_PRESENTATION_MODEL or "").strip()
+        open_code_base_url = str(input_payload.get("open_code_base_url") or "").strip()
+        open_code_api_key = str(input_payload.get("open_code_api_key") or "").strip()
+        open_code_model = str(input_payload.get("open_code_model") or "").strip()
+        # OpenAI queda RESTRINGIDO a imágenes; la key se conserva solo para ilustrar
+        # slides, nunca para el planning de texto.
+        openai_api_key = str(input_payload.get("openai_api_key") or settings.OPENAI_API_KEY or "").strip()
 
         use_generated_images = bool(input_payload.get("use_generated_images", False))
 
         export_google_slides = bool(input_payload.get("export_google_slides"))
 
         provider_used = ""
+        open_code_ready = bool(open_code_base_url and open_code_api_key)
 
-        if mode == "cloud":
-            provider_used = "groq"
-        elif mode == "local":
+        if mode == "local":
             provider_used = "ollama"
+        elif mode == "cloud":
+            provider_used = "open_code" if open_code_ready else "groq"
         else:
-            provider_used = "groq" if await _groq_cloud_ready() else "ollama"
+            if open_code_ready:
+                provider_used = "open_code"
+            elif await _groq_cloud_ready():
+                provider_used = "groq"
+            else:
+                provider_used = "ollama"
 
-        provider_mode_used = "cloud" if provider_used == "groq" else "local"
+        provider_mode_used = "local" if provider_used == "ollama" else "cloud"
 
         prompt = _build_planner_prompt(
             topic=topic,
@@ -319,7 +363,17 @@ class PresentationService:
             instructions=instructions,
         )
 
-        if provider_used == "groq":
+        if provider_used == "open_code":
+            try:
+                planning_payload = await _plan_with_open_code(
+                    prompt=prompt,
+                    base_url=open_code_base_url,
+                    api_key=open_code_api_key,
+                    model=open_code_model,
+                )
+            except Exception:
+                planning_payload = await _plan_with_groq(prompt) if await _groq_cloud_ready() else await _plan_with_ollama(prompt=prompt, ollama_url=ollama_url, ollama_model=ollama_model)
+        elif provider_used == "groq":
             planning_payload = await _plan_with_groq(prompt)
         else:
             planning_payload = await _plan_with_ollama(
@@ -331,13 +385,19 @@ class PresentationService:
         slides = _coerce_slides(planning_payload, n_slides)
 
         if use_generated_images:
-            for slide in slides:
+            for idx, slide in enumerate(slides, start=1):
+                if idx % 2 == 0:
+                    slide["image_provider"] = "none"
+                    slide["image_policy"] = "text_slide"
+                    continue
                 image_prompt = str(slide.get("image_query") or slide.get("title") or topic).strip()
                 slide["image_prompt"] = (
-                    f"Ilustracion educativa clara para diapositiva: {image_prompt}. "
-                    f"Tema: {topic}. Estilo limpio, apto para clase, sin texto dentro de la imagen."
+                    f"Ilustracion educativa para diapositiva en espanol: {image_prompt}. "
+                    f"Tema: {topic}. Estilo limpio, apto para clase, sujeto completo dentro del marco, "
+                    "sin recortes, sin texto dentro de la imagen salvo que sea necesario para una ficha o rotulo."
                 )
-                slide["image_provider"] = "pending_internal_image_api"
+                slide["image_provider"] = "hybrid_auto"
+                slide["image_policy"] = classify_image_policy(slide["image_prompt"], kind="slide")
 
         slides_markdown = _slides_to_markdown(slides)
 
@@ -357,7 +417,7 @@ class PresentationService:
                         "language": language,
                         "template": template,
                         "include_table_of_contents": include_toc,
-                        "include_title_slide": include_title,
+                        "include_title_slide": False,
                         "export_as": export_as,
                     }
                 )

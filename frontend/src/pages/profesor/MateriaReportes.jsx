@@ -1,10 +1,13 @@
 import { useState, useEffect } from 'react';
 import api from '../../api';
 import toast from 'react-hot-toast';
+import { usePeriodos } from '../../hooks/usePeriodos';
 import {
   BarChart3, Save, Loader2, Send, Settings2, Hand, FileSpreadsheet,
+  Trash2,
 } from 'lucide-react';
 import EmptyState from '../../components/EmptyState';
+import PageGuide from '../../components/GuidedTour';
 
 const TIPO_LABELS = {
   examen: 'Examen',
@@ -12,6 +15,7 @@ const TIPO_LABELS = {
   sopa_letras: 'Sopa de Letras',
   emparejar: 'Emparejar',
   tarea: 'Tarea',
+  tarea_registrada: 'Tarea registrada',
   exposicion: 'Exposición',
 };
 
@@ -49,30 +53,28 @@ function downloadCsv(filename, rows) {
 }
 
 export default function MateriaReportes({ materiaId, materiaNombre }) {
-  const [periodos, setPeriodos] = useState([]);
+  const { periodos, loading } = usePeriodos();
   const [selectedPeriodo, setSelectedPeriodo] = useState('');
   const [config, setConfig] = useState([]); // [{examen_id?, tipo_actividad?, porcentaje}]
   const [actividades, setActividades] = useState([]);
   const [reporte, setReporte] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [loadingReport, setLoadingReport] = useState(false);
   const [loadingActs, setLoadingActs] = useState(false);
   const [savingConfig, setSavingConfig] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [savedReports, setSavedReports] = useState([]);
+  const [savingReport, setSavingReport] = useState(false);
+  const [loadingSaved, setLoadingSaved] = useState(false);
   const [showConfig, setShowConfig] = useState(false);
   const [showParticipacion, setShowParticipacion] = useState(false);
   const [participacion, setParticipacion] = useState([]);
   const [savingPart, setSavingPart] = useState(false);
 
   useEffect(() => {
-    api.get('/periodos/')
-      .then(res => {
-        setPeriodos(res.data);
-        if (res.data.length > 0) setSelectedPeriodo(res.data[0].id);
-      })
-      .catch(() => toast.error('Error cargando períodos'))
-      .finally(() => setLoading(false));
-  }, []);
+    if (periodos.length > 0 && !selectedPeriodo) {
+      setSelectedPeriodo(periodos[0].id);
+    }
+  }, [periodos]);
 
   useEffect(() => {
     if (selectedPeriodo) {
@@ -81,6 +83,22 @@ export default function MateriaReportes({ materiaId, materiaNombre }) {
       setReporte(null);
     }
   }, [selectedPeriodo]);
+
+  useEffect(() => {
+    loadSavedReports();
+  }, [materiaId]);
+
+  const loadSavedReports = async () => {
+    setLoadingSaved(true);
+    try {
+      const res = await api.get(`/reportes/generados/${materiaId}`);
+      setSavedReports(res.data || []);
+    } catch {
+      setSavedReports([]);
+    } finally {
+      setLoadingSaved(false);
+    }
+  };
 
   const loadActividades = async () => {
     setLoadingActs(true);
@@ -161,6 +179,46 @@ export default function MateriaReportes({ materiaId, materiaNombre }) {
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Error generando boletines');
     } finally { setPublishing(false); }
+  };
+
+  const saveCurrentReport = async () => {
+    if (!selectedPeriodo) return;
+    setSavingReport(true);
+    try {
+      const res = await api.post(`/reportes/generados/${materiaId}/${selectedPeriodo}`);
+      setReporte(res.data.contenido_json);
+      await loadSavedReports();
+      toast.success('Reporte guardado');
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Error guardando reporte');
+    } finally {
+      setSavingReport(false);
+    }
+  };
+
+  const openSavedReport = async (reportId) => {
+    setLoadingReport(true);
+    try {
+      const res = await api.get(`/reportes/generados/item/${reportId}`);
+      setReporte(res.data.contenido_json);
+      toast.success('Reporte guardado abierto');
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Error abriendo reporte');
+    } finally {
+      setLoadingReport(false);
+    }
+  };
+
+  const deleteSavedReport = async (event, reportId) => {
+    event.stopPropagation();
+    if (!confirm('Eliminar este reporte guardado?')) return;
+    try {
+      await api.delete(`/reportes/generados/item/${reportId}`);
+      await loadSavedReports();
+      toast.success('Reporte eliminado');
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Error eliminando reporte');
+    }
   };
 
   const saveParticipacion = async () => {
@@ -302,45 +360,103 @@ export default function MateriaReportes({ materiaId, materiaNombre }) {
     <div className="space-y-6">
       {/* Period selector + actions */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-        <div className="flex items-center gap-2">
-          <label className="text-sm font-medium text-gray-700">Período:</label>
-          <select className="input-field w-full sm:w-56" value={selectedPeriodo}
+        <div className="flex w-full items-center gap-2 sm:w-auto">
+          <label className="text-sm font-medium text-gray-700 dark:text-gray-300 shrink-0">Período:</label>
+          <select data-guide="materia-reporte-periodo" className="input-field w-full sm:w-56" value={selectedPeriodo}
             onChange={e => setSelectedPeriodo(e.target.value)}>
-            {periodos.sort((a, b) => a.numero - b.numero).map(p => (
+            {periodos.map(p => (
               <option key={p.id} value={p.id}>{p.nombre}</option>
             ))}
           </select>
         </div>
         <div className="flex gap-2 flex-wrap">
+          <PageGuide
+            storageKey={`guide-materia-reportes-${materiaId}`}
+            steps={[
+              { title: 'Define cuanto pesa cada cosa', body: 'Lo clave de esta pantalla: en Configurar % decides cuanto aporta cada actividad, la asistencia y la participacion a la nota final. Deben sumar 100%.', selector: '[data-guide="materia-reporte-config"]' },
+              { title: 'Genera y guarda', body: 'Ver Reporte recalcula con la informacion actual; Guardar reporte lo deja listo para abrirlo despues sin recalcular.', selector: '[data-guide="materia-reporte-guardar"]' },
+              { title: 'Vuelve a tus reportes', body: 'Los reportes que guardaste quedan aqui. Toca uno para abrirlo tal como estaba.', selector: '[data-guide="materia-reportes-guardados"]' },
+              { title: 'Publica los boletines', body: 'Cuando el reporte este revisado, publica los boletines y cada estudiante podra ver el suyo.', selector: '[data-guide="materia-reporte-boletines"]' },
+            ]}
+          />
           <button onClick={() => setShowConfig(!showConfig)}
+            data-guide="materia-reporte-config"
             className="btn-secondary text-sm flex items-center gap-1">
             <Settings2 className="w-4 h-4" /> Configurar %
           </button>
-          <button onClick={loadReporte} disabled={loadingReport}
+          <button data-guide="materia-reporte-ver" onClick={loadReporte} disabled={loadingReport}
             className="btn-secondary text-sm flex items-center gap-1">
             {loadingReport ? <Loader2 className="w-4 h-4 animate-spin" /> : <BarChart3 className="w-4 h-4" />}
             Ver Reporte
           </button>
+          <button data-guide="materia-reporte-guardar" onClick={saveCurrentReport} disabled={savingReport || !reporte}
+            className="btn-secondary text-sm flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
+            {savingReport ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            Guardar reporte
+          </button>
           <button onClick={publishBoletines} disabled={publishing}
+            data-guide="materia-reporte-boletines"
             className="btn-primary text-sm flex items-center gap-1">
             {publishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
             Publicar Boletines
           </button>
           <button onClick={exportReporteExcel} disabled={!reporte}
+            data-guide="materia-reporte-excel"
             className="btn-secondary text-sm flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
             <FileSpreadsheet className="w-4 h-4" /> Exportar Excel
           </button>
         </div>
       </div>
 
+      <div data-guide="materia-reportes-guardados" className="bg-white dark:bg-gray-800/60 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <div>
+            <h3 className="font-semibold text-gray-900 dark:text-white">Reportes guardados</h3>
+            <p className="text-xs text-gray-500 dark:text-gray-400">Abre un reporte anterior sin recalcularlo.</p>
+          </div>
+          {loadingSaved && <Loader2 className="w-4 h-4 animate-spin text-primary-500" />}
+        </div>
+        {savedReports.length === 0 ? (
+          <p className="text-sm text-gray-500 dark:text-gray-400">Aun no hay reportes guardados para esta materia.</p>
+        ) : (
+          <div className="space-y-2">
+            {savedReports.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => openSavedReport(item.id)}
+                className="w-full flex items-center justify-between gap-3 rounded-lg border border-gray-200 dark:border-gray-700 px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800"
+              >
+                <span>
+                  <span className="block text-sm font-semibold text-gray-800 dark:text-gray-100">{item.titulo}</span>
+                  <span className="block text-xs text-gray-500">{item.created_at ? new Date(item.created_at).toLocaleString() : ''}</span>
+                </span>
+                <span
+                  role="button"
+                  tabIndex={0}
+                  onClick={(event) => deleteSavedReport(event, item.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') deleteSavedReport(event, item.id);
+                  }}
+                  className="p-2 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
+                  aria-label="Eliminar reporte"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* Config panel */}
       {showConfig && (
-        <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+        <div className="bg-white dark:bg-gray-800/60 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+          <h3 className="font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
             <Settings2 className="w-4 h-4 text-primary-600" />
             Porcentajes por Actividad
           </h3>
-          <p className="text-xs text-gray-500 mb-4">
+          <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
             Selecciona actividades, asistencia o participación y asigna el porcentaje que cada una aporta a la nota final (máx. 5.0). Deben sumar 100%.
           </p>
 
@@ -397,10 +513,10 @@ export default function MateriaReportes({ materiaId, materiaNombre }) {
           )}
 
           <div className={`flex items-center justify-between mt-4 p-3 rounded-lg ${
-            Math.abs(configTotal - 100) < 0.01 ? 'bg-green-50' : 'bg-red-50'
+            Math.abs(configTotal - 100) < 0.01 ? 'bg-green-50 dark:bg-green-900/20' : 'bg-red-50 dark:bg-red-900/20'
           }`}>
             <span className={`text-sm font-medium ${
-              Math.abs(configTotal - 100) < 0.01 ? 'text-green-700' : 'text-red-700'
+              Math.abs(configTotal - 100) < 0.01 ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'
             }`}>Total: {configTotal.toFixed(1)}%</span>
             <button onClick={saveConfig} disabled={savingConfig || Math.abs(configTotal - 100) > 0.01}
               className="btn-primary text-sm flex items-center gap-1">
@@ -414,12 +530,12 @@ export default function MateriaReportes({ materiaId, materiaNombre }) {
       {/* Report table */}
       {reporte && (
         <>
-          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-            <div className="p-5 border-b border-gray-100">
+          <div className="bg-white dark:bg-gray-800/60 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+            <div className="p-5 border-b border-gray-100 dark:border-gray-700">
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <div>
-                  <h3 className="font-semibold text-gray-900">Reporte de Notas</h3>
-                  <p className="text-xs text-gray-500 mt-0.5">
+                  <h3 className="font-semibold text-gray-900 dark:text-white">Reporte de Notas</h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
                     {reporte.periodo.nombre} • {reporte.estudiantes.length} estudiantes
                   </p>
                 </div>
@@ -436,44 +552,48 @@ export default function MateriaReportes({ materiaId, materiaNombre }) {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="bg-gray-50">
-                    <th className="text-left p-3 font-medium text-gray-600 sticky left-0 bg-gray-50 z-10">Estudiante</th>
+                  <tr className="bg-gray-50 dark:bg-gray-700/50">
+                    <th className="text-left p-3 font-medium text-gray-600 dark:text-gray-300 sticky left-0 bg-gray-50 dark:bg-gray-700/50 z-10">Estudiante</th>
                     {reporte.estudiantes[0]?.actividades?.map((a, i) => (
-                      <th key={i} className="text-center p-3 font-medium text-gray-600 min-w-[80px]">
+                      <th key={i} className="text-center p-3 font-medium text-gray-600 dark:text-gray-300 min-w-[80px]">
                         <div className="truncate max-w-[80px]" title={a.titulo}>{a.titulo}</div>
-                        <div className="text-xs text-gray-400 capitalize">{TIPO_LABELS[a.tipo] || a.tipo}</div>
+                        <div className="text-xs text-gray-400 dark:text-gray-500 capitalize">{TIPO_LABELS[a.tipo] || a.tipo}</div>
                         {a.porcentaje > 0 && <div className="text-xs text-primary-600">{a.porcentaje}%</div>}
                       </th>
                     ))}
                     {hasAsistencia && (
-                      <th className="text-center p-3 font-medium text-gray-600 bg-blue-50 min-w-[70px]">
+                      <th className="text-center p-3 font-medium text-gray-600 dark:text-gray-300 bg-blue-50 dark:bg-blue-900/20 min-w-[70px]">
                         <div>📋 Asist.</div>
                         <div className="text-xs text-primary-600">{hasAsistencia}%</div>
                       </th>
                     )}
                     {hasParticipacion && (
-                      <th className="text-center p-3 font-medium text-gray-600 bg-purple-50 min-w-[70px]">
+                      <th className="text-center p-3 font-medium text-gray-600 dark:text-gray-300 bg-purple-50 dark:bg-purple-900/20 min-w-[70px]">
                         <div>🤚 Partic.</div>
                         <div className="text-xs text-primary-600">{hasParticipacion}%</div>
                       </th>
                     )}
-                    <th className="text-center p-3 font-semibold text-gray-800 bg-primary-50">Nota Final</th>
-                    <th className="text-center p-3 font-medium text-gray-600 bg-green-50 min-w-[45px]" title="Presente">✓</th>
-                    <th className="text-center p-3 font-medium text-gray-600 bg-red-50 min-w-[45px]" title="Ausente">✗</th>
-                    <th className="text-center p-3 font-medium text-gray-600 bg-yellow-50 min-w-[45px]" title="Tardanza">⏱</th>
+                    <th className="text-center p-3 font-semibold text-gray-800 dark:text-gray-200 bg-primary-50 dark:bg-primary-900/20">Nota Final</th>
+                    <th className="text-center p-3 font-medium text-gray-600 dark:text-gray-300 bg-green-50 dark:bg-green-900/20 min-w-[45px]" title="Presente">✓</th>
+                    <th className="text-center p-3 font-medium text-gray-600 dark:text-gray-300 bg-red-50 dark:bg-red-900/20 min-w-[45px]" title="Ausente">✗</th>
+                    <th className="text-center p-3 font-medium text-gray-600 dark:text-gray-300 bg-yellow-50 dark:bg-yellow-900/20 min-w-[45px]" title="Tardanza">⏱</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100">
+                <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
                   {reporte.estudiantes.map(est => (
-                    <tr key={est.estudiante_id} className="hover:bg-gray-50">
-                      <td className="p-3 font-medium text-gray-900 sticky left-0 bg-white whitespace-nowrap z-10">
+                    <tr key={est.estudiante_id} className="hover:bg-gray-50 dark:hover:bg-gray-700/30">
+                      <td className="p-3 font-medium text-gray-900 dark:text-white sticky left-0 bg-white dark:bg-gray-800 whitespace-nowrap z-10">
                         {est.nombre}
                       </td>
                       {est.actividades.map((a, i) => (
                         <td key={i} className="text-center p-3">
-                          <span className={`font-medium ${
-                            a.nota >= 4.0 ? 'text-green-600' : a.nota >= 3.0 ? 'text-blue-600' : 'text-red-600'
-                          }`}>{a.nota.toFixed(1)}</span>
+                          {a.nota == null ? (
+                            <span className="text-gray-400 text-xs">Pendiente</span>
+                          ) : (
+                            <span className={`font-medium ${
+                              a.nota >= 4.0 ? 'text-green-600' : a.nota >= 3.0 ? 'text-blue-600' : 'text-red-600'
+                            }`}>{Number(a.nota).toFixed(1)}</span>
+                          )}
                         </td>
                       ))}
                       {hasAsistencia && (
@@ -491,9 +611,13 @@ export default function MateriaReportes({ materiaId, materiaNombre }) {
                         </td>
                       )}
                       <td className="text-center p-3 bg-primary-50/50">
-                        <span className={`text-lg font-bold ${
-                          est.nota_final >= 4.0 ? 'text-green-600' : est.nota_final >= 3.0 ? 'text-blue-600' : 'text-red-600'
-                        }`}>{est.nota_final.toFixed(1)}</span>
+                        {est.nota_final == null ? (
+                          <span className="text-gray-400 text-sm">—</span>
+                        ) : (
+                          <span className={`text-lg font-bold ${
+                            est.nota_final >= 4.0 ? 'text-green-600' : est.nota_final >= 3.0 ? 'text-blue-600' : 'text-red-600'
+                          }`}>{Number(est.nota_final).toFixed(1)}</span>
+                        )}
                       </td>
                       <td className="text-center p-3 bg-green-50/50 text-green-700 font-medium text-xs">
                         {est.asistencia?.presente || 0}
@@ -511,7 +635,7 @@ export default function MateriaReportes({ materiaId, materiaNombre }) {
             </div>
 
             {reporte.estudiantes.length === 0 && (
-              <div className="p-10 text-center text-gray-400 text-sm">
+              <div className="p-10 text-center text-gray-400 dark:text-gray-500 text-sm">
                 No hay estudiantes matriculados o no hay actividades en este período.
               </div>
             )}
@@ -526,23 +650,23 @@ export default function MateriaReportes({ materiaId, materiaNombre }) {
           </div>
 
           {showParticipacion && participacion.length > 0 && (
-            <div className="bg-white rounded-xl border border-gray-200 p-5">
-              <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+            <div className="bg-white dark:bg-gray-800/60 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+              <h3 className="font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
                 <Hand className="w-4 h-4 text-purple-600" />
                 Notas de Participación
               </h3>
-              <p className="text-xs text-gray-500 mb-4">
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
                 Asigna una nota de participación (0.0 - 5.0) a cada estudiante en este período.
               </p>
               <div className="space-y-2">
                 {participacion.map(p => (
                   <div key={p.estudiante_id} className="flex items-center gap-3">
-                    <span className="text-sm font-medium text-gray-700 flex-1 truncate">{p.nombre}</span>
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300 flex-1 truncate">{p.nombre}</span>
                     <input type="number" min="0" max="5" step="0.1"
                       className="input-field w-20 text-center"
                       value={p.nota}
                       onChange={e => updatePartNota(p.estudiante_id, parseFloat(e.target.value) || 0)} />
-                    <span className="text-xs text-gray-400">/ 5.0</span>
+                    <span className="text-xs text-gray-400 dark:text-gray-500">/ 5.0</span>
                   </div>
                 ))}
               </div>

@@ -163,7 +163,7 @@ export default function MateriaAsistencia({ materiaId, materiaNombre }) {
       {/* Date selector + actions */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3 flex-wrap">
-          <Calendar className="w-5 h-5 text-primary-600" />
+          <Calendar className="w-5 h-5 text-primary-600 dark:text-primary-400" />
           <input type="date" className="input-field w-full sm:w-48" value={selectedDate}
             onChange={e => handleDateChange(e.target.value)} />
           <div className="flex gap-1">
@@ -171,7 +171,7 @@ export default function MateriaAsistencia({ materiaId, materiaNombre }) {
               const d = new Date(selectedDate);
               d.setDate(d.getDate() - 1);
               handleDateChange(d.toISOString().split('T')[0]);
-            }} className="p-1.5 rounded-lg hover:bg-gray-100">
+            }} className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700">
               <ChevronLeft className="w-4 h-4" />
             </button>
             <button onClick={() => handleDateChange(new Date().toISOString().split('T')[0])}
@@ -182,7 +182,7 @@ export default function MateriaAsistencia({ materiaId, materiaNombre }) {
               const d = new Date(selectedDate);
               d.setDate(d.getDate() + 1);
               handleDateChange(d.toISOString().split('T')[0]);
-            }} className="p-1.5 rounded-lg hover:bg-gray-100">
+            }} className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700">
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>
@@ -203,7 +203,7 @@ export default function MateriaAsistencia({ materiaId, materiaNombre }) {
 
       {/* Quick actions */}
       <div className="flex items-center gap-3 flex-wrap">
-        <span className="text-sm text-gray-500">Marcar todos como:</span>
+        <span className="text-sm text-gray-500 dark:text-gray-400">Marcar todos como:</span>
         {Object.entries(statusConfig).map(([key, cfg]) => (
           <button key={key} onClick={() => setAllStatus(key)}
             className={`px-3 py-1 rounded-lg text-xs font-medium border transition-colors ${cfg.color} hover:opacity-80`}>
@@ -214,46 +214,46 @@ export default function MateriaAsistencia({ materiaId, materiaNombre }) {
 
       {/* Stats */}
       <div className="grid grid-cols-3 sm:grid-cols-3 gap-3">
-        <div className="bg-green-50 rounded-xl p-3 text-center border border-green-100">
-          <p className="text-2xl font-bold text-green-700">{stats.presentes}</p>
-          <p className="text-xs text-green-600">Presentes</p>
+        <div className="bg-green-50 dark:bg-green-900/20 rounded-xl p-3 text-center border border-green-100 dark:border-green-800/30">
+          <p className="text-2xl font-bold text-green-700 dark:text-green-400">{stats.presentes}</p>
+          <p className="text-xs text-green-600 dark:text-green-400">Presentes</p>
         </div>
-        <div className="bg-red-50 rounded-xl p-3 text-center border border-red-100">
-          <p className="text-2xl font-bold text-red-700">{stats.ausentes}</p>
-          <p className="text-xs text-red-600">Ausentes</p>
+        <div className="bg-red-50 dark:bg-red-900/20 rounded-xl p-3 text-center border border-red-100 dark:border-red-800/30">
+          <p className="text-2xl font-bold text-red-700 dark:text-red-400">{stats.ausentes}</p>
+          <p className="text-xs text-red-600 dark:text-red-400">Ausentes</p>
         </div>
-        <div className="bg-amber-50 rounded-xl p-3 text-center border border-amber-100">
-          <p className="text-2xl font-bold text-amber-700">{stats.tardanzas}</p>
-          <p className="text-xs text-amber-600">Tardanzas</p>
+        <div className="bg-amber-50 dark:bg-amber-900/20 rounded-xl p-3 text-center border border-amber-100 dark:border-amber-800/30">
+          <p className="text-2xl font-bold text-amber-700 dark:text-amber-400">{stats.tardanzas}</p>
+          <p className="text-xs text-amber-600 dark:text-amber-400">Tardanzas</p>
         </div>
       </div>
 
       {/* Student list */}
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <div className="p-4 bg-gray-50 border-b border-gray-200">
+      <div className="bg-white dark:bg-gray-800/60 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+        <div className="p-4 bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-600">
           <div className="flex items-center justify-between">
-            <h3 className="font-semibold text-gray-900 text-sm">
+            <h3 className="font-semibold text-gray-900 dark:text-white text-sm">
               {students.length} estudiantes • {new Date(selectedDate).toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' })}
             </h3>
-            <span className="text-xs text-gray-500">Clic para cambiar estado</span>
+            <span className="text-xs text-gray-500 dark:text-gray-400">Clic para cambiar estado</span>
           </div>
         </div>
-        <div className="divide-y divide-gray-100">
+        <div className="divide-y divide-gray-100 dark:divide-gray-700">
           {students
             .sort((a, b) => (a.apellido || '').localeCompare(b.apellido || ''))
             .map((s, i) => {
               const status = attendance[s.id] || 'presente';
               const cfg = statusConfig[status];
               return (
-                <div key={s.id} className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors">
+                <div key={s.id} className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors">
                   <div className="flex items-center gap-3">
-                    <span className="text-xs text-gray-400 w-6">{i + 1}</span>
-                    <div className="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center text-xs font-bold text-primary-700">
+                    <span className="text-xs text-gray-400 dark:text-gray-500 w-6">{i + 1}</span>
+                    <div className="w-8 h-8 rounded-full bg-primary-100 dark:bg-primary-900/40 flex items-center justify-center text-xs font-bold text-primary-700 dark:text-primary-300">
                       {s.nombre?.[0]}{s.apellido?.[0]}
                     </div>
                     <div>
-                      <p className="text-sm font-medium text-gray-900">{s.apellido} {s.nombre}</p>
-                      <p className="text-xs text-gray-400">{s.documento}</p>
+                      <p className="text-sm font-medium text-gray-900 dark:text-white">{s.apellido} {s.nombre}</p>
+                      <p className="text-xs text-gray-400 dark:text-gray-500">{s.documento}</p>
                     </div>
                   </div>
                   <button onClick={() => toggleAttendance(s.id)}
@@ -268,15 +268,15 @@ export default function MateriaAsistencia({ materiaId, materiaNombre }) {
 
       {/* Recent dates */}
       {dates.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <h3 className="font-semibold text-gray-900 text-sm mb-3">Fechas con registro</h3>
+        <div className="bg-white dark:bg-gray-800/60 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+          <h3 className="font-semibold text-gray-900 dark:text-white text-sm mb-3">Fechas con registro</h3>
           <div className="flex flex-wrap gap-2">
             {dates.slice(0, 20).map(d => (
               <button key={d} onClick={() => handleDateChange(d)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                   d === selectedDate
-                    ? 'bg-primary-100 text-primary-700 border border-primary-200'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    ? 'bg-primary-100 dark:bg-primary-900/40 text-primary-700 dark:text-primary-300 border border-primary-200 dark:border-primary-700'
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
                 }`}>
                 {new Date(d).toLocaleDateString('es-CO', { day: 'numeric', month: 'short' })}
               </button>

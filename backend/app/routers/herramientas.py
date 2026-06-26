@@ -20,13 +20,13 @@ from app.schemas.schemas import (
 )
 from app.services.groq_service import (
     generate_exam, generate_sopa_letras, generate_crucigrama,
-    generate_emparejar, generate_cuento,
+    generate_emparejar, generate_unir_columnas, generate_cuento,
     generate_coloring_prompt,
 )
 from app.services.google_slides_service import GoogleSlidesService
 from app.services.presentation_service import PresentationService
 from app.services.presenton_service import PresentonService
-from app.routers.generation import _fix_crucigrama, _fix_sopa_letras
+from app.routers.generation import _fix_crucigrama, _fix_sopa_letras, _build_curricular_context
 
 router = APIRouter(prefix="/herramientas", tags=["Herramientas"])
 settings = get_settings()
@@ -68,17 +68,22 @@ def _letter_layout_hint(text: str) -> str:
     )
 
 
-def _build_ocr_config(data: HerramientaGenerate) -> dict:
-    """Build OCR config shared by printable tools and grading pipeline."""
+def _build_vision_config(data: HerramientaGenerate) -> dict:
+    """Build vision config used by printable tools and graded by vision model."""
+    # Accept both new vision_* fields and legacy ocr_* for backwards compat
+    enabled = data.vision_friendly if data.vision_friendly is not None else (data.ocr_friendly if data.ocr_friendly is not None else True)
+    prefijo = data.vision_prefijo or data.ocr_prefijo or "R"
+    hoja = data.vision_hoja_respuestas if data.vision_hoja_respuestas is not None else (data.ocr_hoja_respuestas if data.ocr_hoja_respuestas is not None else True)
+    lineas = data.vision_lineas_abiertas or data.ocr_lineas_abiertas or 3
     return {
-        "enabled": bool(data.ocr_friendly),
-        "prefijo": (data.ocr_prefijo or "R").strip().upper()[:4] or "R",
-        "hoja_respuestas": bool(data.ocr_hoja_respuestas),
-        "lineas_abiertas": int(data.ocr_lineas_abiertas or 3),
+        "enabled": bool(enabled),
+        "prefijo": (prefijo or "R").strip().upper()[:4] or "R",
+        "hoja_respuestas": bool(hoja),
+        "lineas_abiertas": int(lineas),
     }
 
 
-def _normalize_exam_question(raw: dict, index: int, ocr_config: dict) -> tuple[dict, dict]:
+def _normalize_exam_question(raw: dict, index: int, vision_config: dict) -> tuple[dict, dict]:
     """Return normalized question for content and its answer-key record."""
     q = normalize_latex_payload(dict(raw or {}))
     numero = q.get("numero") or index
@@ -98,12 +103,12 @@ def _normalize_exam_question(raw: dict, index: int, ocr_config: dict) -> tuple[d
     if inferred_correct:
         q["respuesta_correcta"] = inferred_correct
 
-    if ocr_config.get("enabled"):
-        prefijo = ocr_config.get("prefijo", "R")
+    if vision_config.get("enabled"):
+        prefijo = vision_config.get("prefijo", "R")
         if tipo in ("seleccion_multiple", "verdadero_falso"):
-            q["instruccion_respuesta_ocr"] = f"{prefijo}{numero}: escribe una opcion (A/B/C/D o V/F)"
+            q["instruccion_respuesta"] = f"{prefijo}{numero}: escribe claramente tu opcion (A/B/C/D o V/F)"
         elif tipo in ("respuesta_corta", "desarrollo"):
-            q["instruccion_respuesta_ocr"] = f"{prefijo}{numero}: responde en texto claro"
+            q["instruccion_respuesta"] = f"{prefijo}{numero}: escribe tu respuesta con letra legible"
 
     clave_item = {
         "numero": numero,
@@ -340,9 +345,25 @@ async def generate_herramienta(
     grado = data.grado or ""
     titulo = data.titulo or ""
     contenido_base = data.contenido_base or ""
-    ocr_config = _build_ocr_config(data)
+
+    # Enrich with DBA / plan / RAG context from materia if provided
+    if data.materia_id:
+        try:
+            mat_res = await db.execute(select(Materia).where(Materia.id == data.materia_id))
+            mat_obj = mat_res.scalar_one_or_none()
+            if mat_obj and (current_user.rol == "admin" or str(mat_obj.profesor_id) == str(current_user.id)):
+                contenido_base = await _build_curricular_context(db, mat_obj, contenido_base, tema)
+        except Exception:
+            pass  # Don't block generation if DBA context fails
+
+    ai_config = await get_profesor_ai_config(db, str(current_user.id))
+
+    vision_config = _build_vision_config(data)
+    if tipo in {"crucigrama", "sopa_letras", "emparejar", "unir_columnas"}:
+        vision_config["hoja_respuestas"] = False
+        vision_config["lineas_abiertas"] = 3
     if tipo == "presentacion":
-        ocr_config = {
+        vision_config = {
             "enabled": False,
             "prefijo": "R",
             "hoja_respuestas": False,
@@ -363,6 +384,7 @@ async def generate_herramienta(
                 palabras_obligatorias=data.palabras_obligatorias,
                 contenido_base=contenido_base,
                 grado=grado,
+                provider_config=ai_config,
             )
             sopa = _fix_sopa_letras(raw.get("sopa_letras", {}))
             contenido = {
@@ -386,6 +408,7 @@ async def generate_herramienta(
                 palabras_obligatorias=data.palabras_obligatorias,
                 contenido_base=contenido_base,
                 grado=grado,
+                provider_config=ai_config,
             )
             cruc = _fix_crucigrama(raw.get("crucigrama", {}))
             contenido = {
@@ -411,6 +434,7 @@ async def generate_herramienta(
                 num_pares=params_config["num_pares"],
                 contenido_base=contenido_base,
                 grado=grado,
+                provider_config=ai_config,
             )
             emparejar_data = raw.get("emparejar", {})
             contenido = {
@@ -428,6 +452,31 @@ async def generate_herramienta(
                 ],
             }
 
+        elif tipo == "unir_columnas":
+            params_config = {"num_pares": data.num_pares or 6}
+            raw = await generate_unir_columnas(
+                tema=tema,
+                nivel=nivel,
+                num_pares=params_config["num_pares"],
+                contenido_base=contenido_base,
+                grado=grado,
+                provider_config=ai_config,
+            )
+            uc_data = raw.get("unir_columnas", {})
+            contenido = {
+                "titulo": raw.get("titulo", titulo or tema),
+                "preguntas": [],
+                "unir_columnas": uc_data,
+            }
+            pares = uc_data.get("pares", [])
+            clave = {
+                "preguntas": [],
+                "unir_columnas_respuestas": [
+                    {"id": p.get("id"), "izquierda": p.get("izquierda"), "derecha": p.get("derecha")}
+                    for p in pares
+                ],
+            }
+
         elif tipo == "cuento":
             params_config = {"moraleja_tema": data.moraleja_tema or ""}
             raw = await generate_cuento(
@@ -436,20 +485,34 @@ async def generate_herramienta(
                 contenido_base=contenido_base,
                 grado=grado,
                 moraleja_tema=params_config["moraleja_tema"],
+                provider_config=ai_config,
             )
             cuento_data = raw.get("cuento", {})
             image_prompt = cuento_data.get("image_prompt", "")
-            cuento_data["imagen_url"] = ""
-            cuento_data["imagen_url_color"] = ""
-            cuento_data["imagen_url_colorear"] = ""
-            cuento_data["image_prompt_color"] = (
+            prompt_color = (
                 image_prompt + ", children's book illustration, vibrant colors, watercolor style, detailed, kid-friendly"
                 if image_prompt else ""
             )
-            cuento_data["image_prompt_colorear"] = (
+            prompt_colorear = (
                 image_prompt + ", coloring book page, black and white only, thick clean outlines, no color, no shading, white background, line drawing, printable"
                 if image_prompt else ""
             )
+            cuento_data["image_prompt_color"] = prompt_color
+            cuento_data["image_prompt_colorear"] = prompt_colorear
+            # Generate the illustrations (DALL-E -> Cloudflare fallback; "" on failure).
+            from app.routers.ai_assets import generate_coloring_image
+            _openai_key = ai_config.get("openai_api_key") or ""
+            imagen_url_color = (
+                await generate_coloring_image(prompt_color, openai_api_key=_openai_key, cloudflare=ai_config)
+                if prompt_color else ""
+            )
+            imagen_url_colorear = (
+                await generate_coloring_image(prompt_colorear, openai_api_key=_openai_key, cloudflare=ai_config)
+                if prompt_colorear else ""
+            )
+            cuento_data["imagen_url_color"] = imagen_url_color
+            cuento_data["imagen_url_colorear"] = imagen_url_colorear
+            cuento_data["imagen_url"] = imagen_url_color or imagen_url_colorear
             contenido = {
                 "titulo": raw.get("titulo", titulo or tema),
                 "preguntas": [],
@@ -462,7 +525,7 @@ async def generate_herramienta(
             desc = data.description_imagen or tema
             params_config = {"description_imagen": desc}
             letter_activity = _is_letter_activity(desc)
-            en_prompt = await generate_coloring_prompt(desc, allow_letters=letter_activity)
+            en_prompt = await generate_coloring_prompt(desc, allow_letters=letter_activity, provider_config=ai_config)
             if letter_activity:
                 letter_hint = _letter_layout_hint(desc)
                 image_prompt = (
@@ -477,20 +540,30 @@ async def generate_herramienta(
                     "no color, no shading, no gradients, white background, line art, printable, "
                     "kid-friendly, no text, no words, no letters, no title"
                 )
+            from app.routers.ai_assets import generate_coloring_image_asset
+            image_asset = await generate_coloring_image_asset(
+                image_prompt,
+                openai_api_key=ai_config.get("openai_api_key") or "",
+                cloudflare=ai_config,
+                allow_text=letter_activity,
+            )
+            imagen_url = image_asset.get("url") or ""
             contenido = {
                 "titulo": titulo or f"Para Colorear: {tema}",
                 "preguntas": [],
                 "para_colorear": {
                     "descripcion": desc,
-                    "imagen_url": "",
+                    "imagen_url": imagen_url,
                     "image_prompt": image_prompt,
+                    "image_provider": image_asset.get("image_provider"),
+                    "image_policy": image_asset.get("image_policy"),
                     "modo_educativo_letras": letter_activity,
                 },
             }
             clave = {"preguntas": []}
 
         elif tipo == "presentacion":
-            ai_cfg = await get_profesor_ai_config(db, str(current_user.id))
+            ai_cfg = ai_config
             requested_mode = (data.modo_presentacion or data.proveedor_ia_presentacion or "auto").strip().lower()
 
             params_config = {
@@ -537,6 +610,10 @@ async def generate_herramienta(
                     "export_google_slides": params_config["exportar_google_slides"],
                     "ollama_url": params_config["ollama_url_presentacion"],
                     "ollama_model": params_config["ollama_model_presentacion"],
+                    "open_code_base_url": ai_cfg.get("open_code_base_url") or "",
+                    "open_code_api_key": ai_cfg.get("open_code_api_key") or "",
+                    "open_code_model": ai_cfg.get("open_code_content_model") or "",
+                    "openai_api_key": ai_cfg.get("openai_api_key") or "",
                 }
             )
 
@@ -552,6 +629,8 @@ async def generate_herramienta(
                     "provider_used": generated.get("provider_used"),
                     "provider_mode_requested": generated.get("provider_mode_requested"),
                     "provider_mode_used": generated.get("provider_mode_used"),
+                    "image_provider": generated.get("image_provider"),
+                    "image_policy": "hybrid_auto",
                     "slides": generated.get("slides") or [],
                     "slides_markdown": generated.get("slides_markdown") or [],
                     "resumen_docente": generated.get("teacher_summary") or "",
@@ -586,6 +665,7 @@ async def generate_herramienta(
 
         else:
             # Examen type
+            ai_cfg = await get_profesor_ai_config(db, str(current_user.id))
             distribucion = data.distribucion
             if not distribucion:
                 distribucion = {"seleccion_multiple": 5, "verdadero_falso": 3, "respuesta_corta": 2}
@@ -597,6 +677,7 @@ async def generate_herramienta(
                 distribucion=distribucion,
                 contenido_base=contenido_base,
                 grado=grado,
+                provider_config=ai_cfg,
             )
             exam_data = normalize_latex_payload(exam_data)
 
@@ -605,7 +686,7 @@ async def generate_herramienta(
             for idx, p in enumerate(exam_data.get("preguntas", []), start=1):
                 if not isinstance(p, dict):
                     continue
-                pregunta_limpia, clave_item = _normalize_exam_question(p, idx, ocr_config)
+                pregunta_limpia, clave_item = _normalize_exam_question(p, idx, vision_config)
                 preguntas_sin_respuesta.append(pregunta_limpia)
                 clave_respuestas.append(clave_item)
 
@@ -623,7 +704,7 @@ async def generate_herramienta(
             "tema": tema,
             "nivel": nivel,
             "grado": grado,
-            "ocr": ocr_config,
+            "vision": vision_config,
         }
 
     h = Herramienta(
@@ -637,7 +718,7 @@ async def generate_herramienta(
             "nivel": nivel,
             "grado": grado,
             "params": params_config,
-            "ocr": ocr_config,
+            "vision": vision_config,
         },
         estado="listo",
     )
@@ -840,7 +921,7 @@ async def regenerate_presentacion_herramienta(
             "tema": topic,
             "nivel": level,
             "grado": grade,
-            "ocr": {
+            "vision": {
                 "enabled": False,
                 "prefijo": "R",
                 "hoja_respuestas": False,
@@ -898,7 +979,7 @@ async def regenerate_presentacion_herramienta(
         "exportar_google_slides": generation_payload["export_google_slides"],
         "instrucciones_presentacion": generation_payload["instructions"],
     }
-    cfg["ocr"] = {
+    cfg["vision"] = {
         "enabled": False,
         "prefijo": "R",
         "hoja_respuestas": False,

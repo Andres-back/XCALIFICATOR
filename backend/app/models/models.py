@@ -60,12 +60,15 @@ class Materia(Base):
     nombre = Column(String(200), nullable=False)
     codigo = Column(String(20), unique=True, nullable=False)
     profesor_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    dba_json = Column(JSONB, nullable=True)
+    plan_json = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     profesor = relationship("User", back_populates="materias")
     matriculas = relationship("Matricula", back_populates="materia", cascade="all, delete-orphan")
     examenes = relationship("Examen", back_populates="materia", cascade="all, delete-orphan")
     encuentros = relationship("MateriaEncuentro", back_populates="materia", cascade="all, delete-orphan")
+    curriculo_documentos = relationship("MateriaCurriculoDocumento", back_populates="materia", cascade="all, delete-orphan")
 
 
 class MateriaEncuentro(Base):
@@ -81,6 +84,22 @@ class MateriaEncuentro(Base):
     __table_args__ = (UniqueConstraint("materia_id", "dia_semana"),)
 
     materia = relationship("Materia", back_populates="encuentros")
+
+
+class MateriaCurriculoDocumento(Base):
+    __tablename__ = "materia_curriculo_documentos"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    materia_id = Column(UUID(as_uuid=True), ForeignKey("materias.id", ondelete="CASCADE"), nullable=False)
+    profesor_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    titulo = Column(String(300), nullable=False)
+    fuente_tipo = Column(String(30), nullable=False, default="texto")
+    texto = Column(Text, nullable=False, default="")
+    chunks_json = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    materia = relationship("Materia", back_populates="curriculo_documentos")
+    profesor = relationship("User")
 
 
 class Matricula(Base):
@@ -107,6 +126,7 @@ class Examen(Base):
     contenido_json = Column(JSONB, nullable=True)
     clave_respuestas = Column(JSONB, nullable=True)
     activo_online = Column(Boolean, default=False)
+    activo_fisico = Column(Boolean, default=False)
     fecha_limite = Column(DateTime(timezone=True), nullable=True)
     fecha_activacion = Column(DateTime(timezone=True), nullable=True)
     modo_grupal = Column(Boolean, default=False)
@@ -177,6 +197,37 @@ class RespuestaOnline(Base):
 
     estudiante = relationship("User")
     examen = relationship("Examen", back_populates="respuestas_online")
+
+
+class OcrGradingJob(Base):
+    __tablename__ = "ocr_grading_jobs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examen_id = Column(UUID(as_uuid=True), ForeignKey("examenes.id", ondelete="CASCADE"), nullable=False)
+    estudiante_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    profesor_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    materia_id = Column(UUID(as_uuid=True), ForeignKey("materias.id", ondelete="CASCADE"), nullable=False)
+    estado = Column(String(20), nullable=False, default="queued")
+    filename = Column(String(300), nullable=False)
+    content_type = Column(String(100), nullable=True)
+    file_url = Column(Text, nullable=False)
+    file_size = Column(Integer, nullable=False, default=0)
+    error_message = Column(Text, nullable=True)
+    result_json = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    examen = relationship("Examen")
+    estudiante = relationship("User", foreign_keys=[estudiante_id])
+    profesor = relationship("User", foreign_keys=[profesor_id])
+    materia = relationship("Materia")
+
+    __table_args__ = (
+        Index("ix_ocr_grading_jobs_examen_created", "examen_id", "created_at"),
+        Index("ix_ocr_grading_jobs_estado", "estado"),
+    )
 
 
 class ChatHistory(Base):
@@ -310,6 +361,26 @@ class Boletin(Base):
     estudiante = relationship("User", foreign_keys=[estudiante_id])
     materia = relationship("Materia")
     periodo = relationship("PeriodoAcademico")
+
+
+class ReporteGenerado(Base):
+    __tablename__ = "reportes_generados"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    materia_id = Column(UUID(as_uuid=True), ForeignKey("materias.id", ondelete="CASCADE"), nullable=False)
+    periodo_id = Column(UUID(as_uuid=True), ForeignKey("periodos_academicos.id", ondelete="CASCADE"), nullable=False)
+    profesor_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    titulo = Column(String(300), nullable=False)
+    contenido_json = Column(JSONB, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    materia = relationship("Materia")
+    periodo = relationship("PeriodoAcademico")
+    profesor = relationship("User")
+
+    __table_args__ = (
+        Index("ix_reportes_generados_materia_created", "materia_id", "created_at"),
+    )
 
 
 class NotaParticipacion(Base):

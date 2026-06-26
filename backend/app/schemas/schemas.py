@@ -2,7 +2,7 @@ import re
 from datetime import datetime, date
 from typing import Optional
 from uuid import UUID
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 ALLOWED_EMAIL_DOMAINS = ("gmail.com", "hotmail.com")
@@ -76,14 +76,14 @@ class UserLogin(BaseModel):
 
 
 class TokenResponse(BaseModel):
-    access_token: str
-    refresh_token: str
+    access_token: Optional[str] = None
+    refresh_token: Optional[str] = None
     token_type: str = "bearer"
     user: "UserOut"
 
 
 class RefreshTokenRequest(BaseModel):
-    refresh_token: str
+    refresh_token: Optional[str] = None
 
 
 # --- User ---
@@ -216,17 +216,37 @@ class ChangeRoleRequest(BaseModel):
 
 
 class LocalAIConfigOut(BaseModel):
+    content_provider: str = "groq"
+    grading_provider: str = "groq"
+    ocr_provider: str = "open_code_vision"
+    groq_api_key: Optional[str] = None
     ollama_url: str = "http://host.docker.internal:11434"
     ollama_api_key: Optional[str] = None
+    open_code_base_url: Optional[str] = None
+    open_code_api_key: Optional[str] = None
+    content_model: Optional[str] = None
     grading_local_model: Optional[str] = None
     ocr_local_model: Optional[str] = None
+    open_code_content_model: Optional[str] = None
+    open_code_vision_model: Optional[str] = None
+    open_code_feedback_model: Optional[str] = None
 
 
 class LocalAIConfigUpdate(BaseModel):
+    content_provider: Optional[str] = None
+    grading_provider: Optional[str] = None
+    ocr_provider: Optional[str] = None
+    groq_api_key: Optional[str] = None
     ollama_url: Optional[str] = None
     ollama_api_key: Optional[str] = None
+    open_code_base_url: Optional[str] = None
+    open_code_api_key: Optional[str] = None
+    content_model: Optional[str] = None
     grading_local_model: Optional[str] = None
     ocr_local_model: Optional[str] = None
+    open_code_content_model: Optional[str] = None
+    open_code_vision_model: Optional[str] = None
+    open_code_feedback_model: Optional[str] = None
 
 
 class LocalOllamaModelsOut(BaseModel):
@@ -336,6 +356,14 @@ class SesionOut(BaseModel):
 # --- Materia ---
 class MateriaCreate(BaseModel):
     nombre: str
+    encuentros: list[MateriaEncuentroItem] = Field(default_factory=list)
+    dba_json: Optional[dict] = None
+    plan_json: Optional[dict] = None
+
+
+class MateriaCurriculoUpdate(BaseModel):
+    dba_json: Optional[dict] = None
+    plan_json: Optional[dict] = None
 
 
 class MateriaOut(BaseModel):
@@ -343,14 +371,25 @@ class MateriaOut(BaseModel):
     nombre: str
     codigo: str
     profesor_id: Optional[UUID] = None
+    dba_json: Optional[dict] = None
+    plan_json: Optional[dict] = None
     created_at: datetime
 
     class Config:
         from_attributes = True
 
 
-class MateriaWithStudents(MateriaOut):
-    estudiantes: list[UserOut] = []
+class MateriaCurriculoDocumentoOut(BaseModel):
+    id: UUID
+    materia_id: UUID
+    titulo: str
+    fuente_tipo: str
+    texto_preview: str = ""
+    chunks_count: int = 0
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
 
 
 class InscripcionRequest(BaseModel):
@@ -364,6 +403,7 @@ class ExamenCreate(BaseModel):
     contenido_json: Optional[dict] = None
     clave_respuestas: Optional[dict] = None
     activo_online: bool = False
+    activo_fisico: bool = False
     fecha_limite: Optional[datetime] = None
 
 
@@ -374,6 +414,7 @@ class ExamenOut(BaseModel):
     tipo: Optional[str] = None
     contenido_json: Optional[dict] = None
     activo_online: bool
+    activo_fisico: bool = False
     fecha_limite: Optional[datetime] = None
     fecha_activacion: Optional[datetime] = None
     modo_grupal: bool = False
@@ -439,12 +480,6 @@ class ExamGenerationRequest(BaseModel):
     contenido_base: Optional[str] = None  # texto o contenido del PDF
 
 
-# --- Grading ---
-class GradingRequest(BaseModel):
-    examen_id: UUID
-    estudiante_id: UUID
-
-
 # --- RAG Chat ---
 class ChatMessage(BaseModel):
     message: str
@@ -455,6 +490,8 @@ class ChatResponse(BaseModel):
     response: str
     preguntas_restantes: Optional[int] = None
     minutos_restantes: Optional[float] = None
+    cooldown_segundos: Optional[int] = None
+    puede_iniciar_nueva_sesion: Optional[bool] = None
 
 
 class ChatHistoryOut(BaseModel):
@@ -619,6 +656,7 @@ class HerramientaGenerate(BaseModel):
     tema: str
     nivel: str = "intermedio"
     grado: Optional[str] = ""
+    materia_id: Optional[str] = None
     distribucion: Optional[dict] = None
     contenido_base: Optional[str] = ""
     # Sopa de letras customization
@@ -633,31 +671,36 @@ class HerramientaGenerate(BaseModel):
     moraleja_tema: Optional[str] = ""
     # Para colorear customization
     description_imagen: Optional[str] = ""
-    # OCR-focused generation options
-    ocr_friendly: Optional[bool] = True
-    ocr_prefijo: Optional[str] = "R"
-    ocr_hoja_respuestas: Optional[bool] = True
-    ocr_lineas_abiertas: Optional[int] = 3
+    # Vision-friendly generation options (graded by vision model)
+    vision_friendly: Optional[bool] = True
+    vision_prefijo: Optional[str] = "R"
+    vision_hoja_respuestas: Optional[bool] = True
+    vision_lineas_abiertas: Optional[int] = 3
+    # Legacy aliases kept for API backwards-compatibility
+    ocr_friendly: Optional[bool] = None
+    ocr_prefijo: Optional[str] = None
+    ocr_hoja_respuestas: Optional[bool] = None
+    ocr_lineas_abiertas: Optional[int] = None
 
     @field_validator("tipo")
     @classmethod
     def validate_tipo(cls, v: str) -> str:
-        valid = ("examen", "crucigrama", "sopa_letras", "emparejar", "cuento", "para_colorear")
+        valid = ("examen", "crucigrama", "sopa_letras", "emparejar", "cuento", "para_colorear", "unir_columnas")
         if v not in valid:
             raise ValueError(f"Tipo debe ser: {', '.join(valid)}")
         return v
 
-    @field_validator("ocr_prefijo")
+    @field_validator("vision_prefijo")
     @classmethod
-    def validate_ocr_prefijo(cls, v: Optional[str]) -> str:
+    def validate_vision_prefijo(cls, v: Optional[str]) -> str:
         pref = (v or "R").strip().upper()
         if not pref:
             pref = "R"
         return pref[:4]
 
-    @field_validator("ocr_lineas_abiertas")
+    @field_validator("vision_lineas_abiertas")
     @classmethod
-    def validate_ocr_lineas(cls, v: Optional[int]) -> int:
+    def validate_vision_lineas(cls, v: Optional[int]) -> int:
         lines = 3 if v is None else int(v)
         if lines < 1:
             return 1
@@ -676,7 +719,7 @@ class HerramientaCreate(BaseModel):
     @field_validator("tipo")
     @classmethod
     def validate_tipo(cls, v: str) -> str:
-        valid = ("examen", "crucigrama", "sopa_letras", "emparejar", "cuento", "para_colorear", "presentacion")
+        valid = ("examen", "crucigrama", "sopa_letras", "emparejar", "cuento", "para_colorear", "presentacion", "unir_columnas")
         if v not in valid:
             raise ValueError(f"Tipo debe ser: {', '.join(valid)}")
         return v
@@ -718,11 +761,6 @@ class HerramientaOut(BaseModel):
 class AsistenciaCreate(BaseModel):
     fecha: date
     registros: list[dict]  # [{"estudiante_id": "...", "estado": "presente|ausente|tardanza|justificado", "observacion": "..."}]
-
-
-class AsistenciaUpdate(BaseModel):
-    estado: str
-    observacion: Optional[str] = None
 
 
 class AsistenciaOut(BaseModel):
@@ -808,6 +846,8 @@ class ChatSessionOut(BaseModel):
     minutos_restantes: float = 10.0
     cerrada: bool = True
     inicio: Optional[datetime] = None
+    cooldown_segundos: Optional[int] = None
+    puede_iniciar_nueva_sesion: Optional[bool] = None
 
     class Config:
         from_attributes = True

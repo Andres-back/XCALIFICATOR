@@ -1,21 +1,37 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.database import get_db
 from app.core.dependencies import require_role
+from app.core.ai_provider_config import get_profesor_ai_config
 from app.core.tool_flags import is_tool_enabled
 from app.core.latex_utils import normalize_latex_payload
 from app.core.math_exam_validator import infer_correct_option_for_math_question
 from app.models.models import User, Examen, Materia
 from app.schemas.schemas import ExamGenerationRequest, ExamenProfesorOut
 from app.services.groq_service import generate_exam
+from app.services.curriculum_service import retrieve_curriculum_context
+from app.services.ocr_service import normalize_image_to_png
+from app.services.open_code_service import (
+    OPEN_CODE_RECOMMENDED_MODELS,
+    open_code_vision_json,
+    open_code_chat_completion,
+    _message_text,
+)
 from app.services.pdf_service import generate_exam_pdf
+import base64
+import fitz
 import io
+import json
+import re
 import random
 import string
 import unicodedata
 import copy
+
+ALLOWED_DIGITALIZE_TYPES = {"image/jpeg", "image/png", "image/jpg"}
 
 router = APIRouter(prefix="/generate", tags=["Generación de Exámenes"])
 
@@ -82,6 +98,74 @@ def _normalize_question_statements(content: dict | None) -> dict | None:
 
     content["preguntas"] = normalized
     return content
+
+
+async def _build_curricular_context(
+    db: AsyncSession,
+    materia: Materia,
+    contenido_base: str | None = "",
+    query: str | None = "",
+) -> str:
+    blocks = []
+    base = (contenido_base or "").strip()
+    if base:
+        blocks.append(base)
+    if materia.dba_json:
+        blocks.append(
+            "DBA / derechos basicos de aprendizaje de la materia:\n"
+            + json.dumps(materia.dba_json, ensure_ascii=False, indent=2)
+        )
+    if materia.plan_json:
+        blocks.append(
+            "Metas, plan de aula o evidencias que debe cumplir la actividad:\n"
+            + json.dumps(materia.plan_json, ensure_ascii=False, indent=2)
+        )
+    rag_context = await retrieve_curriculum_context(db, materia, query or base or materia.nombre)
+    if rag_context:
+        blocks.append(
+            "Fragmentos curriculares recuperados por RAG de documentos DBA/plan subidos a la materia:\n"
+            + rag_context
+        )
+    return "\n\n".join(blocks)
+
+
+def _ensure_question_media_fields(exam_data: dict) -> dict:
+    preguntas = exam_data.get("preguntas")
+    if not isinstance(preguntas, list):
+        return exam_data
+    for p in preguntas:
+        if not isinstance(p, dict):
+            continue
+        p.setdefault("image_url", "")
+        p.setdefault("image_prompt", "")
+        p.setdefault("image_type", "")
+        p.setdefault("image_alt", "")
+    return exam_data
+
+
+def _split_exam_payload(exam_data: dict, fallback_title: str) -> tuple[dict, dict]:
+    preguntas_sin_respuesta = []
+    clave_respuestas = []
+    for p in exam_data.get("preguntas", []):
+        if not isinstance(p, dict):
+            continue
+        pregunta_limpia = {k: v for k, v in p.items() if k != "respuesta_correcta"}
+        preguntas_sin_respuesta.append(pregunta_limpia)
+        clave_respuestas.append({
+            "numero": p.get("numero"),
+            "respuesta_correcta": p.get("respuesta_correcta", ""),
+            "puntos": p.get("puntos", 1.0),
+            "tipo": p.get("tipo", ""),
+            "enunciado": p.get("enunciado") or p.get("pregunta") or "",
+            "opciones": p.get("opciones", []),
+        })
+    return (
+        {
+            "titulo": exam_data.get("titulo") or fallback_title,
+            "preguntas": preguntas_sin_respuesta,
+        },
+        {"preguntas": clave_respuestas},
+    )
 
 
 # ─────────────────────────────────────────────────
@@ -641,42 +725,35 @@ async def generate_exam_endpoint(
     if not await is_tool_enabled(db, "examen"):
         raise HTTPException(status_code=403, detail="La herramienta 'Examen' está deshabilitada por administración")
 
-    await _assert_materia_access(db, str(data.materia_id), current_user)
+    materia = await _assert_materia_access(db, str(data.materia_id), current_user)
 
     # Generate with LLM
     try:
+        ai_config = await get_profesor_ai_config(db, str(current_user.id))
         exam_data = await generate_exam(
             tema=data.tema,
             nivel=data.nivel,
             distribucion=data.distribucion,
-            contenido_base=data.contenido_base or "",
+            contenido_base=await _build_curricular_context(
+                db,
+                materia,
+                data.contenido_base,
+                " ".join([data.titulo or "", data.tema or "", data.grado or "", data.nivel or ""]),
+            ),
             grado=data.grado or "",
+            provider_config=ai_config,
         )
-        exam_data = normalize_latex_payload(exam_data)
+        exam_data = _ensure_question_media_fields(normalize_latex_payload(exam_data))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generando examen: {str(e)}")
-
-    # Separate content and answers
-    preguntas_sin_respuesta = []
-    clave_respuestas = []
 
     for p in exam_data.get("preguntas", []):
         if isinstance(p, dict):
             inferred = infer_correct_option_for_math_question(p)
             if inferred:
                 p["respuesta_correcta"] = inferred
-        pregunta_limpia = {k: v for k, v in p.items() if k != "respuesta_correcta"}
-        preguntas_sin_respuesta.append(pregunta_limpia)
-        clave_respuestas.append({
-            "numero": p.get("numero"),
-            "respuesta_correcta": p.get("respuesta_correcta", ""),
-            "puntos": p.get("puntos", 1.0),
-        })
 
-    contenido = {
-        "titulo": exam_data.get("titulo", data.titulo),
-        "preguntas": preguntas_sin_respuesta,  # Without answers
-    }
+    contenido, clave_respuestas = _split_exam_payload(exam_data, data.titulo)
 
     # Add crossword/word search if present (with validation)
     if "crucigrama" in exam_data:
@@ -690,12 +767,105 @@ async def generate_exam_endpoint(
         titulo=data.titulo,
         tipo="generado",
         contenido_json=contenido,
-        clave_respuestas={"preguntas": clave_respuestas},
+        clave_respuestas=clave_respuestas,
     )
     db.add(examen)
     await db.commit()
     await db.refresh(examen)
 
+    return ExamenProfesorOut.model_validate(examen)
+
+
+@router.post("/exam/digitalize", response_model=ExamenProfesorOut)
+async def digitalize_exam_from_image(
+    materia_id: str = Form(...),
+    titulo: str = Form("Examen digitalizado"),
+    files: list[UploadFile] | None = File(default=None),
+    file: UploadFile | None = File(default=None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("profesor", "admin")),
+):
+    """Convert a photographed paper exam into the same JSON format used by generated exams."""
+    materia = await _assert_materia_access(db, materia_id, current_user)
+    selected_files = list(files or [])
+    if file is not None and file.filename:
+        selected_files.append(file)
+    selected_files = [f for f in selected_files if f is not None and f.filename]
+    if not selected_files:
+        raise HTTPException(status_code=400, detail="Selecciona al menos una foto del examen")
+    if len(selected_files) > 3:
+        raise HTTPException(status_code=400, detail="Solo puedes digitalizar hasta 3 fotos por examen")
+
+    ai_config = await get_profesor_ai_config(db, str(current_user.id))
+    base_url = str(ai_config.get("open_code_base_url") or "").strip()
+    api_key = str(ai_config.get("open_code_api_key") or "").strip()
+    model = str(
+        ai_config.get("open_code_vision_model")
+        or ai_config.get("ocr_model")
+        or OPEN_CODE_RECOMMENDED_MODELS["vision"]
+    ).strip()
+    if not base_url or not api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Open Code no esta configurado para vision. Configura Base URL y API Key antes de digitalizar examenes.",
+        )
+
+    image_payloads: list[str] = []
+    for idx, upload in enumerate(selected_files, start=1):
+        if upload.content_type not in ALLOWED_DIGITALIZE_TYPES:
+            raise HTTPException(status_code=400, detail=f"La foto {idx} no es JPG o PNG")
+        file_bytes = await upload.read()
+        if not file_bytes:
+            raise HTTPException(status_code=400, detail=f"La foto {idx} esta vacia")
+        image_png = normalize_image_to_png(file_bytes)
+        image_payloads.append(base64.b64encode(image_png).decode("utf-8"))
+
+    curricular_context = await _build_curricular_context(db, materia, "", titulo)
+    prompt = (
+        "Convierte estas fotos de un mismo examen escolar en un examen digital editable. "
+        "Las imagenes estan en orden de pagina/foto. Une el contenido sin duplicar preguntas. "
+        "Extrae SOLO lo visible: titulo, preguntas, opciones y respuestas correctas si aparecen marcadas o escritas. "
+        "Si no puedes determinar una respuesta_correcta, deja el campo vacio y agrega requiere_revision=true en esa pregunta. "
+        "Usa tipos: seleccion_multiple, verdadero_falso, respuesta_corta, desarrollo. "
+        "Agrega siempre image_url, image_prompt, image_type e image_alt vacios por pregunta, salvo que una pregunta ya tenga una imagen visible; "
+        "en ese caso describe la imagen en image_alt y pon requiere_revision=true. "
+        "Si el examen tiene una seccion de 'Unir columnas' o 'Relacionar columnas', agrégala como campo opcional "
+        "\"unir_columnas\":{\"instrucciones\":\"string\",\"pares\":[{\"id\":1,\"izquierda\":\"string\",\"derecha\":\"string\"}]} "
+        "al nivel raiz del JSON (fuera de preguntas). "
+        "Devuelve SOLO JSON valido con este schema exacto: "
+        "{\"titulo\":\"string\",\"preguntas\":[{\"numero\":1,\"tipo\":\"seleccion_multiple|verdadero_falso|respuesta_corta|desarrollo\","
+        "\"enunciado\":\"string\",\"opciones\":[\"A) ...\"],\"respuesta_correcta\":\"string\",\"puntos\":1,\"requiere_revision\":false,"
+        "\"image_url\":\"\",\"image_prompt\":\"\",\"image_type\":\"\",\"image_alt\":\"\"}]}. "
+        "No inventes preguntas ni opciones que no sean visibles."
+    )
+    if curricular_context:
+        prompt += "\n\nContexto curricular de la materia para etiquetar mejor el examen, sin inventar contenido:\n" + curricular_context
+
+    try:
+        exam_data = await open_code_vision_json(
+            image_payloads=image_payloads,
+            prompt=prompt,
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+            temperature=0.0,
+            max_tokens=4096,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"No fue posible digitalizar con vision: {exc}") from exc
+
+    exam_data = _ensure_question_media_fields(normalize_latex_payload(exam_data))
+    contenido, clave_respuestas = _split_exam_payload(exam_data, titulo)
+    examen = Examen(
+        materia_id=materia.id,
+        titulo=titulo or contenido.get("titulo") or "Examen digitalizado",
+        tipo="digitalizado",
+        contenido_json=contenido,
+        clave_respuestas=clave_respuestas,
+    )
+    db.add(examen)
+    await db.commit()
+    await db.refresh(examen)
     return ExamenProfesorOut.model_validate(examen)
 
 
@@ -802,3 +972,450 @@ async def download_exam_pdf_student(
             "Content-Disposition": f'attachment; filename="{examen.titulo}_estudiante.pdf"'
         },
     )
+
+
+# ─────────────────────────────────────────────────
+#  XALI EXAM DESIGNER — chat interactivo
+# ─────────────────────────────────────────────────
+
+_EXAM_CHAT_SYSTEM = """\
+Eres Xali Exam Designer — asistente de diseño de exámenes para docentes colombianos.
+Ayudas a crear exámenes de alta calidad paso a paso via conversación.
+
+FLUJO:
+1. Si falta información, pregunta UNA cosa a la vez: tema principal, grado/nivel, número de preguntas, tipos.
+2. Si el profesor sube imágenes o PDFs, extrae el contenido temático visible y úsalo como base.
+3. Propón máx. 3–4 preguntas por turno. Espera que el profesor apruebe antes de continuar.
+4. Cuando el profesor confirme ("listo", "guarda", "así está bien", "perfecto", "eso es todo"), \
+incluye el examen completo al final DENTRO de etiquetas <exam_draft>...</exam_draft>.
+
+FORMATO del JSON dentro de <exam_draft> (sin comentarios ni markdown extra):
+{"titulo":"string","preguntas":[{"numero":1,"tipo":"seleccion_multiple","enunciado":"texto",\
+"opciones":["A) texto","B) texto","C) texto","D) texto"],"respuesta_correcta":"A","puntos":1}]}
+
+tipos válidos: seleccion_multiple | verdadero_falso | respuesta_corta | desarrollo
+- verdadero_falso → opciones=["A) Verdadero","B) Falso"], respuesta_correcta="A" o "B"
+- respuesta_corta / desarrollo → opciones=[], respuesta_correcta="" (subjetivo)
+
+REGLAS:
+- Responde siempre en español, conciso (máx 3 párrafos + preguntas propuestas).
+- NO incluyas <exam_draft> hasta que el profesor apruebe explícitamente.
+- Cuando incluyas <exam_draft>, el JSON debe ser completo con TODAS las preguntas ya aprobadas.
+"""
+
+
+async def _encode_uploads_to_b64(uploads: list[UploadFile]) -> list[str]:
+    """Convert uploaded images/PDFs to base64-encoded PNG strings."""
+    result: list[str] = []
+    valid_types = {"image/jpeg", "image/png", "image/jpg", "application/pdf"}
+    for upload in (uploads or [])[:3]:
+        if upload.content_type not in valid_types:
+            continue
+        raw = await upload.read()
+        if not raw:
+            continue
+        if upload.content_type == "application/pdf":
+            try:
+                doc = fitz.open(stream=raw, filetype="pdf")
+                for idx, page in enumerate(doc):
+                    if idx >= 2:
+                        break
+                    pix = page.get_pixmap(dpi=150)
+                    result.append(base64.b64encode(pix.tobytes("png")).decode("utf-8"))
+                doc.close()
+            except Exception:
+                pass
+        else:
+            try:
+                png = normalize_image_to_png(raw)
+                result.append(base64.b64encode(png).decode("utf-8"))
+            except Exception:
+                pass
+    return result
+
+
+@router.post("/exam-chat")
+async def exam_design_chat(
+    message: str = Form(..., min_length=1, max_length=3000),
+    history: str = Form(default="[]"),
+    materia_id: str = Form(default=""),
+    files: list[UploadFile] = File(default=[]),
+    current_user: User = Depends(require_role("profesor", "admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Interactive AI chat to collaboratively design an exam. Returns response + exam_draft when ready."""
+    ai_config = await get_profesor_ai_config(db, str(current_user.id))
+    base_url = str(ai_config.get("open_code_base_url") or "").strip()
+    api_key = str(ai_config.get("open_code_api_key") or "").strip()
+    model = str(
+        ai_config.get("open_code_vision_model")
+        or ai_config.get("open_code_content_model")
+        or OPEN_CODE_RECOMMENDED_MODELS.get("vision", "qwen3.7-plus")
+    ).strip()
+
+    if not base_url or not api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Configura Open Code (Base URL + API Key) en tu perfil para usar el diseñador de exámenes.",
+        )
+
+    # Parse history
+    try:
+        hist = json.loads(history) if history.strip() else []
+        if not isinstance(hist, list):
+            hist = []
+    except Exception:
+        hist = []
+
+    # Curricular context from materia (if provided)
+    context_block = ""
+    if materia_id.strip():
+        try:
+            result = await db.execute(select(Materia).where(Materia.id == materia_id))
+            materia = result.scalar_one_or_none()
+            if materia and str(materia.profesor_id) == str(current_user.id):
+                context_block = await _build_curricular_context(db, materia, "", message[:200])
+        except Exception:
+            pass
+
+    images_b64 = await _encode_uploads_to_b64(files)
+
+    # Build system prompt
+    system_prompt = _EXAM_CHAT_SYSTEM
+    if context_block:
+        system_prompt += f"\n\nContexto curricular de la materia (úsalo para personalizar el examen, sin inventar):\n{context_block[:2000]}"
+
+    messages: list[dict] = [{"role": "system", "content": system_prompt}]
+    for h in hist[-8:]:
+        role = str(h.get("role", "")).strip()
+        content_h = str(h.get("content", "")).strip()
+        if role in ("user", "assistant") and content_h:
+            messages.append({"role": role, "content": content_h})
+
+    # User message: text + optional images
+    if images_b64:
+        user_content: list[dict] = [{"type": "text", "text": message}]
+        for b64 in images_b64:
+            user_content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}})
+        messages.append({"role": "user", "content": user_content})
+    else:
+        messages.append({"role": "user", "content": message})
+
+    try:
+        raw = await open_code_chat_completion(
+            messages=messages,
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+            temperature=0.3,
+            max_tokens=3000,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Error conectando con la IA: {exc}") from exc
+
+    response_text = _message_text(raw)
+
+    # Extract <exam_draft>...</exam_draft>
+    exam_draft = None
+    draft_match = re.search(r"<exam_draft>([\s\S]*?)</exam_draft>", response_text, re.IGNORECASE)
+    if draft_match:
+        try:
+            raw_json = draft_match.group(1).strip()
+            exam_draft = json.loads(raw_json)
+            exam_draft = normalize_latex_payload(exam_draft)
+            exam_draft = _ensure_question_media_fields(exam_draft)
+        except Exception:
+            exam_draft = None
+        response_text = re.sub(r"\s*<exam_draft>[\s\S]*?</exam_draft>", "", response_text, flags=re.IGNORECASE).strip()
+
+    return {"response": response_text, "exam_draft": exam_draft}
+
+
+# ─────────────────────────────────────────────────
+#  EXTRACT CONTENT — PDF / DOCX / image to text
+# ─────────────────────────────────────────────────
+
+@router.post("/extract-content")
+async def extract_content_from_file(
+    file: UploadFile = File(...),
+    current_user: User = Depends(require_role("profesor", "admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Extract readable text from a PDF, Word, or image to use as contenido_base."""
+    ALLOWED = {
+        "application/pdf": "pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+        "application/msword": "docx",
+        "image/jpeg": "image",
+        "image/jpg": "image",
+        "image/png": "image",
+    }
+    file_type = ALLOWED.get(file.content_type or "")
+    if not file_type:
+        name = (file.filename or "").lower()
+        if name.endswith(".pdf"):
+            file_type = "pdf"
+        elif name.endswith((".docx", ".doc")):
+            file_type = "docx"
+        elif name.endswith((".jpg", ".jpeg", ".png")):
+            file_type = "image"
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Tipo no soportado. Usa PDF, Word (.docx) o imagen JPG/PNG."
+            )
+
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="El archivo está vacío.")
+
+    text = ""
+
+    if file_type == "pdf":
+        try:
+            doc = fitz.open(stream=raw, filetype="pdf")
+            parts = [page.get_text() for page in doc]
+            doc.close()
+            text = "\n".join(parts).strip()
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"Error leyendo PDF: {exc}")
+
+    elif file_type == "docx":
+        try:
+            import docx as _docx
+            document = _docx.Document(io.BytesIO(raw))
+            paragraphs = [p.text for p in document.paragraphs if p.text.strip()]
+            text = "\n".join(paragraphs).strip()
+        except ImportError:
+            raise HTTPException(status_code=501, detail="Extracción de Word no disponible en este servidor. Usa PDF.")
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"Error leyendo Word: {exc}")
+
+    elif file_type == "image":
+        ai_config = await get_profesor_ai_config(db, str(current_user.id))
+        base_url = str(ai_config.get("open_code_base_url") or "").strip()
+        api_key = str(ai_config.get("open_code_api_key") or "").strip()
+        model = str(
+            ai_config.get("open_code_vision_model") or OPEN_CODE_RECOMMENDED_MODELS.get("vision", "")
+        ).strip()
+        if not base_url or not api_key:
+            raise HTTPException(
+                status_code=400,
+                detail="Para extraer texto de imágenes configura Open Code (Base URL + API Key) en tu perfil."
+            )
+        try:
+            png = normalize_image_to_png(raw)
+            b64 = base64.b64encode(png).decode("utf-8")
+            result = await open_code_vision_json(
+                image_payloads=[b64],
+                prompt='Extrae TODO el texto visible tal como está escrito. Devuelve JSON: {"text": "todo el texto aquí"}.',
+                model=model,
+                base_url=base_url,
+                api_key=api_key,
+                temperature=0.0,
+                max_tokens=2000,
+            )
+            text = str(result.get("text", "")).strip()
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Error extrayendo texto de imagen: {exc}")
+
+    if not text:
+        raise HTTPException(
+            status_code=422,
+            detail="No se pudo extraer texto. Verifica que el documento tenga contenido legible."
+        )
+
+    MAX_CHARS = 6000
+    truncated = len(text) > MAX_CHARS
+    if truncated:
+        text = text[:MAX_CHARS] + "\n... [contenido truncado]"
+
+    return {"text": text, "chars": len(text), "truncated": truncated}
+
+
+# ─────────────────────────────────────────────────
+#  IMPROVE PROMPT — mejora el texto del profesor
+# ─────────────────────────────────────────────────
+
+class ImprovePromptRequest(BaseModel):
+    text: str
+    tipo: str = "examen"
+
+
+@router.post("/improve-prompt")
+async def improve_prompt(
+    body: ImprovePromptRequest,
+    current_user: User = Depends(require_role("profesor", "admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mejora y expande el texto del docente para generar mejores herramientas educativas."""
+    if not body.text.strip():
+        raise HTTPException(status_code=422, detail="El texto no puede estar vacío")
+
+    ai_config = await get_profesor_ai_config(db, str(current_user.id))
+    model = ai_config.get("open_code_content_model") or ai_config.get("content_model") or ""
+    base_url = ai_config.get("open_code_base_url") or ""
+    api_key = ai_config.get("open_code_api_key") or ""
+
+    if not base_url or not api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Configura Open Code (Base URL + API Key) en Configuración IA para usar esta función."
+        )
+
+    tipo_labels = {
+        "examen": "examen educativo",
+        "crucigrama": "crucigrama educativo",
+        "sopa_letras": "sopa de letras educativa",
+        "emparejar": "actividad de emparejar conceptos",
+        "cuento": "cuento educativo con moraleja",
+        "para_colorear": "página para colorear educativa",
+    }
+    tipo_label = tipo_labels.get(body.tipo, "herramienta educativa")
+
+    system_prompt = (
+        f"Eres un asistente para docentes colombianos de educación básica y media. "
+        f"Tu tarea es mejorar y expandir el texto del docente sobre el tema para generar un {tipo_label} con IA. "
+        f"Haz el texto más claro, específico y pedagógicamente rico. "
+        f"Incluye conceptos clave, subtemas relevantes y vocabulario académico apropiado. "
+        f"Responde ÚNICAMENTE con el texto mejorado, sin encabezados ni explicaciones adicionales. "
+        f"Máximo 250 palabras. Escribe en español colombiano."
+    )
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"Mejora este texto para un {tipo_label}:\n\n{body.text.strip()}"},
+    ]
+
+    try:
+        raw = await open_code_chat_completion(
+            messages=messages,
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+            temperature=0.5,
+            # Modelos de razonamiento (DeepSeek V4 Flash) gastan tokens pensando;
+            # un presupuesto bajo deja la respuesta vacía.
+            max_tokens=8192,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Error conectando con la IA: {exc}") from exc
+
+    improved_text = _message_text(raw).strip()
+    if not improved_text:
+        raise HTTPException(status_code=502, detail="La IA no devolvió texto mejorado")
+
+    return {"improved_text": improved_text}
+
+
+# ─────────────────────────────────────────────────
+#  EVALUACIÓN RÁPIDA — digitizar examen del profesor
+# ─────────────────────────────────────────────────
+
+@router.post("/evaluacion-rapida")
+async def evaluacion_rapida(
+    titulo: str = Form(default="Evaluación rápida"),
+    materia_id: str = Form(default=""),
+    fotos: list[UploadFile] = File(...),
+    current_user: User = Depends(require_role("profesor", "admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Digitize a teacher's handwritten exam from 1–3 photos.
+    If materia_id is provided, saves the exam and returns examen_id.
+    Otherwise returns the extracted JSON without saving.
+    """
+    ai_config = await get_profesor_ai_config(db, str(current_user.id))
+    base_url = str(ai_config.get("open_code_base_url") or "").strip()
+    api_key = str(ai_config.get("open_code_api_key") or "").strip()
+    model = str(
+        ai_config.get("open_code_vision_model") or OPEN_CODE_RECOMMENDED_MODELS.get("vision", "Qwen3.7 Plus")
+    ).strip()
+
+    if not base_url or not api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Configura Open Code en tu perfil para usar Evaluación Rápida.",
+        )
+
+    selected = [f for f in (fotos or []) if f and f.filename][:3]
+    if not selected:
+        raise HTTPException(status_code=400, detail="Sube al menos una foto del examen")
+
+    image_payloads: list[str] = []
+    for idx, upload in enumerate(selected, 1):
+        if upload.content_type not in {"image/jpeg", "image/png", "image/jpg", "application/pdf"}:
+            raise HTTPException(status_code=400, detail=f"Foto {idx}: tipo no soportado")
+        raw = await upload.read()
+        if not raw:
+            raise HTTPException(status_code=400, detail=f"Foto {idx} está vacía")
+        if upload.content_type == "application/pdf":
+            doc = fitz.open(stream=raw, filetype="pdf")
+            for pidx, page in enumerate(doc):
+                if pidx >= 2:
+                    break
+                pix = page.get_pixmap(dpi=200)
+                image_payloads.append(base64.b64encode(pix.tobytes("png")).decode("utf-8"))
+            doc.close()
+        else:
+            png = normalize_image_to_png(raw)
+            image_payloads.append(base64.b64encode(png).decode("utf-8"))
+
+    prompt = (
+        "Convierte estas fotos de un examen escolar en un examen digital editable. "
+        "Extrae SOLO lo visible: preguntas, opciones, respuestas correctas si están marcadas. "
+        "Usa tipos: seleccion_multiple, verdadero_falso, respuesta_corta, desarrollo. "
+        "Si no hay respuesta correcta visible, usa respuesta_correcta=\"\" y requiere_revision=true. "
+        "Devuelve SOLO JSON válido: "
+        '{"titulo":"string","preguntas":[{"numero":1,"tipo":"seleccion_multiple","enunciado":"string",'
+        '"opciones":["A) texto","B) texto"],"respuesta_correcta":"A","puntos":1,"requiere_revision":false,'
+        '"image_url":"","image_prompt":"","image_type":"","image_alt":""}]} '
+        "No inventes preguntas que no estén en la imagen."
+    )
+
+    try:
+        exam_data = await open_code_vision_json(
+            image_payloads=image_payloads,
+            prompt=prompt,
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+            temperature=0.0,
+            max_tokens=4096,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"No se pudo extraer el examen de la imagen: {exc}") from exc
+
+    exam_data = _ensure_question_media_fields(normalize_latex_payload(exam_data))
+    contenido, clave_respuestas = _split_exam_payload(exam_data, titulo)
+    final_titulo = titulo or contenido.get("titulo") or "Evaluación rápida"
+
+    if materia_id.strip():
+        materia = await _assert_materia_access(db, materia_id, current_user)
+        examen = Examen(
+            materia_id=materia.id,
+            titulo=final_titulo,
+            tipo="digitalizado",
+            contenido_json=contenido,
+            clave_respuestas=clave_respuestas,
+        )
+        db.add(examen)
+        await db.commit()
+        await db.refresh(examen)
+        return {
+            "saved": True,
+            "examen_id": str(examen.id),
+            "titulo": final_titulo,
+            "contenido_json": contenido,
+            "clave_respuestas": clave_respuestas,
+            "n_preguntas": len(contenido.get("preguntas") or []),
+        }
+
+    return {
+        "saved": False,
+        "examen_id": None,
+        "titulo": final_titulo,
+        "contenido_json": contenido,
+        "clave_respuestas": clave_respuestas,
+        "n_preguntas": len(contenido.get("preguntas") or []),
+    }

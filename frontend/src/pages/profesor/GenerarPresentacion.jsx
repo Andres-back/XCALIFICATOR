@@ -13,14 +13,16 @@
  *  - Estado de carga con barra de progreso explícita
  *  - Botón persistente "Necesito ayuda"
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import api from '../../api';
 import toast from 'react-hot-toast';
+import { openPresentonEditorWithSession } from '../../utils/presenton';
+import PageGuide from '../../components/GuidedTour';
 import {
   ArrowLeft, ArrowRight, BookOpen, Check, Download,
   GraduationCap, HelpCircle, Loader2, Palette, Presentation,
-  RefreshCw, Sparkles, Wand2,
+  RefreshCw, Sparkles, Wand2, FileQuestion, X,
 } from 'lucide-react';
 
 /* ════════════════════ HELPERS ════════════════════ */
@@ -137,6 +139,12 @@ export default function GenerarPresentacion() {
   const [titulo, setTitulo] = useState('');
   const [grado, setGrado] = useState('');
   const [contenido, setContenido] = useState('');
+  const [materias, setMaterias] = useState([]);
+  const [selectedMateriaId, setSelectedMateriaId] = useState(materiaId || '');
+  const [dbaLineamiento, setDbaLineamiento] = useState('');
+  const [metodologia, setMetodologia] = useState('');
+  const [orientacion, setOrientacion] = useState('');
+  const [enfoque, setEnfoque] = useState('');
 
   // Paso 2
   const [numSlides, setNumSlides] = useState(8);
@@ -146,8 +154,21 @@ export default function GenerarPresentacion() {
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [result, setResult] = useState(null);
+  const [creatingQuiz, setCreatingQuiz] = useState(false);
+  const [quizModalOpen, setQuizModalOpen] = useState(false);
+  const [quizMateriaId, setQuizMateriaId] = useState(selectedMateriaId || '');
 
   const canAdvanceStep1 = titulo.trim().length >= 3;
+
+  useEffect(() => {
+    if (materiaId) {
+      setSelectedMateriaId(materiaId);
+      return;
+    }
+    api.get('/materias/mis-materias')
+      .then((res) => setMaterias(res.data || []))
+      .catch(() => setMaterias([]));
+  }, [materiaId]);
 
   // ── Generar ─────────────────────────────────────────────────
   const handleGenerate = async () => {
@@ -165,9 +186,13 @@ export default function GenerarPresentacion() {
         titulo: titulo.trim(),
         contenido: contenido.trim(),
         grado: grado || null,
+        dba_lineamiento: dbaLineamiento.trim() || null,
+        metodologia: metodologia.trim() || null,
+        orientacion: orientacion.trim() || null,
+        enfoque: enfoque.trim() || null,
         num_slides: numSlides,
         plantilla,
-        materia_id: materiaId || null,
+        materia_id: selectedMateriaId || null,
       });
       setResult(data);
       setProgress(100);
@@ -193,18 +218,36 @@ export default function GenerarPresentacion() {
     setStep(2);
   };
 
-  // Abre el editor de Presenton inyectando primero el token de sesión como
-  // cookie de dominio (los navegadores no distinguen puertos en localhost)
   const handleOpenEditor = async () => {
     if (!result?.edit_url) return;
     try {
-      const res = await api.get('/presentaciones/presenton-token');
-      const token = res.data.token;
-      document.cookie = `presenton_session=${token}; path=/; SameSite=Lax; max-age=86400`;
+      await openPresentonEditorWithSession(result);
     } catch {
-      // si falla la obtención del token, el usuario verá el login de Presenton
+      toast.error('No se pudo abrir el editor de Presenton');
     }
-    window.open(result.edit_url, '_blank', 'noopener,noreferrer');
+  };
+
+  const handleCreateQuiz = async (materiaParaQuiz = result?.materia_id || selectedMateriaId) => {
+    if (!result?.id) return;
+    if (!materiaParaQuiz) {
+      setQuizMateriaId('');
+      setQuizModalOpen(true);
+      return;
+    }
+    setCreatingQuiz(true);
+    try {
+      await api.post(`/presentaciones/${result.id}/quiz`, {
+        materia_id: materiaParaQuiz,
+        num_preguntas: 5,
+      });
+      toast.success('Quiz guardado en Mis Exámenes');
+      setQuizModalOpen(false);
+      navigate(`/profesor/examenes/${materiaParaQuiz}`);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'No pudimos generar el quiz');
+    } finally {
+      setCreatingQuiz(false);
+    }
   };
 
   // ── Avance al paso 3 dispara la generación ──
@@ -226,14 +269,17 @@ export default function GenerarPresentacion() {
           <ArrowLeft className="w-4 h-4" />
           Volver
         </Link>
-        <button
-          type="button"
-          onClick={() => toast('Pronto: Xali te guiará paso a paso 🤖', { icon: '💡' })}
-          className="inline-flex items-center gap-2 text-sm font-semibold text-profesor-600 hover:text-profesor-700 px-3 py-2 rounded-lg hover:bg-profesor-50"
-        >
-          <HelpCircle className="w-4 h-4" />
-          Necesito ayuda
-        </button>
+        <PageGuide
+          storageKey="guide-profesor-generar-presentacion"
+          steps={[
+            { title: 'Empieza por el tema', body: 'Escribe de que trata la clase. Con una frase clara ya es suficiente para que la IA arranque.', selector: '[data-guide="presentacion-tema"]' },
+            { title: 'Indica el grado', body: 'Marca el grado y las palabras, ejemplos e imagenes saldran al nivel justo para tus estudiantes.', selector: '[data-guide="presentacion-grado"]' },
+            { title: 'Suma tu material (opcional)', body: 'Pega apuntes, DBA u orientaciones si quieres que las diapositivas sigan tu plan de clase.', selector: '[data-guide="presentacion-contexto"]' },
+            { title: 'Cuantas diapositivas', body: 'Elige el numero que necesitas: si pides 12, recibes 12.', selector: '[data-guide="presentacion-cantidad"]' },
+            { title: 'Escoge el estilo', body: 'Elige una plantilla. La moderna trae mas imagenes y una composicion mas visual.', selector: '[data-guide="presentacion-estilo"]' },
+            { title: 'Crear y ajustar', body: 'Toca Crear presentacion. Al terminar podras descargar el PPTX o abrir el editor para retocar texto e imagenes.', selector: '[data-guide="presentacion-crear"]' },
+          ]}
+        />
       </div>
 
       {/* Title */}
@@ -269,6 +315,7 @@ export default function GenerarPresentacion() {
               </HelpTip>
             </label>
             <input
+              data-guide="presentacion-tema"
               type="text"
               value={titulo}
               onChange={(e) => setTitulo(e.target.value)}
@@ -289,7 +336,7 @@ export default function GenerarPresentacion() {
                 Si no estás seguro, déjalo en blanco.
               </HelpTip>
             </label>
-            <div className="flex flex-wrap gap-2">
+            <div data-guide="presentacion-grado" className="flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={() => setGrado('')}
@@ -313,7 +360,7 @@ export default function GenerarPresentacion() {
           </div>
 
           {/* Notas (opcional) */}
-          <div className="mb-2">
+          <div data-guide="presentacion-contexto" className="mb-2">
             <label className="input-label text-base">
               Tus notas o material (opcional)
               <HelpTip>
@@ -330,6 +377,46 @@ export default function GenerarPresentacion() {
               maxLength={8000}
             />
             <p className="input-hint">{contenido.length} / 8000 caracteres</p>
+          </div>
+
+          {!materiaId && materias.length > 0 && (
+            <div className="mb-5">
+              <label className="input-label text-base">Materia relacionada (opcional)</label>
+              <select className="input-field" value={selectedMateriaId} onChange={(e) => setSelectedMateriaId(e.target.value)}>
+                <option value="">Sin materia</option>
+                {materias.map((m) => (
+                  <option key={m.id} value={m.id}>{m.nombre}</option>
+                ))}
+              </select>
+              <p className="input-hint">Si eliges materia, usaremos sus DBA, plan curricular y documentos cargados.</p>
+            </div>
+          )}
+
+          <div data-guide="presentacion-contexto" className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-2">
+            <div>
+              <label className="input-label text-base">DBA, estandar o lineamiento (opcional)</label>
+              <textarea className="input-field text-sm resize-none" rows={3} value={dbaLineamiento}
+                onChange={(e) => setDbaLineamiento(e.target.value)}
+                placeholder="Ej: DBA, competencia, estandar o ley que debe tener en cuenta." />
+            </div>
+            <div>
+              <label className="input-label text-base">Metodologia (opcional)</label>
+              <textarea className="input-field text-sm resize-none" rows={3} value={metodologia}
+                onChange={(e) => setMetodologia(e.target.value)}
+                placeholder="Ej: aprendizaje basado en proyectos, clase invertida, trabajo colaborativo." />
+            </div>
+            <div>
+              <label className="input-label text-base">Orientacion pedagogica (opcional)</label>
+              <textarea className="input-field text-sm resize-none" rows={3} value={orientacion}
+                onChange={(e) => setOrientacion(e.target.value)}
+                placeholder="Ej: explicacion paso a paso, inclusion, trabajo en grupo." />
+            </div>
+            <div>
+              <label className="input-label text-base">Enfoque de clase (opcional)</label>
+              <textarea className="input-field text-sm resize-none" rows={3} value={enfoque}
+                onChange={(e) => setEnfoque(e.target.value)}
+                placeholder="Ej: introduccion, repaso, taller guiado, cierre evaluativo." />
+            </div>
           </div>
 
           {/* Footer */}
@@ -365,7 +452,7 @@ export default function GenerarPresentacion() {
               <BookOpen className="w-4 h-4 text-gray-400" />
               ¿Cuántas diapositivas?
             </h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div data-guide="presentacion-cantidad" className="grid grid-cols-1 md:grid-cols-3 gap-3">
               {TAMANOS.map((t) => (
                 <BigCard
                   key={t.id}
@@ -386,7 +473,7 @@ export default function GenerarPresentacion() {
               <Palette className="w-4 h-4 text-gray-400" />
               ¿Qué estilo prefieres?
             </h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div data-guide="presentacion-estilo" className="grid grid-cols-1 md:grid-cols-3 gap-3">
               {PLANTILLAS.map((p) => (
                 <BigCard
                   key={p.id}
@@ -413,6 +500,7 @@ export default function GenerarPresentacion() {
             <button
               type="button"
               onClick={goToStep3}
+              data-guide="presentacion-crear"
               className="btn-md bg-profesor-600 text-white hover:bg-profesor-700 shadow-sm hover:shadow-md focus-visible:ring-profesor-500 active:scale-[0.98]"
             >
               <Wand2 className="w-4 h-4" />
@@ -454,7 +542,7 @@ export default function GenerarPresentacion() {
           )}
 
           {!loading && result && (
-            <div>
+            <div data-guide="presentacion-resultado">
               <div className="flex items-center gap-3 mb-6">
                 <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-emerald-100">
                   <Check className="w-6 h-6 text-emerald-600" />
@@ -478,7 +566,7 @@ export default function GenerarPresentacion() {
                       <img
                         src={thumb}
                         alt={`Diapositiva ${i + 1}`}
-                        className="w-full h-full object-cover"
+                        className="w-full h-full object-contain p-2"
                         loading="lazy"
                       />
                     </div>
@@ -522,9 +610,18 @@ export default function GenerarPresentacion() {
                     className="btn-md bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"
                   >
                     <GraduationCap className="w-4 h-4" />
-                    Abrir editor
+                    Editar manualmente
                   </button>
                 )}
+                <button
+                  type="button"
+                  onClick={() => handleCreateQuiz()}
+                  disabled={creatingQuiz}
+                  className="btn-md bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100"
+                >
+                  {creatingQuiz ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileQuestion className="w-4 h-4" />}
+                  Generar quiz
+                </button>
                 <button
                   type="button"
                   onClick={handleRetry}
@@ -536,10 +633,57 @@ export default function GenerarPresentacion() {
               </div>
 
               <p className="text-xs text-gray-400 text-center mt-6">
-                💾 Tu presentación quedó guardada en <strong>Mis Herramientas</strong>.
+                Tu presentacion quedo guardada en la seccion <strong>Presentaciones</strong>.
               </p>
             </div>
           )}
+        </div>
+      )}
+
+      {quizModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-xl border border-gray-200 p-5">
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">Guardar quiz en una materia</h2>
+                <p className="text-sm text-gray-500 mt-1">
+                  El quiz quedará en Mis Exámenes para asignarlo o editarlo.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setQuizModalOpen(false)}
+                className="rounded-lg p-2 text-gray-500 hover:bg-gray-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Materia</label>
+            <select
+              className="input-field"
+              value={quizMateriaId}
+              onChange={(e) => setQuizMateriaId(e.target.value)}
+            >
+              <option value="">Selecciona una materia</option>
+              {materias.map((materia) => (
+                <option key={materia.id} value={materia.id}>{materia.nombre}</option>
+              ))}
+            </select>
+            <div className="flex flex-col sm:flex-row justify-end gap-2 mt-5">
+              <button type="button" className="btn-secondary" onClick={() => setQuizModalOpen(false)}>
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="btn-primary inline-flex items-center justify-center gap-2"
+                disabled={!quizMateriaId || creatingQuiz}
+                onClick={() => handleCreateQuiz(quizMateriaId)}
+              >
+                {creatingQuiz && <Loader2 className="w-4 h-4 animate-spin" />}
+                Generar quiz
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

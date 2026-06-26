@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import api from '../../api';
 import useAuthStore from '../../store';
+import PageGuide from '../../components/GuidedTour';
 
 const emptyForm = {
   fase: 'con_sistema',
@@ -134,12 +135,22 @@ export default function ImpactoTesis() {
             Registro y análisis de eficiencia, concordancia, encuestas Likert y percepciones cualitativas.
           </p>
         </div>
-        <button onClick={loadData} className="btn-secondary text-sm flex items-center gap-1">
-          <RefreshCw className="w-4 h-4" /> Actualizar
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <PageGuide
+            storageKey="guide-profesor-impacto"
+            steps={[
+              { title: 'Tus indicadores de un vistazo', body: 'Estas tarjetas resumen registros, reduccion de tiempo, concordancia con la IA y resultados de encuestas.', selector: '[data-guide="impacto-indicadores"]' },
+              { title: 'Registra tu tiempo', body: 'Anota cuanto tardaste calificando una actividad a mano. Es el dato clave para medir el ahorro real del sistema.', selector: '[data-guide="impacto-registro"]' },
+              { title: 'Evidencia y voces', body: 'Mas abajo se reune la evidencia metodologica y los comentarios de profesores, estudiantes y administradores.', selector: '[data-guide="impacto-instrumentos"]' },
+            ]}
+          />
+          <button data-guide="impacto-actualizar" onClick={loadData} className="btn-secondary text-sm flex items-center gap-1">
+            <RefreshCw className="w-4 h-4" /> Actualizar
+          </button>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div data-guide="impacto-indicadores" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard
           icon={Clock3}
           label="Registros de tiempo"
@@ -173,7 +184,7 @@ export default function ImpactoTesis() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <section className="card p-5">
+        <section data-guide="impacto-registro" className="card p-5">
           <h2 className="text-lg font-semibold text-gray-900 mb-3">Registrar Tiempo de Evaluación</h2>
           <form onSubmit={handleCreateTiempo} className="space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -249,7 +260,7 @@ export default function ImpactoTesis() {
           </form>
         </section>
 
-        <section className="card p-5">
+        <section data-guide="impacto-instrumentos" className="card p-5">
           <h2 className="text-lg font-semibold text-gray-900 mb-3">Resumen de Instrumentos</h2>
           <div className="space-y-3 text-sm text-gray-700">
             <div className="rounded-lg bg-gray-50 border border-gray-200 p-3">
@@ -276,7 +287,7 @@ export default function ImpactoTesis() {
         </section>
       </div>
 
-      <section className="card p-5">
+      <section data-guide="impacto-comentarios" className="card p-5">
         <h2 className="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
           <MessageSquareText className="w-5 h-5 text-primary-600" />
           Percepciones cualitativas

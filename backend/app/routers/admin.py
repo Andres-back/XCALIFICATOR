@@ -20,6 +20,8 @@ from app.core.ai_provider_config import (
     fetch_ollama_models,
     fetch_groq_models,
     split_groq_models,
+    fetch_open_code_models,
+    split_open_code_models,
     _get_profesor_ai_row,
     ensure_ai_provider_table,
 )
@@ -811,6 +813,10 @@ async def get_boletines_global(
 # ──────────────── AI CONFIG ENDPOINTS ────────────────
 
 class AIConfigUpdate(BaseModel):
+    content_provider: Optional[str] = None
+    content_model: Optional[str] = None
+    content_fallback_provider: Optional[str] = None
+    content_fallback_model: Optional[str] = None
     grading_provider: Optional[str] = None
     grading_model: Optional[str] = None
     grading_fallback_provider: Optional[str] = None
@@ -820,23 +826,50 @@ class AIConfigUpdate(BaseModel):
     ocr_fallback_provider: Optional[str] = None
     ocr_fallback_model: Optional[str] = None
     chat_model: Optional[str] = None
+    groq_api_key: Optional[str] = None
     ollama_url: Optional[str] = None
     ollama_api_key: Optional[str] = None
     ollama_cloud_url: Optional[str] = None
     ollama_cloud_api_key: Optional[str] = None
     ollama_cloud_ocr_model: Optional[str] = None
+    open_code_base_url: Optional[str] = None
+    open_code_api_key: Optional[str] = None
+    open_code_content_model: Optional[str] = None
+    open_code_vision_model: Optional[str] = None
+    open_code_feedback_model: Optional[str] = None
+    presenton_api_key: Optional[str] = None
+    openai_api_key: Optional[str] = None
+    cloudflare_account_id: Optional[str] = None
+    cloudflare_api_token: Optional[str] = None
+    cloudflare_image_model: Optional[str] = None
+    cloudflare_image_fallback_model: Optional[str] = None
 
 
 @router.get("/groq-models")
 async def get_groq_models(
+    api_key: Optional[str] = None,
     current_user: User = Depends(require_role("admin")),
 ):
     """Fetches available Groq model list and splits by capability."""
     try:
-        models = await fetch_groq_models()
+        models = await fetch_groq_models(api_key)
         return split_groq_models(models)
     except Exception:
         return split_groq_models([])
+
+
+@router.get("/open-code-models")
+async def get_open_code_models(
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    current_user: User = Depends(require_role("admin")),
+):
+    """Fetches Open Code model list from an OpenAI-compatible gateway or returns known defaults."""
+    try:
+        models = await fetch_open_code_models(base_url or "", api_key)
+        return split_open_code_models(models)
+    except Exception:
+        return split_open_code_models([])
 
 
 @router.get("/ai-configs/global")
@@ -873,6 +906,20 @@ async def get_global_ollama_models(
     except Exception:
         models = []
     return {"models": models}
+
+
+@router.get("/ai-configs/global/groq-models")
+async def get_global_groq_models(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin")),
+):
+    """Fetches available Groq models using the global or environment key."""
+    cfg = await get_global_ai_config(db)
+    try:
+        models = await fetch_groq_models(cfg.get("groq_api_key"))
+    except Exception:
+        models = []
+    return split_groq_models(models)
 
 
 @router.get("/ai-configs")
@@ -993,3 +1040,18 @@ async def get_profesor_ollama_models(
     except Exception:
         models = []
     return {"models": models}
+
+
+@router.get("/ai-configs/{profesor_id}/groq-models")
+async def get_profesor_groq_models(
+    profesor_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin")),
+):
+    """Fetches available Groq models using the professor's effective key."""
+    cfg = await get_profesor_ai_config(db, str(profesor_id))
+    try:
+        models = await fetch_groq_models(cfg.get("groq_api_key"))
+    except Exception:
+        models = []
+    return split_groq_models(models)

@@ -1,4 +1,7 @@
 .env
+.env.local
+.env.production.local
+nginx/.htpasswd
 node_modules/
 .npm-cache/
 __pycache__/
@@ -34,6 +37,7 @@ presenton/
 DEBUG/
 output/
 outputs/
+tests/e2e/screenshots/
 tmp_*.diff
 scan-frontend.ps1
 scripts/check_api_contracts.cjs

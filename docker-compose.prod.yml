@@ -66,6 +66,7 @@ services:
       dockerfile: Dockerfile.prod
       args:
         VITE_API_URL: ${VITE_API_URL:-}
+        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
     container_name: xcalificator_frontend
     restart: always
     depends_on:
@@ -74,19 +75,10 @@ services:
     networks:
       - xcalificator-net
 
-  paddleocr:
-    build:
-      context: ./paddleocr
-      dockerfile: Dockerfile
-    container_name: xcalificator_paddleocr
-    restart: always
-    volumes:
-      - uploads:/app/uploads
-    networks:
-      - xcalificator-net
-
   presenton:
-    image: ghcr.io/presenton/presenton:latest
+    build:
+      context: ./presenton_patches
+      dockerfile: Dockerfile
     container_name: xcalificator_presenton
     restart: always
     environment:
@@ -95,6 +87,7 @@ services:
       CUSTOM_MODEL: ${PRESENTON_CUSTOM_MODEL:-meta-llama/llama-4-scout-17b-16e-instruct}
       CUSTOM_LLM_API_KEY: ${GROQ_API_KEY:?GROQ_API_KEY requerido}
       DISABLE_IMAGE_GENERATION: ${PRESENTON_DISABLE_IMAGE_GENERATION:-false}
+      PRESENTON_ASSET_TIMEOUT: "${PRESENTON_ASSET_TIMEOUT:-120}"
       APP_DATA_DIRECTORY: /app_data
       CAN_CHANGE_KEYS: "false"
       AUTH_USERNAME: ${PRESENTON_AUTH_USERNAME:-xcalificator}
@@ -102,6 +95,14 @@ services:
       AUTH_OVERRIDE_FROM_ENV: "true"
     volumes:
       - presenton_data:/app_data
+      - ./presenton_patches/fastapi/llmai_patch.py:/app/servers/fastapi/llmai_patch.py:ro
+      - ./presenton_patches/fastapi/api/main.py:/app/servers/fastapi/api/main.py:ro
+      - ./presenton_patches/fastapi/api/middlewares.py:/app/servers/fastapi/api/middlewares.py:ro
+      - ./presenton_patches/fastapi/utils/get_layout_by_name.py:/app/servers/fastapi/utils/get_layout_by_name.py:ro
+      - ./presenton_patches/fastapi/utils/llm_calls/generate_presentation_outlines.py:/app/servers/fastapi/utils/llm_calls/generate_presentation_outlines.py:ro
+      - ./presenton_patches/fastapi/utils/llm_calls/generate_presentation_structure.py:/app/servers/fastapi/utils/llm_calls/generate_presentation_structure.py:ro
+      - ./presenton_patches/fastapi/api/v1/ppt/endpoints/presentation.py:/app/servers/fastapi/api/v1/ppt/endpoints/presentation.py:ro
+      - ./presenton_patches/fastapi/static/images/placeholder.jpg:/app/servers/fastapi/static/images/placeholder.jpg:ro
     networks:
       - xcalificator-net
 

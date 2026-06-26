@@ -167,7 +167,7 @@ XCALIFICATOR/
 │       │   └── grupos.py       # Modo grupal
 │       └── services/
 │           ├── groq_service.py # Cliente Groq (generación, calificación, RAG)
-│           ├── notification_service.py # Email SMTP + Telegram Bot
+│           ├── notification_service.py # Email SMTP + WhatsApp Whapi
 │           ├── ocr_service.py  # Cliente HTTP hacia PaddleOCR
 │           └── pdf_service.py  # Generación PDF con ReportLab
 ├── frontend/

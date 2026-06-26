@@ -1,12 +1,13 @@
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from app.core.database import get_db
-from app.core.dependencies import require_role, get_current_user
+from app.core.dependencies import require_role, get_current_user, get_client_ip
 from app.core.latex_utils import normalize_latex_payload
-from app.models.models import User, Examen, Materia, Nota, Matricula, RespuestaOnline
+from app.models.models import User, Examen, Materia, Nota, Matricula, RespuestaOnline, AuditLog
 from app.schemas.schemas import (
     ExamenCreate, ExamenOut, ExamenProfesorOut,
     NotaCreate, NotaUpdate, NotaOut,
@@ -16,6 +17,12 @@ from app.services.nota_service import upsert_nota
 from app.services.notification_service import notify_enrolled_students, send_email, send_telegram
 import json as _json
 import logging
+
+
+class ExamenRegistradoCreate(BaseModel):
+    titulo: str = Field(..., min_length=3, max_length=250)
+    nota_maxima: float = Field(default=5.0, gt=0, le=10)
+    criterios: str = Field(..., min_length=3, max_length=4000)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/examenes", tags=["Exámenes"])
@@ -426,6 +433,61 @@ def auto_grade_objective(examen: Examen, respuestas_json: dict) -> dict | None:
         except Exception as e:
             logger.error(f"Error grading emparejar: {e}")
 
+    # ── Grade unir_columnas ──
+    if "unir_columnas" in resp_map and contenido.get("unir_columnas"):
+        try:
+            unir = contenido["unir_columnas"]
+            pares_correctos = unir.get("pares", [])
+            raw = resp_map["unir_columnas"]
+            student_matches = _json.loads(raw) if isinstance(raw, str) else (raw or {})
+
+            if isinstance(student_matches, dict) and "matches" in student_matches:
+                student_matches = student_matches["matches"]
+
+            total_pares = len(pares_correctos)
+            pares_bien = 0
+            for par in pares_correctos:
+                pid = par.get("id")
+                if pid is not None and student_matches.get(str(pid)) == pid:
+                    pares_bien += 1
+                elif pid is not None and str(student_matches.get(str(pid))) == str(pid):
+                    pares_bien += 1
+
+            puntos_act = 5.0
+            nota_act = round((pares_bien / total_pares * puntos_act) if total_pares else 0, 2)
+            nota_maxima += puntos_act
+            nota_total += nota_act
+
+            pair_details = []
+            for par in pares_correctos:
+                pid = par.get("id")
+                matched_rid = student_matches.get(str(pid), student_matches.get(pid))
+                is_correct = str(matched_rid) == str(pid) if matched_rid is not None else False
+                matched_text = ""
+                if matched_rid is not None:
+                    for p2 in pares_correctos:
+                        if p2.get("id") == matched_rid or str(p2.get("id")) == str(matched_rid):
+                            matched_text = p2.get("derecha", "")
+                            break
+                pair_details.append({
+                    "izquierda": par.get("izquierda", ""),
+                    "derecha_correcta": par.get("derecha", ""),
+                    "derecha_estudiante": matched_text,
+                    "correcto": is_correct,
+                })
+
+            preguntas_result.append({
+                "numero": "unir_columnas",
+                "tipo": "unir_columnas",
+                "nota": nota_act,
+                "nota_maxima": puntos_act,
+                "correcto": pares_bien == total_pares,
+                "retroalimentacion": f"Unir Columnas: {pares_bien}/{total_pares} pares correctos",
+                "detalle_pares": pair_details,
+            })
+        except Exception as e:
+            logger.error(f"Error grading unir_columnas: {e}")
+
     # If nothing was graded at all, return None
     if not preguntas_result:
         return None
@@ -805,6 +867,46 @@ async def submit_response(
 
 # ──────── CRUD EXÁMENES ────────
 
+@router.post("/registrar", response_model=ExamenProfesorOut, status_code=status.HTTP_201_CREATED)
+async def registrar_examen(
+    data: ExamenRegistradoCreate,
+    materia_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("profesor", "admin")),
+):
+    await _assert_materia_access(db, materia_id, current_user)
+    criterios = data.criterios.strip()
+    examen = Examen(
+        materia_id=materia_id,
+        titulo=data.titulo.strip(),
+        tipo="tarea_registrada",
+        contenido_json={
+            "criterios": criterios,
+            "nota_maxima": float(data.nota_maxima),
+            "origen": "registro_manual",
+        },
+        clave_respuestas={
+            "tipo": "rubrica",
+            "criterios": criterios,
+            "nota_maxima": float(data.nota_maxima),
+        },
+        activo_online=False,
+        activo_fisico=True,
+    )
+    db.add(examen)
+    await db.flush()
+    db.add(AuditLog(
+        user_id=current_user.id,
+        accion="create_registered_exam",
+        detalle={"materia_id": materia_id, "examen_id": str(examen.id), "titulo": examen.titulo},
+        ip=get_client_ip(request),
+    ))
+    await db.commit()
+    await db.refresh(examen)
+    return ExamenProfesorOut.model_validate(examen)
+
+
 @router.post("/", response_model=ExamenProfesorOut, status_code=status.HTTP_201_CREATED)
 async def create_examen(
     data: ExamenCreate,
@@ -902,7 +1004,7 @@ async def get_examenes_by_materia(
     examenes = result.scalars().all()
 
     if current_user.rol == "estudiante":
-        return [ExamenOut.model_validate(e) for e in examenes if e.activo_online]
+        return [ExamenOut.model_validate(e) for e in examenes if e.activo_online or e.activo_fisico]
     return [ExamenProfesorOut.model_validate(e) for e in examenes]
 
 
@@ -976,7 +1078,7 @@ async def update_examen(
     """Update exam fields (titulo, contenido_json, clave_respuestas, activo_online, fecha_limite, fecha_activacion)."""
     examen = await _assert_examen_access(db, examen_id, current_user)
 
-    allowed_fields = {"titulo", "contenido_json", "clave_respuestas", "activo_online", "fecha_limite", "fecha_activacion", "tipo"}
+    allowed_fields = {"titulo", "contenido_json", "clave_respuestas", "activo_online", "activo_fisico", "fecha_limite", "fecha_activacion", "tipo"}
     date_fields = {"fecha_limite", "fecha_activacion"}
     for field, value in data.items():
         if field in allowed_fields:

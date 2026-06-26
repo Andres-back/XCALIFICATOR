@@ -469,7 +469,7 @@ export default function AdminDashboard() {
                 </div>
                 <div>
                   <p className="text-2xl font-bold text-gray-900">
-                    {presStats.tiempo_total_minutos.toFixed(1)} min
+                    {(presStats.tiempo_total_minutos ?? 0).toFixed(1)} min
                   </p>
                   <p className="text-xs text-gray-500">Tiempo invertido por el sistema</p>
                 </div>

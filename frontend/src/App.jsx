@@ -20,12 +20,18 @@ import ProfesorNotas from './pages/profesor/Notas';
 import ProfesorHerramientas from './pages/profesor/Herramientas';
 import ProfesorPresentacion from './pages/profesor/GenerarPresentacion';
 import ProfesorMisPresentaciones from './pages/profesor/MisPresentaciones';
+import PresentonEditorRedirect from './pages/profesor/PresentonEditorRedirect';
 import ProfesorReportes from './pages/profesor/Reportes';
 import ImpactoTesis from './pages/profesor/ImpactoTesis';
 import MateriaDetail from './pages/profesor/MateriaDetail';
+import XaliMaster from './pages/profesor/XaliMaster';
+import CrearExamenChat from './pages/profesor/CrearExamenChat';
+import EvaluacionRapida from './pages/profesor/EvaluacionRapida';
+import CalificarTarea from './pages/profesor/CalificarTarea';
 import EstudianteHome from './pages/estudiante/Home';
 import EstudianteNotas from './pages/estudiante/Notas';
 import EstudianteExamen from './pages/estudiante/ResolverExamen';
+import EstudianteExamenFoto from './pages/estudiante/ExamenFoto';
 import EstudianteChat from './pages/estudiante/Chat';
 import EstudianteBoletin from './pages/estudiante/Boletin';
 import EncuestaImpacto from './pages/EncuestaImpacto';
@@ -146,6 +152,26 @@ export default function App() {
             <Layout><ProfesorHerramientas /></Layout>
           </ProtectedRoute>
         } />
+        <Route path="/profesor/xali-master" element={
+          <ProtectedRoute roles={['profesor', 'admin']}>
+            <Layout><XaliMaster /></Layout>
+          </ProtectedRoute>
+        } />
+        <Route path="/profesor/crear-examen-chat" element={
+          <ProtectedRoute roles={['profesor', 'admin']}>
+            <Layout><CrearExamenChat /></Layout>
+          </ProtectedRoute>
+        } />
+        <Route path="/profesor/evaluacion-rapida" element={
+          <ProtectedRoute roles={['profesor', 'admin']}>
+            <Layout><EvaluacionRapida /></Layout>
+          </ProtectedRoute>
+        } />
+        <Route path="/profesor/calificar-tarea" element={
+          <ProtectedRoute roles={['profesor', 'admin']}>
+            <Layout><CalificarTarea /></Layout>
+          </ProtectedRoute>
+        } />
         <Route path="/profesor/presentaciones" element={
           <ProtectedRoute roles={['profesor', 'admin']}>
             <Layout><ProfesorMisPresentaciones /></Layout>
@@ -159,6 +185,11 @@ export default function App() {
         <Route path="/profesor/presentacion/:materiaId" element={
           <ProtectedRoute roles={['profesor', 'admin']}>
             <Layout><ProfesorPresentacion /></Layout>
+          </ProtectedRoute>
+        } />
+        <Route path="/profesor/presentaciones/:presentacionId/editor" element={
+          <ProtectedRoute roles={['profesor', 'admin']}>
+            <PresentonEditorRedirect />
           </ProtectedRoute>
         } />
         <Route path="/profesor/reportes" element={
@@ -186,6 +217,11 @@ export default function App() {
         <Route path="/estudiante/examen/:examenId" element={
           <ProtectedRoute roles={['estudiante']}>
             <Layout><EstudianteExamen /></Layout>
+          </ProtectedRoute>
+        } />
+        <Route path="/estudiante/examen-foto/:examenId" element={
+          <ProtectedRoute roles={['estudiante']}>
+            <Layout><EstudianteExamenFoto /></Layout>
           </ProtectedRoute>
         } />
         <Route path="/estudiante/chat/:notaId" element={
